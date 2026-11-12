@@ -142,11 +142,13 @@ jobs:
           python - <<'PY'
           from importlib.metadata import requires, version
           import seed_scan
-          from seed_scan import exceptions
+          from seed_scan import bundle, cli, exceptions, identify
 
           print("installed version:", version("seed-scan"))
           print("requires:", requires("seed-scan"))
           assert seed_scan.__version__ == version("seed-scan")
           assert issubclass(exceptions.SeedScanValueError, ValueError)
+          assert callable(cli.main) and callable(identify.identify)
+          assert bundle.VERSION == 1
           print("ok")
           PY

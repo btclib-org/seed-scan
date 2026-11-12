@@ -10,9 +10,8 @@ name: deps-oldest
 # environments that do not install. What it finds is an issue against the
 # floor.
 #
-# The package has no runtime dependency, so the floors moved are those
-# of the dependency groups the suite installs, the test runner among
-# them.
+# The floors moved are those of the package's dependencies and of the
+# dependency groups the suite installs, the test runner among them.
 #
 # The resolution and the suite are btclib-org/.github's
 # reusable-deps-oldest.yml, called at a tagged commit (section 10 of

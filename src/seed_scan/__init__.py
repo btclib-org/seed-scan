@@ -55,7 +55,10 @@ except PackageNotFoundError:
     __version__ = "unknown"
 
 __all__ = [
+    "bundle",
+    "cli",
     "exceptions",
+    "identify",
 ]
 
 

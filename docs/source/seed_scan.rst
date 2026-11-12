@@ -4,10 +4,31 @@ seed_scan package
 Submodules
 ----------
 
+seed_scan.bundle module
+-----------------------
+
+.. automodule:: seed_scan.bundle
+   :members:
+   :show-inheritance:
+
+seed_scan.cli module
+--------------------
+
+.. automodule:: seed_scan.cli
+   :members:
+   :show-inheritance:
+
 seed_scan.exceptions module
 ---------------------------
 
 .. automodule:: seed_scan.exceptions
+   :members:
+   :show-inheritance:
+
+seed_scan.identify module
+-------------------------
+
+.. automodule:: seed_scan.identify
    :members:
    :show-inheritance:
 

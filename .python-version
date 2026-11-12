@@ -1,12 +1,10 @@
 # This package is an application, so the pin is the newest interpreter
 # every dependency installs on, a release candidate counting (section 1
-# of the organization's standard). It declares no dependency yet, so the
-# pin is the newest Python released; the pull request that declares the
-# first dependency checks the pin against it. It is also the newest the
-# test matrix covers. requires-python names the floor, and both linters
-# are aimed at that end deliberately -- ruff infers its target from
-# requires-python, and pyproject.toml's [tool.mypy] pins python_version
-# to match it.
+# of the organization's standard): `uv sync` installs every dependency
+# uv.lock locks on it. It is also the newest the test matrix covers.
+# requires-python names the floor, and both linters are aimed at that end
+# deliberately -- ruff infers its target from requires-python, and
+# pyproject.toml's [tool.mypy] pins python_version to match it.
 #
 # A whole-line comment only: uv skips one of these, but a trailing comment
 # on the version line makes it ignore the file and fall back to a default
