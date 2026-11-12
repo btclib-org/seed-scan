@@ -1,0 +1,47 @@
+---
+name: links
+
+# every link the tree's markdown and reStructuredText carry, fetched:
+# lychee over the files `targets` names, with --include-fragments, so a
+# link into a heading is checked as an anchor. Nothing else fetches a URL
+# -- `sphinx-build -n -W` resolves cross-references and fetches none -- so
+# a page that moved is found here or by a reader.
+#
+# The checkout, the lychee run and its token are btclib-org/.github's
+# reusable-links.yml, called at a tagged commit (section 10 of
+# the organization's standard)
+
+on:
+  schedule:
+    # section 10's calendar in btclib-org/.github, and not this file's to
+    # restate
+    - cron: "42 4 * * 6"
+  workflow_dispatch:
+  # a change to this file is checked by the run it configures: the run is
+  # seconds, which is what section 10 asks of a calendar workflow that
+  # keeps a pull_request trigger
+  pull_request:
+    types: [opened, reopened, synchronize, ready_for_review, closed]
+    paths:
+      - .github/workflows/links.yml
+
+permissions:
+  contents: read
+
+# no push trigger, so a merged pull request's run is the only reading the
+# merged file gets: the closed, merged run queues behind the one in flight
+# rather than cancelling it
+concurrency:
+  group: links-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ !(github.event.action == 'closed' && github.event.pull_request.merged) }}
+
+jobs:
+  links:
+    uses: btclib-org/.github/.github/workflows/reusable-links.yml@cb5a79443399980ba717df2dea23dbedf6bdbc3a # v2026.11.12
+    with:
+      # every markdown file the tree tracks and the rst it tracks, each
+      # hidden directory with a term of its own, lychee's walker skipping
+      # one no term names: section 10 is where the string is fixed, and
+      # btclib-org/.github's tests/links_test.py asks it against this
+      # tree's `git ls-files`
+      targets: '"**/*.md" ".github/**/*.md" ".claude/**/*.md" "docs/**/*.rst"'

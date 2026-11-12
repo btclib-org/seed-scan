@@ -1,0 +1,65 @@
+---
+name: docs
+
+# the third gate: does the documentation build. Without it nothing in CI
+# builds it but read the docs, after the merge, so invalid
+# reStructuredText in a docstring would fail on a service whose failure is
+# not a check on the pull request -- a name ending in an underscore, which
+# rst reads as a reference to a link target, or a title underline left
+# too short by a rename.
+#
+# The checkout, the build with -n -W, and the unresolved-link and
+# included-link checks on the built pages are btclib-org/.github's:
+# reusable-docs.yml, called at a tagged commit (section 10 of
+# the organization's standard)
+
+on:
+  push:
+    # main only: a push to a branch with an open pull request would run
+    # this workflow twice, once per event, in two concurrency groups that
+    # do not cancel each other. main keeps a trigger of its own because a
+    # merge creates a commit the pull request never checked. Tag pushes
+    # are the release workflow's
+    branches: [main]
+  pull_request:
+    # ready_for_review, so a pull request marked ready gets the run the
+    # called workflow's draft condition withheld; closed, so that the
+    # landing falls in this pull request's own concurrency group and
+    # cancels the run it supersedes, the called job declining the real
+    # work on it
+    types: [opened, reopened, synchronize, ready_for_review, closed]
+  # the release workflow gates publication on this check too
+  workflow_call:
+    inputs:
+      concurrency-suffix:
+        description: >
+          Appended to the concurrency group, and the release workflow is
+          the only caller that passes one. See the group below.
+        type: string
+        default: ""
+  # the escape hatch: a run on demand for a branch whose pull request is
+  # not open yet
+  workflow_dispatch:
+
+# least privilege for the GITHUB_TOKEN: everything running in a job
+# (actions, dependencies, hooks) can read the token, so it must not be
+# able to write to the repository
+permissions:
+  contents: read
+
+# cancel superseded runs on the same branch or pull request. Named
+# literally rather than with github.workflow, which in a called workflow
+# is the caller's name. A pull_request run groups by the pull request's
+# own number, which no push's github.ref can equal. The suffix keeps a
+# release run out of the branch groups, github.ref being the caller's
+# inside a called workflow (btclib-org/.github#1083)
+concurrency:
+  group: docs-${{ github.event.pull_request.number || github.ref }}${{ inputs.concurrency-suffix }}
+  cancel-in-progress: true
+
+jobs:
+  # the draft and closed declines are the called workflow's own. This tree
+  # needs no submodule checked out and asks nothing of its built pages
+  # beyond what the callee asks, so both inputs are left at their defaults
+  docs:
+    uses: btclib-org/.github/.github/workflows/reusable-docs.yml@cb5a79443399980ba717df2dea23dbedf6bdbc3a # v2026.11.12

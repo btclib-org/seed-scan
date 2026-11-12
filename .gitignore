@@ -1,0 +1,35 @@
+# what this tree's own tools write, and nothing a tool here does not
+
+# the interpreter's
+__pycache__/
+*.py[cod]
+
+# uv's environment. `.venv*` rather than `.venv/`: CONTRIBUTING.md's
+# other-interpreter run gives UV_PROJECT_ENVIRONMENT=.venv-3.11, a name
+# `.venv/` alone does not match
+.venv*
+
+# `uv build` writes the distribution files here, and test.yml's `dist`
+# job writes the bill of materials beside them: both are build output
+dist/
+sbom/
+
+# the caches of the lint and test gates
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+.coverage
+.coverage.*
+
+# where `make html` and docs.yml's sphinx-build write
+docs/build/
+
+# vscode: the workspace files are tracked, and the rest of what the editor
+# writes there is not. The directory itself cannot be the pattern -- git does
+# not descend into an excluded directory, so a negation under `.vscode/` never
+# matches -- which is why this excludes the contents and re-admits two names
+.vscode/*
+!.vscode/settings.json
+!.vscode/extensions.json
+
+.DS_Store

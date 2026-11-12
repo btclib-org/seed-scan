@@ -1,0 +1,680 @@
+# Copyright (c) The btclib developers
+# Distributed under the MIT software license, see the accompanying
+# LICENSE file or https://opensource.org/license/mit for the full text.
+
+"""The interpreters this package claims are the ones it runs on.
+
+One fact, declared three times: `requires-python` is the floor,
+`Programming Language :: Python :: X.Y` is what PyPI shows whoever is
+choosing the package, and the platform sweeps' own list is what actually
+runs. Nothing compared them, and the three drift in the direction that is
+hardest to notice -- a classifier left behind when a floor moves is a
+package advertising an interpreter its suite never touches, and the
+person it misleads is not reading this repository.
+
+This package is an application, and section 1 of the organization's
+standard has it take the newest interpreter its dependencies allow, its
+floor being the oldest it means to run on: `.python-version` and
+`requires-python` say which. This module does not know which interpreters
+those are and does not try to. What it holds is the weaker and checkable
+claim: whatever the three say, they say the same thing.
+
+Read with a regex rather than parsed: the workflows are yaml and no
+group here carries a parser for that, so pyproject.toml is read the
+same way, for one style throughout.
+"""
+
+import re
+import sys
+from pathlib import Path
+
+import pytest
+
+
+def _workflow_files(directory: Path) -> tuple[Path, ...]:
+    """Return the workflow files in `directory`, `.yml` and `.yaml` alike.
+
+    GitHub reads both extensions, so a glob matching one spelling drops a
+    workflow written with the other and leaves it out of whatever the
+    caller holds the set to.
+
+    The two are named rather than globbed as `*.y*ml`, which is `y`,
+    anything, `ml`: that matches `test.yXml` and `test.ymml` as well,
+    which GitHub does not run.
+    """
+    return tuple(sorted((*directory.glob("*.yml"), *directory.glob("*.yaml"))))
+
+
+_ROOT = Path(__file__).parents[1]
+_PYPROJECT = (_ROOT / "pyproject.toml").read_text(encoding="utf-8")
+_WORKFLOWS = _workflow_files(_ROOT / ".github/workflows")
+
+# "3.11" out of `requires-python = ">=3.11"`, the floor and nothing else:
+# an upper bound is not declared here and would be a different claim
+_FLOOR = re.compile(r'^requires-python = ">=(?P<version>3\.\d+)"', re.MULTILINE)
+# the per-version classifiers, not `:: 3` or `:: 3 :: Only`, which say
+# something about the major version rather than about an interpreter
+_CLASSIFIER = re.compile(
+    r'^    "Programming Language :: Python :: (?P<version>3\.\d+)",$', re.MULTILINE
+)
+_PYPY_CLASSIFIER = "Programming Language :: Python :: Implementation :: PyPy"
+# PyPI's free-threading classifiers, the bare one and its maturity levels
+# alike: each is a claim about the code under a free-threaded build, and
+# which is claimed is not this module's question
+_FREE_THREADING_CLASSIFIER = re.compile(
+    r'^    "Programming Language :: Python :: Free Threading(?: :: .+)?",$',
+    re.MULTILINE,
+)
+# the matrix list a suite workflow builds its cells from. The gate runs
+# one interpreter, so the list lives in the weekly platform sweeps --
+# in each of them, which is why they are read together below rather than
+# one of them being named here as the one that counts
+_PYTHONS = re.compile(
+    r"^        python:\n(?P<block>(?:^          - \"\S+\"\n)+)", re.MULTILINE
+)
+# the shape a caller of the `os-*` sweeps' own reusable-os-suite.yml
+# carries: `os-macos.yml`, `os-ubuntu.yml` and `os-windows.yml` are that
+# caller here. reusable-deps-oldest.yml's own callers already establish
+# the `with:` indent and the quoting for one interpreter,
+# `python-version: "3.11"`, and a `workflow_call` input can only be a
+# string, so the list a caller passes arrives JSON-encoded inside one --
+# `python-versions: '["3.11", "3.12"]'`. Read alongside `_PYTHONS` rather
+# than instead of it: no workflow here declares the block sequence, so
+# that pattern matches nothing in this tree, and costs nothing kept
+# beside one that does
+_PYTHONS_CALLER = re.compile(
+    r"^      python-versions: '(?P<block>\[.*?\])'$", re.MULTILINE
+)
+# the platform sweeps, named rather than counted: the pattern above reads
+# a block sequence, so one of the three rewritten as a flow sequence would
+# drop out of the comparison below in silence, leaving the remaining two
+# to agree with each other and the test green. deps-latest.yml carries
+# that same caller shape too, its own python-versions naming the floor and
+# the ceiling of what a sweep runs in full rather than the sweep itself --
+# `_declared` below excludes it by name for that reason, a shape it
+# shares rather than a shape of its own being why it is not counted here
+_SWEEPS = ("os-macos.yml", "os-ubuntu.yml", "os-windows.yml")
+# the merge gate, and inside it the jobs a landing waits on. Section 3
+# of the organization's standard declares a free-threading classifier
+# where the gate exercises that build, a gate being what refuses the
+# landing that breaks it, so what answers below is the aggregate's own
+# `needs:` closure rather than the file: a job of this workflow that no
+# required check waits on reports what a sweep reports, which is the
+# ground that section declines. Reading the file is the alternative that
+# section names as rejected, and it answers the same wherever every job
+# of the gating workflow sits inside the closure; what the closure buys
+# is that a job added outside it does not begin deciding this.
+#
+# Each job of the closure writes the interpreter it runs into itself, as
+# `python-version: "3.N"` or `--python 3.N`, so those interpreters are
+# read as tokens off the job's own block rather than out of a matrix
+# block. A free-threaded build there is a "3.Nt" of the same shape.
+# Comments go first, so that a sentence about a sweep's free-threaded
+# cell does not read as the gate running one. Where this read stops is
+# the `dist` job's "Smoke-test the wheel" step, whose `uv venv` takes the
+# interpreter `.python-version` pins instead of naming one in the job, so
+# a change to that file would move `dist`'s own interpreter unseen here
+_GATE = _ROOT / ".github/workflows/test.yml"
+# the aggregate, found by the name `main`'s required contexts hold,
+# which is a job's `name:` and not its key
+_AGGREGATE = "test: every job passed"
+_COMMENT = re.compile(r"(?:^|\s)#.*$", re.MULTILINE)
+_INTERPRETER = re.compile(r"\b3\.\d+t?\b")
+# `jobs:` and everything under it: the trigger keys of `on:` sit at the
+# same indent as a job key, so a read that did not cut here would offer
+# `pull_request` to the closure below as though it were a job
+_JOBS = re.compile(r"^jobs:\n(?P<block>.*)\Z", re.MULTILINE | re.DOTALL)
+# a job key at the one indent `jobs:` gives them
+_JOB = re.compile(r"^  (?P<key>[a-z0-9_-]+):$", re.MULTILINE)
+# `needs:` in each of the three shapes GitHub takes -- one job after the
+# key, a flow list there, and a block list under it -- read as whatever
+# follows the key on its own line plus the items below it. A reader blind
+# to the block shape answers a closure short of whatever sits behind an
+# edge written that way. Where the jobs the narrowing keeps still name an
+# interpreter it answers short in silence, the biconditional below
+# passing on a gate it has not read; where the narrowing leaves the
+# aggregate alone, the aggregate's own job names none and the `no job
+# ... names an interpreter` assertion ahead of that biconditional fires
+# instead.
+#
+# The run of items takes a comment line and a blank one as well, and an
+# item's own trailing comment with it: a whole-line comment among the
+# items, a blank line between two of them and a `#` after an item are one
+# thing to a yaml reader, and a run of adjacent item lines ends at each of
+# them and drops every item below. A copy whose `_jobs` strips comments
+# before the job blocks are read meets whitespace where one that leaves
+# them meets the comment itself; the run takes both, and one spelling
+# answers for the organization's copies of this module rather than for
+# this tree.
+#
+# What the run must not take is a step: `steps:` entries sit at the item
+# indent, and `      - name: Setup uv` is kept out by an item being the
+# whole line up to its comment.
+#
+# What it still does not read, it drops without saying so, and the cases
+# are named because they are not equally bad. A flow list wrapped across
+# lines keeps only what sat on the key line: nothing where the bracket
+# stands alone, the first entry alone where it does not. A flow list
+# exploded under the key, and a block list at any other indent, keep none
+# of it.
+_NEEDS = re.compile(
+    r"^    needs:(?P<inline>[^#\n]*)(?:#[^\n]*)?\n"
+    r"(?P<items>(?:^      - \S+[ \t]*(?:#[^\n]*)?\n|^[ \t]*(?:#[^\n]*)?\n)*)",
+    re.MULTILINE,
+)
+# one item of the block list above, the key picked off a line the run has
+# already read as an item
+_ITEM = re.compile(r"^      - (?P<key>\S+)", re.MULTILINE)
+_NAME = re.compile(r'^    name: "?(?P<name>[^"\n]*)"?', re.MULTILINE)
+
+
+def _versions(pattern: re.Pattern[str], text: str) -> tuple[str, ...]:
+    """Return every `version` group `pattern` finds, in order."""
+    return tuple(m["version"] for m in pattern.finditer(text))
+
+
+def _interpreters(text: str) -> set[str]:
+    """Return every interpreter one workflow's text declares, in either shape.
+
+    `_PYTHONS`'s block sequence and `_PYTHONS_CALLER`'s JSON-encoded
+    list, the shape a caller of `reusable-os-suite.yml` carries -- both
+    read here so a tree on either side of that migration is read
+    correctly, this tree's three sweeps all being callers.
+    """
+    listed: set[str] = set()
+    for match in _PYTHONS.finditer(text):
+        listed.update(
+            line.strip().removeprefix('- "').removesuffix('"')
+            for line in match["block"].splitlines()
+        )
+    for match in _PYTHONS_CALLER.finditer(text):
+        listed.update(re.findall(r'"(\S+?)"', match["block"]))
+    return listed
+
+
+def _declared() -> dict[str, tuple[str, ...]]:
+    """Return each platform sweep's interpreter list, those that declare one.
+
+    deps-latest.yml is excluded by name rather than left to the pattern:
+    its own call to `reusable-deps-latest.yml` carries `python-versions`
+    in the same caller shape `_PYTHONS_CALLER` reads off the three
+    sweeps, but that list deliberately names the floor and the ceiling
+    of what a sweep runs in full rather than the sweep itself, and
+    counting it here would fail both assertions
+    `test_every_sweep_runs_the_same_interpreters` makes rather than the
+    one divergence it exists to catch.
+    """
+    found: dict[str, tuple[str, ...]] = {}
+    for workflow in _WORKFLOWS:
+        if workflow.name == "deps-latest.yml":
+            continue
+        if listed := _interpreters(workflow.read_text(encoding="utf-8")):
+            found[workflow.name] = tuple(sorted(listed))
+    return found
+
+
+def _jobs(text: str) -> dict[str, str]:
+    """Return each job of a workflow, its comments dropped, keyed by key."""
+    jobs = _JOBS.search(_COMMENT.sub("", text))
+    assert jobs, "the workflow declares no jobs"
+    block = jobs["block"]
+    keys = list(_JOB.finditer(block))
+    bounds = [key.start() for key in keys[1:]] + [len(block)]
+    return {
+        key["key"]: block[key.end() : bound]
+        for key, bound in zip(keys, bounds, strict=True)
+    }
+
+
+def _waits_on(block: str) -> list[str]:
+    """Return the jobs one job's `needs:` names, in whichever shape."""
+    needs = _NEEDS.search(block)
+    if not needs:
+        return []
+    listed = needs["inline"].strip("[] ").replace(",", " ").split()
+    return listed + _ITEM.findall(needs["items"])
+
+
+def _needed(jobs: dict[str, str], key: str) -> set[str]:
+    """Return `key` and every job it waits on, however deep."""
+    found = {key}
+    pending = [key]
+    while pending:
+        for name in _waits_on(jobs[pending.pop()]):
+            if name not in found:
+                found.add(name)
+                pending.append(name)
+    return found
+
+
+def _found(jobs: dict[str, str], closure: set[str]) -> tuple[str, ...]:
+    """Return every interpreter the jobs of `closure` name."""
+    found: set[str] = set()
+    for key in closure:
+        found.update(_INTERPRETER.findall(jobs[key]))
+    return tuple(sorted(found))
+
+
+def _gating() -> tuple[str, ...]:
+    """Return every interpreter the jobs the merge gate waits on name."""
+    jobs = _jobs(_GATE.read_text(encoding="utf-8"))
+    keyed: dict[str, str] = {}
+    for key, block in jobs.items():
+        name = _NAME.search(block)
+        assert name, f"{_GATE.name}'s `{key}` job carries no name"
+        keyed[name["name"]] = key
+    assert _AGGREGATE in keyed, f"{_GATE.name} carries no job named {_AGGREGATE!r}"
+    return _found(jobs, _needed(jobs, keyed[_AGGREGATE]))
+
+
+def _matrix() -> tuple[str, ...]:
+    """Return the interpreters the platform sweeps name."""
+    found: set[str] = set()
+    for listed in _declared().values():
+        found.update(listed)
+    return tuple(sorted(found))
+
+
+_CLASSIFIED = _versions(_CLASSIFIER, _PYPROJECT)
+_MATRIX = _matrix()
+# the free-threaded build and PyPy are the same interpreter version as
+# far as a classifier is concerned: "3.Nt" is CPython 3.N, and
+# "pypy3.11" is what the PyPy classifier covers rather than a version
+# of its own
+_CPYTHON = tuple(sorted({v.rstrip("t") for v in _MATRIX if not v.startswith("pypy")}))
+
+
+def test_the_three_declarations_were_read() -> None:
+    """Each pattern found something, so the checks below quantify over it.
+
+    A key renamed, a classifier reindented, the workflow's block moved:
+    each would leave one of these empty and every comparison below
+    trivially true.
+    """
+    assert _FLOOR.search(_PYPROJECT), "pyproject.toml declares no requires-python"
+    assert _CLASSIFIED, "pyproject.toml declares no per-version Python classifier"
+    assert _MATRIX, "no workflow declares a python matrix block"
+
+
+def test_the_floor_is_the_lowest_classifier() -> None:
+    """`requires-python` and the classifiers name the same oldest Python."""
+    floor = _FLOOR.search(_PYPROJECT)
+    assert floor, "pyproject.toml declares no requires-python"
+    lowest = min(_CLASSIFIED, key=lambda v: tuple(int(p) for p in v.split(".")))
+    assert floor["version"] == lowest, (
+        f"requires-python is >={floor['version']} and the lowest classifier"
+        f" is {lowest}: one of the two was moved and the other was not"
+    )
+
+
+def test_every_classified_interpreter_is_in_the_matrix() -> None:
+    """A version PyPI advertises is a version the suite runs."""
+    unrun = [v for v in _CLASSIFIED if v not in _CPYTHON]
+    assert not unrun, (
+        f"classified and no workflow runs it: {', '.join(unrun)}."
+        " PyPI shows a classifier to whoever is choosing this package"
+    )
+
+
+def test_every_matrix_interpreter_is_classified() -> None:
+    """A version the suite runs is a version PyPI advertises."""
+    unclassified = [v for v in _CPYTHON if v not in _CLASSIFIED]
+    assert not unclassified, (
+        f"run by a workflow and not classified: {', '.join(unclassified)}"
+    )
+
+
+def test_pypy_is_classified_exactly_when_it_is_run() -> None:
+    """The PyPy classifier is a claim about the matrix, not a decoration."""
+    classified = _PYPY_CLASSIFIER in _PYPROJECT
+    run = any(v.startswith("pypy") for v in _MATRIX)
+    assert classified == run, (
+        f"the PyPy classifier is {'present' if classified else 'absent'} and"
+        f" the matrix {'runs' if run else 'does not run'} a PyPy interpreter"
+    )
+
+
+def test_free_threading_is_classified_exactly_when_the_gate_runs_it() -> None:
+    """The free-threading classifier is a claim about the merge gate.
+
+    The organization's standard declares one where the gate exercises the
+    free-threaded build: a gate refuses the landing that breaks that
+    build, where a sweep runs beside a landing and blocks nothing. So the
+    second side here is the jobs the required check waits on, and not
+    `_MATRIX` -- the sweeps name a "3.Nt" as readily as the gate would,
+    and a sweep passing is the ground the standard declines.
+    """
+    gating = _gating()
+    assert gating, f"no job {_AGGREGATE!r} waits on names an interpreter"
+    classified = bool(_FREE_THREADING_CLASSIFIER.search(_PYPROJECT))
+    run = [v for v in gating if v.endswith("t")]
+    assert classified == bool(run), (
+        f"the free-threading classifier is {'present' if classified else 'absent'}"
+        f" and the jobs {_AGGREGATE!r} waits on name"
+        f" {', '.join(run) or 'no free-threaded interpreter'}"
+    )
+
+
+def test_needed_reads_needs_in_each_of_its_three_shapes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """One job after the key, a flow list there, a block list under it.
+
+    GitHub takes all three and they name the same jobs, so a reader of
+    two of them answers a closure short of whatever sits behind an edge
+    written in the third. Short in silence wherever the jobs the
+    narrowing keeps still name an interpreter: what the free-threading
+    check above reads is an empty interpreter tuple and not a short
+    closure, `_needed` opening with the key itself, so a closure is
+    never the empty thing. A narrowing reaching past every job that
+    names one is caught there and a narrowing short of that is not. No
+    job of `test.yml` writes a block list, so the job text below is its
+    own rather than the gate's.
+
+    A whole-line comment among the items, a blank line between two of
+    them and a trailing comment on one each end a run of adjacent item
+    lines, and a yaml parser reads each of them as the same two items.
+    None of the forms below is invented: `_jobs` leaves a whole-line
+    comment as a run of spaces one short of the indent it was written
+    at, and a trailing comment written with two spaces before the `#`
+    as a single space, where a copy of this module that keeps comments
+    hands the same pattern the `#` itself -- so both forms stand below,
+    each spelled out rather than one reached from the other.
+
+    The job dict is flat, so every case asserts the closure its own text
+    earns: the aggregate and the one job a scalar names, where a list of
+    either shape reaches both. A dict in which `changes` waited on
+    `coverage` buys comparable expectations with a second route to
+    `coverage`, and an item dropped below a residue is reached by that
+    route anyway: the rows a whole-line comment and a blank line are
+    written for then hold under a reader carrying no whole-line
+    alternative at all. What the chain was also pinning is that
+    `_needed` walks: flat, one hop is the whole closure, and the gate's
+    own aggregate names each job it waits on directly, so a reader
+    taking a job's direct `needs:` and stopping answers every row here
+    and the real gate alike. One chained dict stands below the flat rows
+    for that, asserting its own closure and nothing about a shape.
+    """
+
+    def closure(needs: str) -> set[str]:
+        jobs = {"aggregate": needs, "changes": "", "coverage": ""}
+        return _needed(jobs, "aggregate")
+
+    whole = {"aggregate", "changes", "coverage"}
+    flow = "    needs: [changes, coverage]\n"
+    scalar = "    needs: changes\n"
+    under_the_key = {
+        "a block list": "    needs:\n      - changes\n      - coverage\n",
+        "a comment among the items": (
+            "    needs:\n"
+            "      - changes\n"
+            "      # the cell the coverage floor is measured on\n"
+            "      - coverage\n"
+        ),
+        "that comment stripped": (
+            "    needs:\n      - changes\n     \n      - coverage\n"
+        ),
+        "a comment on an item": (
+            "    needs:\n      - changes  # the gate\n      - coverage\n"
+        ),
+        "that one stripped": "    needs:\n      - changes \n      - coverage\n",
+        "a blank line between two items": (
+            "    needs:\n      - changes\n\n      - coverage\n"
+        ),
+    }
+    # what the docstring says the stripped pair is: `_COMMENT` takes one
+    # whitespace character with the `#` it removes, so the two forms
+    # spelled out above stay the two a run through `_jobs` produces
+    assert (
+        _COMMENT.sub("", under_the_key["a comment among the items"])
+        == under_the_key["that comment stripped"]
+    )
+    assert (
+        _COMMENT.sub("", under_the_key["a comment on an item"])
+        == under_the_key["that one stripped"]
+    )
+    assert closure(flow) == whole
+    assert closure(scalar) == {"aggregate", "changes"}
+    for shape, block in under_the_key.items():
+        assert closure(block) == whole, shape
+    # a job key may carry a hyphen, and an item token stopping at one
+    # loses the job
+    hyphenated = {
+        "aggregate": "    needs:\n      - test-passed\n      - free-threaded\n",
+        "test-passed": "",
+        "free-threaded": "",
+    }
+    assert _needed(hyphenated, "aggregate") == set(hyphenated)
+    # the one job dict here that is not flat: with every dict flat one
+    # hop is the whole closure, so a `_needed` that read a job's direct
+    # `needs:` and stopped would answer every row above correctly
+    chained = {
+        "aggregate": scalar,
+        "changes": "    needs: coverage\n",
+        "coverage": "",
+    }
+    assert _needed(chained, "aggregate") == whole
+    # the control: a reader of the key's own line and nothing under it
+    # answers the same for the two shapes that write the list there and
+    # the aggregate alone for those that write it under the key, so what
+    # the assertions above turn on is the items being read rather than
+    # the jobs merely being in the dict
+    monkeypatch.setattr(
+        sys.modules[__name__],
+        "_NEEDS",
+        re.compile(
+            r"^    needs:(?P<inline>[^#\n]*)(?:#[^\n]*)?\n(?P<items>)", re.MULTILINE
+        ),
+    )
+    assert closure(flow) == whole
+    assert closure(scalar) == {"aggregate", "changes"}
+    for shape, block in under_the_key.items():
+        assert closure(block) == {"aggregate"}, shape
+
+
+def test_needed_reads_no_step_of_a_job_as_a_job_it_waits_on(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A `steps:` entry sits at the item indent and is not an item.
+
+    `      - name: Setup uv` differs from an item in what follows the
+    dash and in nothing else, so a run widened to take the rest of the
+    line reads its first token as a job and goes on reading below it.
+    What ends the run ahead of a real job's steps is the `steps:` key,
+    written at the shallower indent a job's own attributes take, so the
+    text the two readings disagree about is a step line where an item
+    goes; the widened reader below is what says so, both readings
+    answering alike on the job whose steps follow its `needs:`.
+
+    `_needed` indexes `jobs` by each name it reads, so the widened
+    reading costs a `KeyError` naming the step's own first token rather
+    than a closure carrying it. The assertion is on that token: a
+    `KeyError` alone would answer as readily to a job dict this test
+    spelled wrong.
+    """
+
+    def closure(needs: str) -> set[str]:
+        jobs = {"aggregate": needs, "changes": "", "coverage": ""}
+        return _needed(jobs, "aggregate")
+
+    steps = (
+        "    needs:\n"
+        "      - changes\n"
+        "      - coverage\n"
+        "    steps:\n"
+        "      - name: Setup uv\n"
+        "        uses: astral-sh/setup-uv@v7\n"
+    )
+    misplaced = (
+        "    needs:\n      - changes\n      - name: Setup uv\n      - coverage\n"
+    )
+    assert closure(steps) == {"aggregate", "changes", "coverage"}
+    assert closure(misplaced) == {"aggregate", "changes"}
+    monkeypatch.setattr(
+        sys.modules[__name__],
+        "_NEEDS",
+        re.compile(
+            r"^    needs:(?P<inline>[^#\n]*)(?:#[^\n]*)?\n"
+            r"(?P<items>(?:^      - \S+[^\n]*\n|^[ \t]*(?:#[^\n]*)?\n)*)",
+            re.MULTILINE,
+        ),
+    )
+    assert closure(steps) == {"aggregate", "changes", "coverage"}
+    with pytest.raises(KeyError) as widened:
+        closure(misplaced)
+    assert widened.value.args == ("name:",)
+
+
+def test_needed_takes_no_token_of_a_comment_on_the_needs_line(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A `#` on the key's own line names no job the aggregate waits on.
+
+    The inline half stops at the `#`, so a trailing comment there leaves
+    the job before it and nothing else. A half reading the rest of the
+    line -- the reader below -- hands the walk every word of the comment
+    as a job key, and `_needed` indexes `jobs` by each of them, so the
+    walk raises on the last word rather than returning a closure
+    carrying all four. Both halves of that are asserted: `_waits_on`
+    names the four tokens, and the `KeyError` names the one the walk
+    reached first, which a bare `pytest.raises` would not tell from a
+    dict this test spelled wrong.
+    """
+
+    def closure(needs: str) -> set[str]:
+        # unstripped, which is what a copy of this module that keeps
+        # comments hands the pattern
+        return _needed({"aggregate": needs, "changes": ""}, "aggregate")
+
+    annotated = "    needs: changes  # the gate\n"
+    assert _waits_on(annotated) == ["changes"]
+    assert closure(annotated) == {"aggregate", "changes"}
+    monkeypatch.setattr(
+        sys.modules[__name__],
+        "_NEEDS",
+        re.compile(
+            r"^    needs:(?P<inline>[^\n]*)\n"
+            r"(?P<items>(?:^      - \S+[ \t]*(?:#[^\n]*)?\n|^[ \t]*(?:#[^\n]*)?\n)*)",
+            re.MULTILINE,
+        ),
+    )
+    assert _waits_on(annotated) == ["changes", "#", "the", "gate"]
+    with pytest.raises(KeyError) as widened:
+        closure(annotated)
+    assert widened.value.args == ("gate",)
+
+
+def test_a_job_outside_the_closure_answers_for_no_gate() -> None:
+    """The closure and the file are read apart, on text where they differ.
+
+    `test.yml` cannot show the difference: its aggregate waits on every
+    job in it, and every `needs:` it writes stands on the key's own
+    line. So the reading the organization's standard rejects agrees with
+    the one it asks for, and a `needs:` shape this module cannot see
+    costs nothing there. The workflow below is where both cost something
+    -- a job the aggregate waits on, one it does not, and one reached
+    only through a block `needs:` -- and each names an interpreter of
+    its own.
+    """
+    text = (
+        "jobs:\n"
+        "  waited-on:\n"
+        "    name: Waited on\n"
+        "    steps:\n"
+        "      - run: uv run --python 3.11 pytest\n"
+        "  beside:\n"
+        "    name: Beside\n"
+        "    steps:\n"
+        "      - run: uv run --python 3.12t pytest\n"
+        "  between:\n"
+        "    name: Between\n"
+        "    needs:\n"
+        "      - waited-on\n"
+        "    steps:\n"
+        "      - run: uv run --python 3.13 pytest\n"
+        "  aggregate:\n"
+        f'    name: "{_AGGREGATE}"\n'
+        "    needs: [between]\n"
+    )
+    jobs = _jobs(text)
+    assert sorted(jobs) == ["aggregate", "beside", "between", "waited-on"]
+    closure = _needed(jobs, "aggregate")
+    assert closure == {"aggregate", "between", "waited-on"}
+    assert _found(jobs, closure) == ("3.11", "3.13")
+    assert _found(jobs, set(jobs)) == ("3.11", "3.12t", "3.13")
+
+
+def test_workflow_files_reads_the_names_github_runs(tmp_path: Path) -> None:
+    """`.yml` and `.yaml` are read alike, `.yXml` is not a workflow.
+
+    `os-macos.yml`'s own bytes under three names, the extension the
+    whole of the difference: the two spellings GitHub runs come back and
+    the third, which a `*.y*ml` glob would take, does not.
+    """
+    text = (_ROOT / ".github/workflows/os-macos.yml").read_text(encoding="utf-8")
+    for name in ("os-extra.yml", "os-extra.yaml", "os-extra.yXml"):
+        (tmp_path / name).write_text(text, encoding="utf-8")
+    found = sorted(path.name for path in _workflow_files(tmp_path))
+    assert found == ["os-extra.yaml", "os-extra.yml"]
+
+
+def test_every_sweep_runs_the_same_interpreters() -> None:
+    """One interpreter set, however many platforms sweep it.
+
+    The gate runs one, so the list is declared once per platform sweep
+    and nowhere the comparison counts: `deps-latest.yml` declares one in
+    the same caller shape and `_declared` excludes it by name, its two
+    interpreters being that list's floor and ceiling rather than a sweep
+    of its own. Three copies of a list is three chances for one of them
+    to be left behind, and a platform quietly running a narrower set
+    than another reads, from the outside, as that platform passing.
+
+    Every sweep has to be read for that to mean anything, which is the
+    first assertion: agreement among however many were found is a claim
+    that gets weaker the fewer there are, and vacuous at one.
+    """
+    declared = _declared()
+    assert tuple(sorted(declared)) == _SWEEPS, (
+        f"the platform sweeps are {', '.join(_SWEEPS)} and the interpreter"
+        f" block was read from {', '.join(sorted(declared)) or 'none of them'}"
+    )
+    lists = set(declared.values())
+    assert len(lists) <= 1, (
+        f"the workflows do not name the same interpreters: {declared}"
+    )
+
+
+def test_a_caller_shaped_with_reads_the_same_interpreters_as_a_block() -> None:
+    """The shape a caller of `reusable-os-suite.yml` carries.
+
+    `os-macos.yml`, `os-ubuntu.yml` and `os-windows.yml` are that caller,
+    and none of the three, or any other workflow here, declares
+    `_PYTHONS`'s own block sequence. This constructs the shape
+    `reusable-deps-oldest.yml`'s own callers already establish for one
+    interpreter -- `python-version: "3.11"` -- widened the only way a
+    `workflow_call` input can carry a list, JSON-encoded inside a quoted
+    string, and checks that `_interpreters` reads it the same as the
+    block sequence it stands beside.
+    """
+    block = (
+        '        python:\n          - "3.11"\n          - "3.12"\n          - "3.13"\n'
+    )
+    caller = '    with:\n      python-versions: \'["3.11", "3.12", "3.13"]\'\n'
+    listed = {"3.11", "3.12", "3.13"}
+    assert _interpreters(block) == listed
+    assert _interpreters(caller) == listed
+
+
+def test_a_bare_with_and_a_matrix_expression_read_no_interpreter() -> None:
+    """Neither an unrelated `with:` nor an expression is an interpreter list.
+
+    The negative control the positive above needs: a pattern widened
+    until it matches anything passes that one regardless. `with:` naming
+    something other than the interpreters, and `python-versions:` naming
+    an expression rather than a JSON string, are the two ways a caller's
+    block can hold neither without the key itself being absent.
+    """
+    unrelated = "    with:\n      submodules: true\n"
+    expression = "    with:\n      python-versions: ${{ matrix.python }}\n"
+    assert _interpreters(unrelated) == set()
+    assert _interpreters(expression) == set()

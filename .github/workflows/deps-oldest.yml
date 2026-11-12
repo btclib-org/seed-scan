@@ -1,0 +1,42 @@
+---
+name: deps-oldest
+
+# the mirror of deps-latest.yml: the claim a floor makes to whoever
+# installs this package, verified. `uv lock --resolution lowest-direct`
+# takes every direct dependency to the floor pyproject.toml declares on
+# the oldest interpreter
+# requires-python admits, and runs the suite against it. Not `lowest`,
+# which takes transitive dependencies to their minima too and resolves
+# environments that do not install. What it finds is an issue against the
+# floor.
+#
+# The package has no runtime dependency, so the floors moved are those
+# of the dependency groups the suite installs, the test runner among
+# them.
+#
+# The resolution and the suite are btclib-org/.github's
+# reusable-deps-oldest.yml, called at a tagged commit (section 10 of
+# the organization's standard). What stays here is the interpreter
+
+on:
+  schedule:
+    # section 10's calendar in btclib-org/.github, and not this file's to
+    # restate
+    - cron: "42 3 * * 4"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deps-oldest-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  suite-oldest:
+    uses: btclib-org/.github/.github/workflows/reusable-deps-oldest.yml@cb5a79443399980ba717df2dea23dbedf6bdbc3a # v2026.11.12
+    with:
+      # the requires-python floor: the version is a claim this tree makes,
+      # so it is passed rather than read off .python-version, which names
+      # the ceiling
+      python-version: "3.11"

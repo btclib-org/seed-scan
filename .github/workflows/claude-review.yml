@@ -1,0 +1,97 @@
+---
+name: claude-review
+
+# Claude reading a pull request against REVIEWING.md, which is the standard
+# a review here is written against: section 11 of the organization's
+# standard makes this workflow's verdict the ack of record, and a tree
+# whose command is run by somebody holding a mnemonic wants a reading
+# before a merge.
+# The prompt, the credential guard, the action, the verdict check and the
+# @claude answer are `btclib-org/.github`'s `reusable-claude-review.yml`,
+# called at a tagged commit (section 10 of the organization's standard).
+# What stays here is the trigger, the concurrency group, the permissions, the
+# paragraph about what this tree ships and this header.
+#
+# Not a required check, and it must not become one. What it produces is a
+# review of type COMMENT, an opinion for the author to weigh, and a review
+# that gates a merge would make a model's judgement a branch rule.
+#
+# One calling job: a `uses:` job invokes the whole called workflow, so it
+# reaches both the callee's `review` and `mention`, and each declines the
+# events that are not its own.
+
+on:
+  pull_request:
+    # ready_for_review so a pull request marked ready gets the review the
+    # callee's draft condition withheld. closed too: the group below is at
+    # the workflow level, so a closed run enters it when the run is
+    # created and cancels a review nobody is going to read; the callee's
+    # own job-level `if:` declines the review itself
+    types: [opened, reopened, synchronize, ready_for_review, closed]
+  # the on-demand half: somebody writes @claude in a comment on a pull
+  # request, or on a line of its diff.
+  #
+  # zizmor's dangerous-triggers is declined on issue_comment, which
+  # anybody can fire with a comment. Only the review and the mention in
+  # btclib-org/.github's reusable-claude-review.yml can run on it: the
+  # review declines every comment, and the mention answers only the
+  # authors its `if:` names (btclib-org/.github#1813)
+  issue_comment: # zizmor: ignore[dangerous-triggers]
+    types: [created]
+  pull_request_review_comment:
+    types: [created]
+
+# least privilege for the GITHUB_TOKEN at the workflow level, elevated on
+# the calling job below
+permissions:
+  contents: read
+
+# named literally rather than through github.workflow, as everywhere
+# else here. A pull_request event groups by the pull request's number, so
+# a push supersedes the review it overtakes; every other event falls back
+# to github.run_id, which no two runs share, so no two mentions and no
+# mention and review share a group. The number alone would not do that: a
+# pull_request_review_comment event carries it too, and an issue_comment
+# event leaves it empty
+concurrency:
+  group: >-
+    claude-review-${{ github.event_name == 'pull_request'
+    && github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: true
+
+jobs:
+  claude-review:
+    # a caller's permissions: block bounds the called workflow and refuses
+    # rather than trims, so every scope either of the callee's two jobs
+    # asks for is named here, or the run fails before any job starts, as a
+    # startup_failure (btclib-org/.github#912)
+    permissions:
+      contents: read
+      pull-requests: write # posting the review, and the reply to a mention
+      id-token: write # the OIDC token the action mints at its own startup
+    # the callee has no cache step, and `none` keeps it so: a run started
+    # by a comment gets no cache access, which is what actionlint's
+    # cache-call-unrestricted asks for
+    cache-mode: none
+    uses: btclib-org/.github/.github/workflows/reusable-claude-review.yml@cb5a79443399980ba717df2dea23dbedf6bdbc3a # v2026.11.12
+    with:
+      # this tree's own paragraph, landing where the callee inserts it
+      extra-prompt: |
+        This package is a command run by somebody holding a mnemonic, and
+        SECURITY.md's "What belongs here" states what it promises about
+        that secret. A change that does what that section calls a
+        vulnerability is a finding until its test says otherwise, and so
+        is an import of a package pyproject.toml does not declare. A rule
+        that is stated without the reason that chose it, a claim no
+        command re-derives, a count of anything, a second wording of a
+        fact stated elsewhere, and a rule whose own repository does not
+        keep it are the defects the organization's standard names, and
+        they are what to look for beside anything specific to this
+        package.
+      # no extra-allowed-tools: the callee's own base set is what a review
+      # of this package reaches for
+    # named rather than `inherit`: the callee declares one secret, and
+    # zizmor's secrets-inherit audit is right that handing it every secret
+    # this repository has is more than that one takes
+    secrets:
+      CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}

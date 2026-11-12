@@ -1,0 +1,65 @@
+---
+name: deps-latest
+
+# what a Dependabot pull request would bring, asked before it arrives:
+# every dependency the resolver touches upgraded, which is the tooling
+# while the package declares no runtime dependency -- then the suite, the
+# lint gate and the packaging checks against the result, and nothing
+# committed. The pull request that follows on Thursday is then a diff
+# whose result is already known.
+#
+# The upgrade, the lint and the suite cells are btclib-org/.github's
+# reusable-deps-latest.yml, called at a tagged commit (section 10 of
+# the organization's standard); the distribution checks stay here, being this
+# tree's own dist job run against the upgraded lock
+
+on:
+  schedule:
+    # section 10's calendar in btclib-org/.github, and not this file's to
+    # restate
+    - cron: "42 4 * * 3"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deps-latest-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  deps-latest:
+    uses: btclib-org/.github/.github/workflows/reusable-deps-latest.yml@cb5a79443399980ba717df2dea23dbedf6bdbc3a # v2026.11.12
+    with:
+      # one image per platform family, at the floor and the ceiling of the
+      # interpreters the package claims: an upgrade breaks at one end of
+      # that range, and the platform sweeps already hold the middle at the
+      # lock
+      runners: '["ubuntu-latest", "macos-latest", "windows-latest"]'
+      python-versions: '["3.11", "3.15"]'
+
+  dist-latest:
+    name: Build the distribution and inspect it, dependencies at latest
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Setup uv
+        uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          enable-cache: true
+      # the one command here that is not `--locked`, and the point of the
+      # job: the lock is what is being replaced, and nothing is committed
+      - name: Upgrade every dependency to its latest release
+        run: uv lock --upgrade
+      - name: Build the distribution files
+        run: uv build
+      - name: Check the metadata and the long description
+        run: uv run --locked --only-group check twine check --strict dist/*
+      - name: Check the wheel contents
+        run: uv run --locked --only-group check check-wheel-contents dist/*.whl
+      - name: Rate the packaging metadata
+        run: uv run --locked --only-group check pyroma --min 10 dist/*.tar.gz

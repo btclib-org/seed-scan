@@ -1,0 +1,537 @@
+# Reviewing a pull request
+
+The standard a review of a btclib-org repository is written against: what a
+review has to establish before it can be given, how a finding is stated,
+and what becomes of everything a reviewer notices that the diff under
+review is not about.
+
+This is the reviewer's half of [CONTRIBUTING.md](./CONTRIBUTING.md),
+which is the author's. It does not restate the rules a review cites —
+most are in the organization's standard, the rest in that file, in
+REPOSITORY.md, in AGENTS.md, or here where no other document holds
+them — and a finding names the line that states them rather than a copy
+kept here.
+
+**This file is the same in every repository of the organization**, and
+deliberately so: a review that means one thing here and another there is
+not a standard. Section 14 of the organization's standard is what says
+so, and `tests/verbatim_test.py` of btclib-org/.github is what compares
+the copies. So nothing written here may be true of one tree only, down
+to the last section: that one is this tree's, and the comparison stops
+at it.
+
+It is for whoever reviews: a contributor reading somebody else's pull
+request, the maintainer, an agent session that starts with the pull
+request and no memory of how the last review went. Read the other way
+round, before a pull request is opened, it is what that pull request
+will be answered against.
+
+A review produces a verdict and comments on a pull request, and issues
+filed against the repository. **A reviewer writes nothing to the
+branch**: no push, no amend, no merge. The one commit a review can lead
+to is the author's own click on a suggestion, below, which is theirs to
+make and theirs to decline.
+
+## The standard an ack is given against
+
+**A diff is acked when it leaves the tree better than it found it**, not
+when it is the diff the reviewer would have written. Perfection is not
+the bar and is not reachable; the question is whether `main` with this
+change is in better shape than `main` without it. The formulation, and
+the reasoning under it, is Google's
+[standard of code review](https://google.github.io/eng-practices/review/reviewer/standard.html).
+
+Two things follow, and they are what reviews get wrong in opposite
+directions:
+
+- **A matter of taste is not a finding.** Where the author's choice and
+  the reviewer's are both defensible, the author's stands. Say it once
+  as a nit, if it is worth saying at all.
+- **Work the diff never set out to do is not a finding either.** It is
+  an issue; the section below is the whole of what to do with it.
+- **Prose is reviewed where it stays.** What a review reads for truth
+  is the documentation a reader of the tree will meet — `README.md`,
+  `CONTRIBUTING.md`, a docstring, a comment beside the code — because it
+  is read again and again, by people who never saw the change. A commit
+  message and a pull request's body are read once, at the landing:
+  squash folds the first into history, where `git log` is consulted
+  rather than read, and the second does not land at all. A false claim
+  in either is a finding only where it decides something — the account
+  the landing rests on, what the change costs, what it leaves owed — and
+  is not worth a round when correcting it changes neither `main` nor a
+  decision.
+
+  The reason to draw the line is that a body describes a tip that keeps
+  moving: a measurement written into it is stale by the next commit, and
+  a round spent restating it buys nothing that the next round does not
+  undo. Where a figure is worth having, the command that re-derives it
+  belongs there instead of the figure.
+
+## What is under review
+
+1. **A sha, never a branch.** `gh pr view <N> --json
+   url,headRefOid,baseRefName` — `headRefOid` is what is reviewed, and
+   a branch name moves under a review that names it.
+1. **The issues it closes**, all of them: one pull request may answer
+   more than one, and answering one of two is a finding.
+1. **The diff against the pull request's base**, not against `main`:
+   `git diff <baseRefName>...<headRefOid>`, three dots, the base being
+   the parent branch where this one is stacked. A finding that belongs
+   to the parent goes on the parent's pull request — repeated on the
+   child, the author answers it twice and resolves it once.
+1. **The tree at that sha**, checked out and gated. `gh pr checkout <N>`,
+   and whatever this repository's `CONTRIBUTING.md` says builds its
+   environment; `CONTRIBUTING.md` has the worktree procedure.
+
+Read the whole diff before writing the first comment. A comment on line
+5 that line 60 answers costs the author a reply and the reviewer their
+credit for the rest of the review.
+
+## What to look for
+
+In priority order, stopping at what this diff can be wrong about:
+
+- **Does it answer its issues?** The whole of them, and nothing beside.
+  A diff carrying an unrelated fix cannot be acked for either question.
+- **Is it correct?** Reason about the code as it will run, not as it
+  reads. Where a claim can be checked, check it rather than believing
+  it — and where what the diff adds is what does the deciding, checking
+  it means running it, below.
+- **Does it break a rule this repository states?** Not a rule the
+  reviewer would have written — one the repository's own documents
+  state, cited by the line that states it. This is the class of finding
+  a review exists for: the author has the diff in view and the document
+  out of view.
+- **Does a pointer say what it promises?** Read the passage cited, not
+  the term cited. That a fact exists where a reference says it does is
+  not the same as the reference being honest about it, and a search for
+  the cited term cannot tell the two apart: the passage has to say what
+  the pointer promises, at the same generality. The diff's own prose
+  about the tree takes the same treatment.
+- **Is what it adds tested and documented the way this repository tests
+  and documents things?**
+- **Is it simpler than it needs to be?** As a non-blocking finding, and
+  never as a rewrite.
+
+**Never review what a hook already gates.** Formatting, import order,
+line length and the rest are decided by `.pre-commit-config.yaml`, and a
+comment about one of them is either wrong or a bug in the hook.
+
+## What is filed, and what is not
+
+A review notices more than its subject: a defect the diff did not
+cause, a rule the tree quietly stopped following. It does not go in the
+review — a finding the author cannot address without leaving the
+subject is a round spent on what the pull request was not for.
+
+**It is filed only if a user, a build or a release is affected**: a
+wrong command, a red gate, a wrong setting, a packaging or a security
+defect. Prose is never filed — `README.md` included, and even where a
+grep can measure it. Wrong prose that leads to a wrong action is a
+functional defect, and is filed as one. A wording finding outside
+the diff is neither in the review nor filed.
+btclib-org/.github#1075 is where a tracker of prose findings was found
+not to converge.
+
+What stays in the review is what this diff introduces or breaks, and
+what was already wrong and this diff makes materially worse.
+
+Look for the issue already open before filing another, and write the
+issue for somebody who never sees this pull request — what is wrong,
+where, how it is known, why it matters, and the fix where one is known;
+no reference to the pull request as a blocker:
+
+```shell
+gh issue list --state open --search <the thing, in a word or two>
+```
+
+```shell
+gh issue create --title <the finding, as a claim> \
+  --body <what was noticed and where, how it is known, why it matters, any fix>
+```
+
+The summary does not name the issues filed: they are **not** findings
+against this pull request.
+
+## What a finding says
+
+- **Where**: `file:line`, as an inline comment wherever a line is the
+  subject.
+- **What is wrong**, in a sentence.
+- **How it is known**: the command and what it printed, or the concrete
+  path through the code that produces the wrong result.
+- **What kind it is**, said explicitly and never left to be inferred:
+
+    - **blocking** — wrong, misleading or unmaintainable on `main`
+    - **non-blocking** — worth doing, does not hold the ack
+    - **nit** — taste; said once, inline only, never in the summary
+    - **question** — something not reproduced, asked as a question
+      rather than asserted as a defect
+
+Labelling every comment is
+[conventional comments](https://conventionalcomments.org/)' idea and its
+whole value: an unlabelled remark makes the author guess whether it
+holds the merge, and they guess conservatively, which turns a nit into a
+round of review.
+
+No speculation dressed as a defect, no "consider maybe", no restating
+what the diff plainly does. A review of five real findings beats twenty
+of which three are real.
+
+The subject is the code and never its author: "this returns the wrong
+sign for a negative scalar", not "you forgot the sign".
+
+## A fix small enough to read at a glance is proposed, not described
+
+Where the correction is a line or a few, put it in the comment rather
+than around it. A review comment anchored to a diff line can carry a
+`suggestion` block, and the author accepts it from the pull request page
+in the browser — no checkout, no editor, one click:
+
+````text
+```suggestion
+    return p - y if y % 2 != odd else y
+```
+````
+
+*Add suggestion to batch* takes several of them into one commit, which
+is what to use when a review leaves more than one.
+The author may apply one directly through the interface, which is why a
+suggestion is offered where a description would do.
+
+What makes this the right shape here and not merely a convenience is the
+signature: the commit GitHub writes carries its web-flow key, and the
+signature check on `main` asks for a valid signature, not one particular
+signer.
+
+Two properties decide when not to:
+
+- **It is committed verbatim, and nothing local sees it.** The author's
+  `pre-commit` does not run on a commit made in the browser, so the
+  block has to be already written the way the hooks would write it —
+  indentation, quoting, line length, trailing comma. A suggestion that
+  fails a gate is worse than a sentence describing the fix, because it
+  is accepted with one click and the failure arrives after.
+- **Do not suggest a decision.** A one-click accept invites acceptance
+  without thought, so the block is for a fix whose correctness is
+  visible inside it: a wrong constant, an inverted condition, a missing
+  guard, a sentence in a docstring. Anything spanning files, wanting a
+  test beside it, or having a defensible alternative is stated in prose
+  and left to the author.
+
+A suggestion carries the severity of the finding it belongs to. Offering
+one does not make a blocking finding a nit, and accepting one is what
+closes the thread.
+
+## What a diff decides with is run, not read
+
+A diff that adds a regex, a grep, a pattern in a hook, a script or a
+query adds something that decides an outcome by matching or computing.
+**Run it.** Reading it again is not a second check: the author read it
+and believed it, and a reviewer who only reads reproduces that reading
+rather than testing it. Running it is what makes the verdict something
+the author's own reading did not already decide.
+
+The cases to run start from what the diff and the tree hold, and go on
+to cases built to break it:
+
+- **The shapes the diff's own prose claims to cover** — the example in
+  the hook's comment, in the pull request
+  body. A motivating case the pattern does not in fact handle is the
+  finding, and the diff named that case itself.
+- **The shapes the tree actually holds.** `git grep` for the construct
+  the pattern is about and run it against those lines, rather than
+  against an example composed to be matched.
+- **The shapes built to break it.** Inputs meant to make it answer
+  wrong: the edges of the language the pattern or the script reads, such
+  as an empty value, a quote, an escape, or a delimiter inside a name. A
+  case it answers wrong is the finding. The first two cases hold the
+  inputs the author and the tree already offer; this one looks for the
+  input neither does. Inventing it does not reopen what the second case
+  closes: an example composed to be matched can only confirm a reading,
+  and an input built to break one counts only where it does.
+
+A claim the prose makes *about the tree* takes the same treatment.
+"Every link here is already `./`-prefixed", "nothing calls this any
+more": each is one command's worth of evidence, and each is the reason
+the change is offered as safe. Settle it. Where it is false, the finding
+is not the code but the reason given for it.
+
+**Rows excusing a failure are tried too.** Where a pull request adds a
+test together with rows excusing its failure, such as `BACKLOG` in
+`tests/__init__.py` of btclib-org/.github, run the assertion by hand
+against one tree in the shape the rows wait for. A row cannot tell a
+tree that has not converged from a wrong test.
+
+What this is not:
+
+- **A run of the gates.** They run what the rest of the tree already
+  exercises; what this diff adds has been run against nothing, and the
+  review is the first thing to run it. A review told to leave the gates
+  to the workflows running beside it on the same sha is told about the
+  gates, and this is not one of them.
+- **A test suite written inside a review.** It is a handful of one-line
+  runs, and their output is the "how it is known" that a finding carries
+  anyway.
+- **A hand trace wearing a run's authority.** Where what is at hand
+  cannot run the thing — a script or a query wanting an interpreter,
+  where a pattern against the tree needs only a grep and is the usual
+  case — say so in the summary, in those words: it was not run. A trace
+  is the author's reading performed a second time, which is what running
+  it is meant to replace; it can carry a finding, and it is not reported
+  as a run. The verdict then carries *The verdict*'s `Not checked:`
+  line. A command that only reads a blob or a file from GitHub can be
+  run by the bot, with the script its prompt names, so it is run rather
+  than marked not run.
+
+## The gates are the evidence
+
+Run them on that sha, and read exit codes rather than filtered output —
+a pipe into `grep -v Passed` hides the failure it was meant to find.
+**What the gates of this tree are is `CONTRIBUTING.md`'s last
+section**, and so is every way a run of them lies — a suite run over a
+subset that is not the coverage gate, a hook set that is not the whole
+of what CI runs. A reviewer who names a gate this repository does not
+have has reported nothing.
+
+**Whole, whoever runs it.** A suite is run whole — never a module on
+its own, a `-k`, a `--lf`, a deselect or a marker in its place. What a
+change breaks is found by the test that did not expect to be touched by
+it, and a subset is chosen by what the author expected, so a run that
+was narrowed or cut short is no run and is reported as none. Where the
+suite is long it runs in the background with a ceiling, and what is
+reported is its exit code.
+
+**Unless they have already been run on this sha and that run is on the
+record.** Then rely on it, and say whose it is. Two runs qualify: the
+workflows of the required checks, running beside a review on the same
+commit — `CONTRIBUTING.md` names which checks those are — and an author
+handing over a branch they gated themselves and said so. What is relied
+on is that those gates run and, except under the maintainer's `--admin`,
+hold the merge, not the colour of a check, which stays none of a
+reviewer's business for the reason below.
+
+The sha is the whole of the condition: a run on another tree is not a run
+on this one, so a rebase voids it — the branch was gated, and then the
+tree moved under the gate. Naming the run is not a disclaimer but the
+evidence's provenance, "the workflows on this sha are what stands" and
+"the author's statement of what they ran is what stands" being the two
+forms it takes, and it is what lets a reader tell a gate relied on from
+one nobody looked at. The review bot does not say it: it always relies
+on the workflows on its sha, which the pull request shows as checks, so
+a line saying so would be constant. A pull request picked up
+with no such run in front of you is the other case, and there they are
+run.
+
+Relying on them settles nothing about what the diff decides with: the
+gates exercise what the tree already held, and the section above is what
+runs the rest.
+
+A gate that fails is the strongest finding available. A gate that passes
+is not evidence that the diff is right.
+
+**CI is not the reviewer's concern.** Do not wait for a workflow run, do
+not read one, do not report a check as a finding, do not withhold a
+review because something is pending or red. A run is cancelled by the
+next push to the same branch, so a red or missing check is as likely to
+be the concurrency group as the diff; whether CI is green is the
+author's problem at landing time, and the local run is the evidence
+either way.
+
+## What every review here also checks
+
+Each of these is a question the organization asks of every tree. Where
+another document holds the rule, the question names it.
+
+- Does the diff **state a count or a measurement** that nothing
+  re-derives — files, entries, seconds, a size, a percentage, a figure
+  true on the day it was written? Section 9 of the standard says why it
+  must not: nothing keeps it true, and only some are caught by a test.
+  The finding asks for the figure to go, or for the command that
+  re-derives it to stand in its place; it does not ask for a corrected
+  figure.
+- Does a comment, a docstring or a document **tell the history of the
+  code** — what it used to be, what was tried, why it changed? Section
+  9's *No history in the prose*: a reader of the tree needs what the
+  code is and why it is so, in the present tense; what it was is
+  `git log`'s and the changelog's. The finding asks for the history to
+  go, not to be shortened.
+- Does the branch add an entry to `CHANGELOG.md` or `RELEASE_NOTES.md`?
+  Outside a release's own pull request that is a blocking finding (section 9).
+  `check-changelog` refuses a new entry in `CHANGELOG.md` and reads nothing
+  of a bullet added under an entry the base holds. It reads no other file, so
+  a new entry in `RELEASE_NOTES.md` is the reviewer's to catch.
+- Does a new refusal, repr, log line or `assert` message **print a value
+  that may be secret**? Section 7's *A refusal carries no secret* has the
+  rule and the test it asks for.
+- A new or changed workflow: section 10 of the standard, and
+  `REPOSITORY.md` before any rule or setting is touched. A renamed job
+  is a required check renamed out of existence.
+- Does a call of a reusable workflow **reproduce what the tree's own job
+  ran on `main`**, its command and the configuration that command reads
+  (`addopts`, `fail_under`) included? Each difference is closed by an
+  input the call names, or stated in the pull request as a change of
+  behaviour. A job turned into a call takes the callee's defaults, and
+  the diff shows only a replacement. An input is not required, because a
+  tree may take a difference on purpose: section 10's sentinel cells pass
+  `--no-cov`.
+- Is a reference to another repository **qualified**? Section 9 of the
+  standard has the rule and its one exemption, and a bare number is the
+  shape that breaks it.
+- Does the pull request's **title** say what it closes, and does its
+  description close what the title says? Section 11 has the rule, and it
+  is the one most often found broken after the fact.
+- Can the author **answer the review without the model**?
+  `CONTRIBUTING.md`'s *Working with an LLM* says what becomes of a
+  contribution its author cannot explain.
+
+**What this tree checks beyond these is the last section of this file**,
+which is that repository's own. A repository whose last section names
+nothing further has nothing further to check, which is an answer and not
+a gap.
+
+## The verdict
+
+Inline comments for the line-anchored findings, then exactly one
+summary. **A review that decides whether the pull request lands** posts
+that summary to the forge as a review, and opens it with one of four
+lines:
+
+```text
+ACK <sha>
+```
+
+```text
+CHANGES REQUESTED <sha>
+```
+
+```text
+NACK <sha>
+```
+
+```text
+NO VERDICT <sha>: <reason>
+```
+
+The ack of record carries whichever of the four applies and is posted
+as a review of type COMMENT — `gh pr review --comment` — never as a
+forge approval or a forge request for changes. Section 11 of the
+standard says whose verdict the ack of record is, what each of the four
+concludes, and what forbids the workflow an approval; a forge approval
+is a person's, and it is not the ack.
+
+**`NO VERDICT` is the reviewer saying it could not judge**, and the
+reason names why: a file would not open, the diff could not be read. It
+is not an ack. A command the reviewer could not run is not that: it is
+the `Not checked:` line below.
+
+Every other summary is a comment. Nothing else is an ack — not "looks
+good", and not a forge approval by the author of the pull request, which
+section 11 records GitHub as refusing. Every line names the sha, because
+an ack belongs to a tree and not to a branch.
+
+**A review that does not decide has no verdict line, and is not an
+unfinished review.** Somebody who reads a diff and says what they found
+is worth more than the same person saying nothing because a verdict on
+the whole change was the price of speaking, and the readings worth
+having are the ones nobody was assigned. What a pull request lands on is
+the ack of record and what `CONTRIBUTING.md`'s *Landing it* asks for.
+Every other comment on it is evidence a person weighs before pressing.
+
+**A `NACK` is a decision and having no verdict is not.** Both leave the
+pull request unacked, which is what makes them easy to read as one
+thing, and they say opposite things: the first concludes, and section 11
+has what it concludes; the second declines to conclude, which is what a
+reading does. Silence is not a refusal, so a reviewer who means to
+refuse writes the line.
+
+**After the verdict line the summary is short**: the blocking and the
+non-blocking findings, one bullet each, saying where, what is wrong and
+how it is known. No nit, no finding outside this pull request, no other
+account of what the diff does or of what was checked, beyond whose gate
+run a reviewer other than the bot relies on.
+**In a verdict**, `CHANGES REQUESTED` with no blocking finding is a
+contradiction: either the finding is blocking or the ack is due. In a
+reading neither is owed, the reading having declined to say. A `NACK`
+need not carry a blocking finding at all: its ground is the change
+rather than a defect in it, and that ground is what the summary states.
+
+**One line starting `Not checked:` is added only where what could not be
+checked bears on the verdict**: a command that could not be run, an
+issue that could not be read, a part of the tree left unopened. **Where
+the pull request's prose relies on a command the reviewer could not run,
+the verdict is `ACK` when nothing else holds it, and this line names
+that command**: the ack says it was not run, and says nothing of what it
+would have printed. A review that answered "does it answer its issues"
+against the pull request's own account of them, having been unable to
+read the issues, is reasoning in a circle, and has to say so.
+
+Post it the moment it is written, and where several pull requests are
+waiting, finish and post one before opening the next: a batch of reviews
+arrives as one wall of comments, and the first of them waited for the
+last to be written. Take a re-review before a first review, a parent
+before its child, and otherwise the oldest.
+
+## Re-review
+
+The delta is `git diff <old-sha>..<new-sha>`, and the old sha is the one
+the previous round's verdict named. An amend and a rebase each leave it
+off the branch, so it is read from that verdict rather than from the
+branch's history.
+
+- **The author resolves a thread once they have answered it**, a
+  declined one included, so that an answered thread does not hold the
+  merge. Read each answer, and reopen the thread only where its finding
+  is still blocking, saying why. A finding declined as out of scope and
+  filed as an issue is not reopened.
+- Do not re-open settled ground, and do not introduce a preference late.
+  A new blocking finding at round three is legitimate only if the new
+  commits introduced it, or if leaving it would be wrong on `main`.
+- **A reviewer with no memory of the earlier rounds reads them first**:
+  the bot reads its own reviews on the pull request, and the sha each
+  names. It raises a non-blocking point only on a line the commits after
+  that sha touched, or on one that would be wrong on `main`; where it
+  cannot tell which lines those are, it raises none.
+- Where the author declined something still considered blocking, say so
+  once, with the argument. If they hold their position, do not spend a
+  fourth round: withhold the ack and put both positions to a human.
+  Escalating is a result; a stalemate repeated in silence is not.
+- A handoff may be a **rebase rather than new work** — the parent landed
+  and the child was retargeted, or a base was amended. Then the delta is
+  the rebase, and what to check is that it carried nothing back: a child
+  moved without naming its old base re-adds the parent's old text as
+  additions, and every gate passes in both worlds.
+
+    ```shell
+    git diff origin/main...<new-sha>
+    git merge-base --is-ancestor origin/main <new-sha>
+    ```
+
+- An acked pull request comes back for one more round when a rebase onto
+  `main` **resolved a conflict**. That is correct of the author, and the
+  delta is the resolution and nothing else: a conflict resolved by one
+  hand is the change that passes every gate and is still wrong.
+
+Ack when every blocking finding is closed, the gates passed locally on
+that sha, and the diff answers its issues. Non-blocking findings and
+inline nits do not hold an ack — say that the findings are left to the
+author.
+
+## This repository in particular
+
+Everything above is the same file in every repository of the
+organization; everything below is this one's, and the comparison stops at
+this heading.
+
+Each of these is a question. Where another document holds the rule, the
+question names it.
+
+- Does the diff make a module of this package **import anything it does
+  not declare**? `CONTRIBUTING.md`'s *The public surface* states it, and
+  `tests/imports_test.py` is the gate.
+- Does a change **break the promise `SECURITY.md`'s *What belongs here*
+  states**, or do any of what its list calls a vulnerability? Each is a
+  finding until a test shows it does not.
+- A new file in the repository root: `[tool.check-sdist]`'s `git-only`
+  is what says it is deliberately not in the distribution, and its
+  default is that a matching `source-include` pattern puts it there.

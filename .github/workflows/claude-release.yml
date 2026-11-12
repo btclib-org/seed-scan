@@ -1,0 +1,44 @@
+---
+name: claude-release
+
+# A release's pull request prepared by the Claude Code Action. The jobs,
+# their checks and bounds, and who may start a run are all
+# btclib-org/.github's reusable-claude-release.yml, whose header says
+# what its caller holds; section 10 of the organization's standard has
+# the rule. What stays here is the trigger, the permissions, the package,
+# the gates of this tree and the secret, passed by name, none of which
+# the callee holds.
+
+# `workflow_dispatch` alone, as the callee's header asks: an
+# administrator starts a release by hand, and no issue or comment is a
+# prompt
+on:
+  workflow_dispatch:
+
+# least privilege for the GITHUB_TOKEN, elevated on the calling job below
+# and nowhere else
+permissions:
+  contents: read
+
+jobs:
+  # The permissions are the ones the callee's jobs declare, for the
+  # reason claude-review.yml's calling job gives, and the secret is
+  # named rather than inherited for the same reason.
+  claude-release:
+    uses: btclib-org/.github/.github/workflows/reusable-claude-release.yml@cb5a79443399980ba717df2dea23dbedf6bdbc3a # v2026.11.12
+    permissions:
+      contents: read
+      pull-requests: read # the open pull requests and the files each changes
+      actions: read # deps-latest's newest run
+      id-token: write # the OIDC token the action mints at startup, and the one the callee's publish job trades for the App's token
+    with:
+      # the package release.yml passes reusable-public-api.yml
+      package: seed_scan
+      # CONTRIBUTING.md's *The environment and the gates*, one command
+      # per line
+      gates: |
+        uv run pytest
+        uv run pre-commit run --all-files
+        uv run --locked --no-default-groups --group docs sphinx-build -n -W -b html docs/source docs/build/html
+    secrets:
+      CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}

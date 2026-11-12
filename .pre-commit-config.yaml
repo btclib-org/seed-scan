@@ -1,0 +1,729 @@
+---
+# Skip one or more hooks with the SKIP environment variable:
+# $ SKIP=mypy,ruff-check pre-commit run --all-files
+
+# these hooks are the lint gate: the lint workflow runs this very file, so
+# what CI enforces is exactly what a local run of this file enforces, with
+# no second list of tools and versions to keep in step. What pre-commit.ci
+# provides on top of that, and what it is kept for, is the periodic pull
+# request bumping the revisions pinned below
+ci:
+  # a bot committing to a branch is at odds with the rest of this setup,
+  # where no workflow token can write and every action is pinned to a
+  # commit SHA: a failing hook is fixed by hand, by its author or by an
+  # owner where CONTRIBUTING.md says so
+  autofix_prs: false
+  # no autoupdate_branch, as dependabot declares no target-branch: the
+  # default is the default branch, which is the only branch a change
+  # lands on
+  autoupdate_commit_msg: "Update the pinned pre-commit hook revisions"
+  autoupdate_schedule: weekly
+  # the hooks pre-commit.ci cannot run: mypy and pyroma shell out to uv,
+  # which is not installed there, and the lint workflow covers them.
+  #
+  # uv-lock installs its own uv, and asks it for the interpreter
+  # .python-version names: the pre-commit.ci image does not carry it and
+  # has no network to download it. The lint workflow installs that
+  # interpreter and runs uv-lock (issue btclib-org/.github#1348).
+  # actionlint-shellcheck runs past pre-commit.ci's time limit.
+  # What the skip costs is nothing that decides a merge -- lint.yml runs
+  # this file whole, with the command a developer runs, on every push to
+  # main and on every pull request that is not a draft
+  skip: [mypy, pyroma, uv-lock, actionlint-shellcheck]
+
+repos:
+  # this file checking itself, and the only two hooks here with no
+  # environment to install. A `files` or `exclude` pattern that stops
+  # matching anything is a hook that has quietly stopped running: the rule
+  # is still written down and no longer enforced, which is the one defect
+  # a green run cannot report on itself
+  - repo: meta
+    hooks:
+      - id: check-hooks-apply
+      - id: check-useless-excludes
+  # this file checking itself further, on the two moves `autoupdate` makes
+  # that it must not take. A rev naming only a major version follows every
+  # future release of that major, which is the one thing a rev is here to
+  # prevent -- and a prerelease is not a release.
+  #
+  # Both moves are real ones and not a hypothesis: typos keeps a floating
+  # major tag beside each versioned one on the same commit, and autoupdate
+  # prefers the shorter name; pyroma's tag order puts prereleases ahead of
+  # its last release. A red bot pull request is what stops either, rather
+  # than somebody reading a two-line diff carefully.
+  #
+  # pre-commit says the first half itself -- "appears to be a mutable
+  # reference (moving tag / branch) ... not supported" -- on stderr, as a
+  # warning, on a run that then exits zero: which is the whole difference
+  # this hook makes, and the reason it is worth its lines.
+  #
+  # A commit SHA stays acceptable, should a hook ever want one: the pattern
+  # requires the prerelease marker and its digits to end the value, which
+  # forty hex characters do not. Verified against every rev in this file,
+  # none of which it matches, and against `v1` and 5.1b1, both of which it
+  # names by line
+  - repo: local
+    hooks:
+      - id: pinned-rev
+        name: every pre-commit rev names a released version
+        language: pygrep
+        entry: '^ *rev: "?v?([0-9]+|[0-9][0-9.]*(a|b|rc|dev)[0-9]+)"?$'
+        files: ^\.pre-commit-config\.yaml$
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      # no derogation for markdown's two-space line break: nothing here
+      # spells one. README.md's badge block groups its rows with blank
+      # lines, the same convention every repository of the organization
+      # uses, so a trailing space anywhere in this tree is an accident
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: mixed-line-ending
+        # not the default --fix=auto, which normalizes a file to its own
+        # most frequent ending: a file entirely in CRLF is consistent by
+        # that measure, so it stays, and the LF lines added to it are
+        # converted the wrong way. This repository is LF throughout
+        args: [--fix=lf]
+      - id: check-case-conflict
+      # execve, which reads a shebang, refuses a file without the
+      # executable bit (EACCES), so execve never starts the interpreter a
+      # shebang on such a file names. Its converse,
+      # check-executables-have-shebangs, is not here: no tracked file
+      # carries the bit, and check-hooks-apply above fails a hook with no
+      # file to read
+      - id: check-shebang-scripts-are-executable
+      # no byte order mark anywhere today: what it costs is one line, what
+      # it buys is that an editor on another platform cannot quietly add
+      # three bytes in front of a Python file
+      - id: fix-byte-order-marker
+      # this one *adds* "# -*- coding: utf-8 -*-" to every Python file.
+      # UTF-8 has been the default source encoding since Python 3 and the
+      # floor here is 3.11, so it is a dead line per file
+      # - id: fix-encoding-pragma
+      - id: check-yaml
+      - id: check-json
+        # `.vscode` is jsonc and not json: VSCode reads a comment in its own
+        # settings.json and extensions.json, and what those two files carry
+        # besides the settings is the reason for each of them. A json parser
+        # rejects the file at the first one, so the exclude is what keeps the
+        # reasons in the file they explain. It is not a gap: prettier below
+        # is given that directory and fails on what it cannot parse, which
+        # is the question this hook asks
+        exclude: ^\.vscode/
+      # --indent=4 because that is what `json.dumps(indent=4)` writes, and
+      # --no-sort-keys because a key order is an argument the file makes,
+      # not an accident of the writer. --autofix because every other fixing
+      # hook here corrects rather than reports.
+      # `.vscode` is excluded for the reason check-json above is: those
+      # files are jsonc, and prettier below formats them instead
+      - id: pretty-format-json
+        name: pretty-format-json (in place fixes)
+        args: [--autofix, --indent=4, --no-sort-keys]
+        exclude: ^\.vscode/
+      - id: check-merge-conflict
+      - id: check-vcs-permalinks
+      - id: detect-private-key
+      - id: debug-statements
+      - id: check-docstring-first
+      # the hook's default, *_test.py, with neither args nor exclude.
+      # What it is for is the one failure mode a test suite cannot report
+      # on itself -- a file named so that pytest never collects it is not
+      # a red test, it is no test, and the count in the report is the only
+      # thing that moves.
+      # test_*.py, i.e. --pytest-test-first, would guard the same thing,
+      # pytest's default `python_files` collecting both; *_test.py is the
+      # convention the test modules here follow, and needs no args. No
+      # exclude, and the hook's own exemptions, conftest.py and
+      # __init__.py, are what keep it that way: shared test code lives in
+      # the package __init__, tests/__init__.py first, and naming such a
+      # module something_test.py would be this hook's failure mode written
+      # by hand -- a name that says "test" to every reader, on a module
+      # with none
+      - id: name-tests-test
+      - id: check-toml
+      # only files being *added* are measured, the hook intersecting its
+      # arguments with git's added set. The default 500 KB is left alone:
+      # it is the threshold at which a blob deserves a sentence saying where
+      # it came from
+      - id: check-added-large-files
+      # there are none, and a submodule is the one dependency that would
+      # not be in uv.lock, not be pinned by dependabot, and not be
+      # visible in an sdist
+      - id: forbid-submodules
+  # the credentials of other systems, which is the half of secret scanning
+  # GitHub's free plan does not cover: partner and provider tokens are
+  # scanned server-side, the generic patterns (PEM keys, connection
+  # strings, authentication headers) belong to Secret Protection, and the
+  # API accepts that setting with a 200 and leaves it disabled.
+  # detect-private-key above covers the PEM case, and the lint workflow
+  # runs these hooks on every pull request, a fork's included, so this is
+  # not only a local gate.
+  # It earns its place twice over on a tree whose subject is keys, whose
+  # tests are to hold them in hex, a shape the scanner is right to stop
+  # on.
+  # Not gitleaks: all of its hook ids invoke it with --staged, so under
+  # "pre-commit run --all-files", which is what CI runs, it scans an
+  # empty staged set and passes
+  - repo: https://github.com/Yelp/detect-secrets
+    rev: v1.5.0
+    hooks:
+      - id: detect-secrets
+        name: detect-secrets (credentials of other systems)
+        # the findings are recorded in .secrets.baseline as already
+        # reviewed rather than excluded from the scan: an exclusion makes a
+        # file blind for good, and the difference is not theoretical -- a
+        # real credential added to a file that is excluded is not seen
+        # while it is excluded, and is seen now.
+        # CONTRIBUTING.md has the command that regenerates the baseline
+        args: [--baseline, .secrets.baseline]
+  # a typo in a comment is cosmetic; the same typo in the README is the
+  # shop window, that file being the PyPI long description, and in an
+  # exception message it is an interface a caller may match on.
+  # Configured in pyproject.toml ([tool.codespell]) rather than in args
+  # here: the skip list needs a paragraph of justification, and a hook
+  # invocation is the wrong place for one
+  - repo: https://github.com/codespell-project/codespell
+    rev: v2.4.3
+    hooks:
+      - id: codespell
+        name: codespell (prose and comments, in place fixes)
+        # the "clear" dictionary alone, where codespell's default is
+        # "clear,rare": the other four builtins make a hook whose findings
+        # are mostly wrong, and such a hook gets an ignore list long enough
+        # to hide a real typo. "rare" reports "lets" (as in "lets the
+        # release workflow gate publication") and "falsy"; "usage" is not a
+        # spell checker at all, flagging "master"
+        args: [--builtin, clear, --write-changes]
+  # the second spell checker, and not a replacement for the one above:
+  # codespell matches whole words and keeps the hyphen inside the token, so
+  # `hex-strin` is invisible to it with every builtin dictionary enabled,
+  # while typos splits hyphens, snake_case and camelCase. pyproject.toml
+  # ([tool.typos]) has the whole of the reasoning and the configuration, as
+  # for codespell
+  # crate-ci/typos re-tags a moving `v1` alias onto the same commit
+  # as each release, and `git describe --tags` breaks the tie between
+  # two tags on one commit by creation date, which names the alias.
+  # `autoupdate` proposes that alias on every run and `pinned-rev` above
+  # refuses it on every run, so the pin stays stuck rather than moving.
+  # `autoupdate` walks every `repo:` entry except `local` and `meta`, so
+  # a local hook is the one shape it cannot reach; `additional_dependencies`
+  # below carries the version pin in its place, and `language`, `entry`,
+  # `args` and `types` are upstream's own typos hook definition, copied
+  # in rather than fetched
+  - repo: local
+    hooks:
+      - id: typos
+        name: typos
+        language: python
+        additional_dependencies: [typos==1.49.0]
+        entry: typos
+        args: [--write-changes, --force-exclude]
+        types: [text]
+        stages: [pre-commit, pre-merge-commit, pre-push, manual]
+  # ahead of markdownlint-cli2 below on purpose: that hook's `--fix`
+  # repairs the very seam the third check exists to name, so a hook
+  # reading the file after it would find nothing left to report.
+  - repo: https://github.com/btclib-org/.github
+    rev: 0ab5b1440e2cfe45877dc8cf3a4a9187ca935d61 # frozen: v2026.11.10
+    hooks:
+      - id: check-changelog
+        args: [--grandfathered, "0"]
+  - repo: https://github.com/DavidAnson/markdownlint-cli2
+    rev: v0.24.0
+    hooks:
+      # --fix: corrects in place, like every other fixing hook here
+      - id: markdownlint-cli2
+        name: markdownlint-cli2 (in place fixes)
+        args: [--fix]
+  # how a link destination is spelled, which markdownlint has no rule for
+  # and the documentation build depends on. docs.yml greps the built html
+  # for `href="#./`: that is what myst renders in place of a link the
+  # RootFileLinks transform in docs/source/conf.py cannot resolve -- an
+  # anchor to an id no page has, which -W reports today and would stop
+  # reporting the day suppress_warnings took myst.xref_missing back. A
+  # grep can key on one spelling, so the destinations are spelled one way
+  # and this hook is what keeps them that way, in the commit that writes
+  # the link rather than in the artifact built from it.
+  #
+  # The rule is the prefix and not the extension, and the table in
+  # btclib-org/btclib#1175 is what decides that: "DOES_NOT_EXIST.txt",
+  # "sub/DOES_NOT_EXIST.md" and "DOES_NOT_EXIST" each reach myst's
+  # fallback, and an ".md"-scoped rule leaves all three writable. The
+  # table's fourth row, "../DOES_NOT_EXIST.md", is answered separately
+  # below rather than by this rule.
+  #
+  # The link text is "(?:[^]]|\]\([^)]*\))*", a character that is not
+  # "]" or a whole "](...)" group, because a badge is
+  # "[![alt](src)](href)": link text written "[^]]*" stops at the "]" that
+  # closes the alt text, and a scan anchored on it checks the image src
+  # and never the badge's own destination. This one steps over the image
+  # and, by backtracking, still checks the src on the way. A badge href
+  # renders exactly what a plain href renders, so every row of the table
+  # above can be written as a badge destination.
+  #
+  # An unresolvable link written "./page.md", "./page.md#anchor",
+  # "./page.txt", "./sub/page.md" or "./page" renders "#./" and the
+  # destination, so the one grep sees every one; the same destinations
+  # without the "./" render the destination alone, which no single
+  # pattern reaches without also matching the autodoc anchors these pages
+  # carry, such as href="#module-seed_scan.exceptions".
+  #
+  # "../" is accepted, unlike the three rows above: conf.py's
+  # RootFileLinks transform resolves a target written this way against
+  # the document that wrote it, through `doc2path`
+  # (btclib-org/btclib#1562). A working "../" link resolves; a broken one
+  # is left to myst's own resolver, which `sphinx-build -n -W` reports on
+  # its own, so refusing the shape here would buy nothing the build does
+  # not already catch.
+  #
+  # pygrep, and the same hook in every repository of this organization
+  # (btclib-org/.github#20): there is no shared hook repository to put
+  # it in, and `pinned-rev` above is that arrangement already. The
+  # pattern asks for a whole `[text](destination)`, so grep output of the
+  # form `FILE.md:21:](x.md)` carries no "[" and is not matched. The
+  # lookbehind refuses a "[" preceded by a backtick, which is what lets
+  # prose quote the refused shape in a code span -- and refuses one
+  # preceded by "!" or "[" as well, so that a *quoted* badge is escaped
+  # whole: without those two the scan would re-enter at the image inside
+  # it and report the src. The leading "!?" is what keeps a standalone
+  # image's own src checked despite that.
+  #
+  # A reference definition is a link too, and the second branch is for
+  # it: "[label]: page.md" renders the same fallback as the inline form
+  # -- measured on the built html -- and carries no "(", so the first
+  # branch cannot see it. That branch is anchored at the start of the
+  # line, which is what keeps it off a *use* site: "[label][ref]: the"
+  # is prose in a sibling repository's changelog, and an unanchored
+  # pattern reported it. At most three leading spaces, four making the
+  # line an indented code block rather than a definition.
+  #
+  # What pygrep cannot see is a fenced block, being line based -- an
+  # example of the refused shape inside one fails this hook, and the
+  # code span is the way round it
+  - repo: local
+    hooks:
+      - id: local-link-prefix
+        name: a local markdown link destination begins with ./ or ../
+        language: pygrep
+        # one line, and no literal space in it -- "\x20" is the space the
+        # reference branch allows -- so yamllint reads the value as a
+        # single unbreakable word, which its line-length rule exempts. A
+        # block scalar rather than a quoted one for the same reason a
+        # folded scalar was rejected: folding joins lines with a space,
+        # which would land inside the regex
+        entry: |-
+          (?<![`!\[])(?:!?\[(?:[^]]|\]\([^)]*\))*\]\(|^\x20{0,3}\[[^]]+\]:\s*)(?!\.\.?/|#|[A-Za-z][A-Za-z0-9+.-]*:)[^)\s]
+        types: [markdown]
+        exclude: ^README\.md$
+      # the root README.md is the package's page on the index, where a
+      # relative link reaches nothing: section 2 of the organization's
+      # standard is the rule. The pattern above with "./" and "../" no
+      # longer admitted
+      - id: readme-absolute-link
+        name: the root README.md links a file of the tree absolutely
+        language: pygrep
+        entry: |-
+          (?<![`!\[])(?:!?\[(?:[^]]|\]\([^)]*\))*\]\(|^\x20{0,3}\[[^]]+\]:\s*)(?!#|[A-Za-z][A-Za-z0-9+.-]*:)[^)\s]
+        files: ^README\.md$
+        types: [markdown]
+      # a line that ends inside a word, at that word's own hyphen.
+      # Section 4 of the organization's standard is the rule: what such a
+      # line renders as, why nothing else here catches it, what this
+      # pattern cannot see, and what the measurement was before it was
+      # proposed. The types are where a build renders prose from --
+      # markdown, and what docutils reads, an rst page and a Python
+      # docstring -- so a comment sharing a Python file with a docstring
+      # is refused alongside it, one line at a time being all pygrep
+      # reads
+      - id: no-hyphen-at-end-of-line
+        name: a word is not wrapped at its own hyphen
+        language: pygrep
+        entry: "[A-Za-z0-9]-$"
+        types_or: [markdown, python, rst]
+      # a placeholder that is a whole argument, in quotes. Section 9 of
+      # the organization's standard is the rule and what the quoting
+      # costs a paste; section 4 is where this hook is, which quotes it
+      # exempts, and the three things this pattern cannot see. The
+      # discrimination is read off the line and not off the fence around
+      # it, because a fence-aware pattern has to consume everything
+      # before the match and pygrep then reports the file's first line
+      # and prints the whole prefix. A shell assignment takes no space
+      # around its `=`, so a line carrying one is another language's
+      # value; and a quote inside a quote of the other kind is a nested
+      # program's -- both read off one line, which is also where the
+      # three blind spots come from. Same `\x20` as above, and the same
+      # reason.
+      # `CHANGELOG.md` and `RELEASE_NOTES.md` are out of reach because
+      # section 9 makes them append-only: a refused shape in an entry
+      # that has landed has no repair, and there would be no green state
+      # to reach. `exclude:` selects files and pygrep reads whole ones,
+      # so an exclusion keyed on the older entries alone cannot be
+      # written; and check-useless-excludes asks the pattern to match
+      # some file the hook selects rather than each name in it, which is
+      # what lets a tree with no release notes carry the same line
+      - id: unquoted-placeholder
+        name: a placeholder standing as a whole argument is unquoted
+        language: pygrep
+        entry: |-
+          ^(?![\x20\t]*[A-Za-z_][A-Za-z0-9_.-]*[\x20\t]+=[\x20\t])(?:(?:[^"'\n]|'[^'\n]*')*"<[^<>"'`\n]*>"|(?:[^"'\n]|"[^"\n]*")*'<[^<>"'`\n]*>')
+        types: [markdown]
+        exclude: ^(CHANGELOG|RELEASE_NOTES)\.md$
+  # what ruff-format is for Python, on the structured files ruff does not
+  # read: yaml, and the jsonc that carries a comment. Before yamllint below,
+  # so the linter judges the formatted file and not the one that was typed.
+  #
+  # Not the archived pre-commit/mirrors-prettier, which stopped at prettier
+  # 2. The default configuration and no .prettierrc: what this tree already
+  # writes is what prettier writes, the exception being an inline sequence
+  # long enough to be exploded, and a block sequence -- which prettier
+  # leaves alone -- is the spelling that keeps one entry per line whatever
+  # the width.
+  #
+  # `files` is an allow list and not an exclude, because prettier reads more
+  # than it should be given here. markdown is markdownlint's, whose config
+  # settles the styles prettier would also have an opinion about;
+  # .secrets.baseline is detect-secrets' own output. Every other
+  # structured file in the tree is in scope, .markdownlint.jsonc included,
+  # and that is also what parses them -- check-json above cannot read a
+  # comment, and prettier fails on a file it cannot parse
+  - repo: https://github.com/rbubley/mirrors-prettier
+    rev: v3.9.10
+    hooks:
+      - id: prettier
+        name: prettier (yaml and jsonc, in place fixes)
+        files: ^(.*\.ya?ml|\.vscode/.*\.json|\.markdownlint\.jsonc)$
+  # the same for toml, which is pyproject.toml and nothing else here:
+  # uv.lock is toml to identify and therefore matched by the hook's own
+  # types, and it is uv's file to write. .taplo.toml holds the formatting
+  # choices and the reasoning for them, as .yamllint.yaml and [tool.typos]
+  # do. taplo-lint is not enabled beside this: it validates against a schema
+  # catalogue it fetches, and pyroma and check-sdist below already read
+  # this file, and build from it, offline
+  - repo: https://github.com/ComPWA/taplo-pre-commit
+    rev: v0.9.3
+    hooks:
+      - id: taplo-format
+        name: taplo (toml, in place fixes)
+        exclude: ^uv\.lock$
+  # the shape of a yaml file, which nothing else here reads:
+  # markdownlint holds markdown to 80 columns, ruff holds a Python
+  # docstring and a whole-line comment to the same, toml-comment-width
+  # below holds a toml comment there too, and the prose in a yaml file
+  # is held to a width by this hook or by nothing -- prettier above
+  # rewraps no comment. Width is the half of this a sibling gate could
+  # in principle have covered; a key written twice, a block indented
+  # under nothing, a value that is octal by accident are read by
+  # nothing else at all.
+  # Configured in .yamllint.yaml rather than in args here, as codespell
+  # and typos are configured in pyproject.toml: every place that file
+  # departs from the default set carries the reason it does, and a hook
+  # argument has no room for a paragraph. That file is the organization's
+  # copy, byte for byte, which is why the reasoning is not restated here
+  - repo: https://github.com/adrienverge/yamllint
+    rev: v1.38.0
+    hooks:
+      - id: yamllint
+        name: yamllint (the default rule set, less two)
+  # the width of a toml comment, which is prose: markdown has MD013, a
+  # Python docstring and a whole-line comment have W505, a yaml line has
+  # yamllint above, and [tool.ruff.lint.pycodestyle] in pyproject.toml
+  # names the 80 those two meet. A local pygrep rule because nothing off
+  # the shelf does it: taplo above formats values and leaves comments
+  # alone, by design, a formatter that reflowed prose being a formatter
+  # that rewrites it.
+  # `.{80}\S*[ \t]` reports a line only when whitespace is left past
+  # byte 80: a comment whose overflow is one unbroken token is exempt.
+  # Without the amnesty this would be stricter on toml prose than the
+  # rules it mirrors are on the same sentences in a .py or a .md.
+  # The `#` after optional indent selects a comment and not a long value:
+  # `addopts` in pyproject.toml is a single token no width can break, and
+  # a value is not prose.
+  # pygrep matches bytes, so a non-ascii character would count as its
+  # utf-8 length. Every toml file here is ascii today, and the error is
+  # in the safe direction anyway -- a line reported one column early is
+  # rewrapped, never a line silently let through
+  - repo: local
+    hooks:
+      - id: toml-comment-width
+        name: toml comment width (80 bytes, an unbroken final token exempt)
+        language: pygrep
+        entry: '^(?=[ \t]*#).{80}\S*[ \t]'
+        files: \.toml$
+  # .github/dependabot.yml is validated by nothing else here: check-yaml
+  # above asks whether it is yaml, and actionlint below reads workflows
+  # and not this. A typo in a package-ecosystem or a directory is not an
+  # error to GitHub -- it silently updates nothing, and the evidence is a
+  # pull request that never arrives, so "it stopped running and said
+  # nothing" is exactly the failure to guard against.
+  # check-github-workflows is not added beside it: actionlint already
+  # reads every workflow and goes further than the schema does, into
+  # expressions, contexts and runner labels.
+  # .readthedocs.yaml is the same argument again: yaml that check-yaml
+  # reads as yaml and nothing reads as a build definition, on a service
+  # whose failure mode is a docs build that stops happening
+  - repo: https://github.com/python-jsonschema/check-jsonschema
+    rev: 0.39.0
+    hooks:
+      - id: check-dependabot
+      - id: check-readthedocs
+      # .github/ISSUE_TEMPLATE/ is read the same way and by nothing else
+      # here either: a form whose `type:` is misspelt is still yaml, and
+      # the reader who meets it is a person on the New issue page rather
+      # than a run. Each brings its own files: and types: -- config.yml
+      # under that spelling for the first, the directory's yaml that is
+      # neither config.yml nor config.yaml for the second, a markdown
+      # template for neither -- so check-hooks-apply above is what says
+      # this tree still holds one of each
+      - id: check-github-issue-config
+      - id: check-github-issue-forms
+  # the workflows are yaml with expressions, contexts and `run:`
+  # bodies in them, and nothing else here validates any of that: an
+  # unknown key, a typo in a context reference, a job depending on one
+  # that is not there are things a run discovers by failing.
+  # kjanat/actionlint rather than rhysd/actionlint: upstream does not parse
+  # `uses: $/...` (rhysd/actionlint#711; rhysd/actionlint#732, unmerged,
+  # implements it), and the fork does (btclib-org/.github#1698). The rev
+  # is the sha `pre-commit autoupdate --freeze` writes for the tag its
+  # comment names, the annotated tag's own object, so a moved tag cannot
+  # change what runs here.
+  # The cost: pre-commit.ci's weekly bump keeps this line frozen, writing
+  # the new sha with `  # frozen: <tag>`, two spaces before the `#`,
+  # which prettier above rewrites to one. The bot's pull request then
+  # fails prettier until a commit restores the one-space form. A local
+  # `pre-commit autoupdate` without `--freeze` writes the tag name instead
+  # and drops the comment.
+  # The hook is `language: golang`, so pre-commit builds it with a go
+  # toolchain. `actionlint-shellcheck` installs a Go build of shellcheck
+  # beside actionlint in the hook's environment: actionlint hands the body
+  # of a `run:` step to shellcheck, and without one it validates the yaml
+  # around a script and not the script. No workflow has a
+  # `shell: python` step, so the pyflakes it also delegates to is not
+  # declared.
+  - repo: https://github.com/kjanat/actionlint
+    rev: 2da2ceb4af2c7ecc48f5b9311d85080c3971b5f0 # frozen: v1.17.0
+    hooks:
+      - id: actionlint-shellcheck
+        name: actionlint (github workflows)
+  # actionlint asks whether a workflow is correct, zizmor whether it is
+  # safe: a token persisted where a later step can read it, a cache
+  # restored into the job that builds what gets published, an expression
+  # interpolated into a shell script, a trigger that runs a fork's code
+  # with write access. --persona=auditor runs on every commit rather than
+  # by hand, because this tree measures zero under it: every workflow
+  # granting a scope writes its reason on the grant's own line, which is
+  # what undocumented-permissions reads. A finding either audit raises is
+  # this tree's own regression, not advice to weigh
+  # (btclib-org/.github#1164)
+  - repo: https://github.com/zizmorcore/zizmor-pre-commit
+    # self-repository flags a `uses: ./...` reference and recommends
+    # `uses: $/...`. The finding is declined per site, with an inline
+    # `# zizmor: ignore[self-repository]` on each `uses: ./` line
+    # (btclib-org/.github#1144).
+    rev: v1.32.0
+    hooks:
+      - id: zizmor
+        # offline is what it does by default, said out loud: it warns about
+        # the implicit choice on every run, and the choice is the right one.
+        # Two audits can query GitHub for the actions a workflow pins --
+        # impostor-commit and known-vulnerable-actions -- which would make
+        # the hook want a token and report differently on a machine that
+        # has none. Those two therefore stay unrun, here and in CI.
+        # --no-progress is repeated rather than added: args replaces what
+        # the hook declares, and that flag is the whole of what it declares,
+        # so passing --offline alone would drop it
+        args: [--offline, --no-progress, --persona=auditor]
+  # ruff replaces autoflake, bandit, black, copyright_notice_precommit,
+  # docformatter, flake8, isort, pydocstringformatter, pydocstyle, pylint,
+  # pyupgrade, and yesqa
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.17.4
+    hooks:
+      - id: ruff-check
+        name: ruff check (in place fixes)
+        args: [--fix]
+      - id: ruff-format
+        name: ruff format (in place fixes)
+  # what ruff's D rules do not reach: they ask that a docstring exists, and
+  # this asks that the arguments and the return it documents are the ones
+  # the signature declares -- the half that goes wrong in silence when a
+  # signature changes and the prose above it does not. The configuration is
+  # in pyproject.toml, next to the ruff one, and says which of its checks
+  # are off here and why.
+  #
+  # Scoped to seed_scan, which is where the contract has to be
+  # written down: what a consumer of the installed package reads is
+  # help() and an IDE tooltip, with no README beside it. Neither of the
+  # two other trees is that -- a test documents what it claims and not
+  # the fixtures it takes, and .github/scripts is read from the source
+  # tree by whoever changes it
+  - repo: https://github.com/jsh9/pydoclint
+    rev: 0.12.0
+    hooks:
+      - id: pydoclint
+        name: pydoclint (arguments and return values)
+        args: [--config=pyproject.toml]
+        files: ^src/seed_scan/.*\.py$
+  # a child process decoded through `text=True` takes the locale's
+  # encoding, by the same rule an `open` without one does -- what a
+  # failure reports then depends on what Windows decoded the child's
+  # stderr as. No linter here has an opinion on the keyword: ruff's
+  # unspecified-encoding reads `open` and the pathlib and tempfile
+  # spellings and stops there.
+  # `encoding=` is what the call wanted anyway: passing it puts subprocess
+  # in text mode, so the fix is one keyword in place of another and never
+  # a mode change.
+  # A literal keyword rather than a call-shaped pattern, because pygrep is
+  # line based and a call like that spans several lines. It costs nothing
+  # to be that blunt: there is no reason to write `text=True` that
+  # `encoding="utf-8"` does not answer
+  - repo: local
+    hooks:
+      - id: decoded-subprocess-encoding
+        name: a decoded subprocess names its encoding, not text=True
+        language: pygrep
+        entry: '\b(text|universal_newlines)=True'
+        files: \.py$
+      # section 8 of the organization's standard's own acceptance
+      # command, run at the gate: a pragma with nothing after it on its
+      # line carries no reason, for no cover and no branch alike. The `#`
+      # immediately before pragma is what a comment always carries and a
+      # backticked reference to the rule in prose never does, section 8
+      # already saying prose drops it -- so this does not refuse a
+      # docstring quoting the rule, which a pygrep reading one line could
+      # not otherwise tell from a site
+      - id: reasonless-coverage-pragma
+        name: a coverage pragma with no inline reason is refused
+        language: pygrep
+        entry: '#\s*pragma: no (cover|branch)$'
+        types: [python]
+      # section 4 of the standard, its bare-sourcery-skip bullet, is the
+      # rule. pygrep reads bytes, so \s and \w are ASCII there and \W
+      # takes in a non-breaking space; a block scalar with no literal
+      # space, as local-link-prefix's, for the same reason
+      - id: bare-sourcery-skip
+        name: a sourcery skip names rules, and no tag
+        language: pygrep
+        entry: |-
+          #\W*sourcery\W+skip\b(?!:[^#;\w]*\w)|#\W*sourcery\W+skip:[^#]*(?<![\w-])(?:default|refactoring|suggestion|comment)(?![\w-])
+        types: [python]
+  # not the mirrors-mypy hook: it injects --ignore-missing-imports, which
+  # turns an unresolved (or misspelled) import into Any, the opposite of
+  # strict, and it type checks in an isolated environment, where the
+  # project itself is not installed -- so `import seed_scan` in a
+  # test would be Any and every assertion about it would check out
+  # vacuously. This is the very command the lint workflow runs, against
+  # the project environment and the real pytest.
+  # --locked, and not --frozen, which takes uv.lock as
+  # it finds it: a dependency added to pyproject.toml without a re-lock
+  # leaves mypy type checking a stale environment and saying nothing about
+  # it.
+  # .github/scripts is in the scope because what lives there is run by a
+  # workflow, and strict mode is what reads it between two runs
+  - repo: local
+    hooks:
+      - id: mypy
+        name: mypy (strict, in the project environment)
+        entry: >
+          uv run --locked --no-default-groups --group lint --group test
+          mypy src/seed_scan tests .github/scripts
+        language: system
+        types: [python]
+        pass_filenames: false
+        require_serial: true
+  - repo: https://github.com/astral-sh/uv-pre-commit
+    rev: 0.13.7
+    hooks:
+      # keep uv.lock in sync with pyproject.toml
+      - id: uv-lock
+  # what is tracked and not in the sdist, and what is in the sdist and not
+  # tracked, both ways round, against the patterns of
+  # [tool.uv.build-backend]. --no-isolation is in the hook's own entry, and
+  # pre-commit.ci requires it -- an isolated build environment cannot be
+  # created there (no ensurepip in the interpreter, read-only virtualenv app
+  # data).
+  # --installer=pip is what has the archive packed by the backend named
+  # below. The default is uv|pip, which resolves to uv wherever the `uv`
+  # package is importable or a uv is on PATH, and check-sdist then runs
+  # `uv build` -- not PEP 517 for this backend: given a requires the running
+  # uv satisfies, uv builds with the copy of uv_build bundled in itself,
+  # whatever the environment holds, so a specifier here would decide
+  # nothing. With --installer=pip check-sdist runs
+  # `python -m build --no-isolation`, which does read the hook environment.
+  # What that keeps is the environment inside [build-system]'s requires,
+  # `build` refusing one that falls outside it with `ERROR Missing
+  # dependencies`. It does not keep the two specifiers equal: a requires
+  # widened past the line below leaves that line satisfying it and green,
+  # the half btclib-org/.github#145 leaves open.
+  # args: and additional_dependencies: each replace the manifest's list
+  # rather than adding to it, so --inject-junk is repeated and the uv the
+  # manifest installs is out of the environment, which the pip installer
+  # does not need. --inject-junk plants the tool's own list of leavings
+  # beside the sources for the length of the run; the one of them a pattern
+  # here reaches is tests/package/anything.egg-info, which is what
+  # source-exclude in [tool.uv.build-backend] answers.
+  # Section 12 of btclib-org/.github is the rule (btclib-org/.github#197)
+  - repo: https://github.com/henryiii/check-sdist
+    rev: v1.6.0
+    hooks:
+      - id: check-sdist
+        args: [--inject-junk, --installer=pip]
+        additional_dependencies: ["uv_build>=0.12.0,<0.14"]
+  # what test.yml's dist job's own pyroma step rates the sdist for -- a
+  # missing classifier or url, metadata that is valid but poor -- this
+  # rates the source tree instead, for an answer before pushing rather
+  # than after the build.
+  #
+  # regebro/pyroma's own tag order puts two pre-releases, 5.1b2 and
+  # 5.1b1, ahead of 5.0.1, its last release, and pre-commit.ci's
+  # `autoupdate` resolves a `rev:` to the nearest tag reachable from the
+  # tracked branch with no regard for pre-release status. Nothing in
+  # pre-commit.ci holds one hook back -- `autoupdate_schedule` has no
+  # per-repo or "never" value (pre-commit-ci/issues#83), and a
+  # `# frozen: <tag>` comment does not suppress a later update either
+  # (pre-commit-ci/issues#115).
+  #
+  # A local hook with no `rev` is what takes it out of `autoupdate`'s
+  # reach altogether (btclib-org/.github#1199): the pyroma it runs is the
+  # one uv.lock pins from pyproject.toml's `check` group, and a hook
+  # repository's `rev` would be a second declaration of that dependency.
+  # `pinned-rev` no longer reads a hook here, and nothing else refuses a
+  # prerelease bound in its place -- the check group's own
+  # `pyroma>=5.0.1` names no prerelease, and that is what holds the
+  # checker at a release; bumping it by hand, once pyroma cuts a release
+  # past 5.0.1, stays the maintainer's job.
+  #
+  # `language: system` and `uv run --locked` are the form section 4 of
+  # the organization's standard gives a local hook of this shape, and uv
+  # is on the PATH of every hook because the lint gate is started by it.
+  # `--only-group check` adds that group to the environment the gate runs
+  # from and takes nothing out of it, and installs no project;
+  # `--no-build` makes a dependency with no wheel fail rather than
+  # build from source, as section 4 of the organization's standard says.
+  # The `-d --min=10 .`, `pass_filenames` and `always_run` are the
+  # upstream hook's own definition, written out because a local hook
+  # cannot inherit one.
+  #
+  # The backend is pyproject.toml's `uv_build`, in the same group: pyroma
+  # builds this project to read its metadata and its command line has no
+  # way to say how, so it asks `build` for the metadata without isolation
+  # and falls back to an isolated build -- which needs an index -- when
+  # that raises. The non-isolated path imports the backend out of the
+  # environment and checks nothing else, so the backend alone is what it
+  # takes: the specifier is [build-system]'s own. Measured, rather than
+  # read off the fallback's shape:
+  #
+  #   PIP_NO_INDEX=1 UV_PROJECT_ENVIRONMENT=<a directory that is new> \
+  #     uv run --locked --only-group check pyroma -d --min=10 .
+  #
+  # passes with the group's uv_build and dies in pip with it removed, the
+  # traceback ending in the isolated fallback installing what
+  # [build-system] requires
+  - repo: local
+    hooks:
+      - id: pyroma
+        name: pyroma (the packaging rating of the source tree)
+        language: system
+        entry: uv run --locked --no-build --only-group check pyroma
+        args: [-d, --min=10, .]
+        pass_filenames: false
+        always_run: true

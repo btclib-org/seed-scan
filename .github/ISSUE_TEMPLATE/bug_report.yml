@@ -1,0 +1,74 @@
+---
+name: Bug report
+description: Something in seed-scan does not work as documented
+type: Bug
+
+body:
+  - type: markdown
+    attributes:
+      value: >
+        **Never paste a mnemonic, a passphrase, a seed or a private key**,
+        not even one you believe empty: an issue is public, and so is
+        every edit of it. A bundle or a report holds no secret, but it
+        reveals your addresses; paste one only where you accept that they
+        become public, and a made-up mnemonic that shows the same fault
+        serves as well.
+
+  - type: textarea
+    id: what
+    attributes:
+      label: What happens
+      description: What you observed, and what you expected instead.
+    validations:
+      required: true
+
+  - type: textarea
+    id: repro
+    attributes:
+      label: How to reproduce it
+      description: >
+        The shortest command or Python that shows it, with a made-up
+        mnemonic in place of yours (above), and the full traceback if
+        there is one.
+      render: python
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: seed-scan version
+      description: >
+        `python -c "from importlib.metadata import version;
+        print(version('seed-scan'))"`
+      placeholder: "2026.10"
+    validations:
+      required: true
+
+  - type: input
+    id: platform
+    attributes:
+      label: Platform and interpreter
+      description: >
+        `python -VV` and the operating system, architecture included.
+      placeholder: "CPython 3.14.0, macOS 26.0 arm64"
+    validations:
+      required: true
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Anything else
+      description: >
+        The standard or specification the behaviour should follow, a test
+        vector it disagrees with, and the version this last worked on.
+
+  - type: markdown
+    attributes:
+      value: >
+        **Sign-off.** Whoever takes this issue signs off every commit
+        (`git commit -s`). The required `Sign-off` check refuses a pull
+        request whose commits lack the `Signed-off-by:` trailer;
+        [`CONTRIBUTING.md`'s *Pull
+        requests*](https://github.com/btclib-org/.github/blob/main/CONTRIBUTING.md#pull-requests)
+        says why.

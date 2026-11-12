@@ -1,0 +1,65 @@
+---
+name: lint
+
+# the fast gate, kept apart from the test workflow: a style error is not
+# worth discovering at the end of a suite, and a workflow each means a
+# badge each and a line each in the checks list. docs.yml is apart for the
+# same reason: whether the documentation builds is a third verdict.
+#
+# The checkout, the uv setup, the hook cache and the pre-commit run are
+# btclib-org/.github's: reusable-lint.yml, called at a tagged commit (section 10
+# of the organization's standard). What runs is .pre-commit-config.yaml
+# itself rather than a second list of the same tools, so CI enforces exactly
+# what a local run of it enforces
+
+on:
+  push:
+    # main only: a push to a branch with an open pull request would run
+    # this workflow twice, once per event, in two concurrency groups that
+    # do not cancel each other. main keeps a trigger of its own because a
+    # merge creates a commit the pull request never checked. Tag pushes
+    # are the release workflow's
+    branches: [main]
+  pull_request:
+    # ready_for_review, so a pull request marked ready gets the run the
+    # called workflow's draft condition withheld; closed, so that the
+    # landing falls in this pull request's own concurrency group and
+    # cancels the run it supersedes, the called job declining the real
+    # work on it
+    types: [opened, reopened, synchronize, ready_for_review, closed]
+  # the release workflow gates publication on this check too
+  workflow_call:
+    inputs:
+      concurrency-suffix:
+        description: >
+          Appended to the concurrency group, and the release workflow is
+          the only caller that passes one. See the group below.
+        type: string
+        default: ""
+  # the escape hatch: a run on demand for a branch whose pull request is
+  # not open yet
+  workflow_dispatch:
+
+# least privilege for the GITHUB_TOKEN: everything running in a job
+# (actions, dependencies, hooks) can read the token, so it must not be
+# able to write to the repository
+permissions:
+  contents: read
+
+# cancel superseded runs on the same branch or pull request. Named
+# literally rather than with github.workflow, which in a called workflow
+# is the caller's name. A pull_request run groups by the pull request's
+# own number, which no push's github.ref can equal. The suffix keeps a
+# release run out of the branch groups, github.ref being the caller's
+# inside a called workflow (btclib-org/.github#1083)
+concurrency:
+  group: lint-${{ github.event.pull_request.number || github.ref }}${{ inputs.concurrency-suffix }}
+  cancel-in-progress: true
+
+jobs:
+  # the draft and closed declines, the checkout, the uv setup, the hook
+  # cache and the pre-commit run are the called workflow's own. This tree
+  # checks out no submodule and needs no history beyond the tip, so
+  # `submodules` and `fetch-depth` are left at their defaults
+  lint:
+    uses: btclib-org/.github/.github/workflows/reusable-lint.yml@cb5a79443399980ba717df2dea23dbedf6bdbc3a # v2026.11.12

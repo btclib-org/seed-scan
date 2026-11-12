@@ -1,0 +1,59 @@
+---
+name: Feature request
+description: Add something to seed-scan, or change how it works
+type: Feature
+
+body:
+  - type: markdown
+    attributes:
+      value: >
+        seed-scan finds what a mnemonic of unknown scheme holds: its
+        scheme, its addresses, their coins and the forks that concern
+        them. Moving the funds is the user's own wallet's job, and what is
+        general belongs to the packages seed-scan builds on.
+
+  - type: textarea
+    id: what
+    attributes:
+      label: What is missing
+      description: >
+        What it would let a user do, and how the command would read.
+    validations:
+      required: true
+
+  - type: input
+    id: reference
+    attributes:
+      label: Specification
+      description: >
+        The standard, BIP, RFC or reference implementation that defines it.
+        What has no specification has no test vectors either, which is the
+        harder half of adding it.
+      placeholder: "SLIP-0039, https://github.com/satoshilabs/slips/blob/master/slip-0039.md"
+
+  - type: textarea
+    id: why
+    attributes:
+      label: Why it belongs in seed-scan
+      description: >
+        What cannot be done today with the commands seed-scan already has.
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: >
+        Other spellings of the same feature, and what an existing user
+        would have to change if this were added.
+
+  - type: markdown
+    attributes:
+      value: >
+        **Sign-off.** Whoever takes this issue signs off every commit
+        (`git commit -s`). The required `Sign-off` check refuses a pull
+        request whose commits lack the `Signed-off-by:` trailer;
+        [`CONTRIBUTING.md`'s *Pull
+        requests*](https://github.com/btclib-org/.github/blob/main/CONTRIBUTING.md#pull-requests)
+        says why.

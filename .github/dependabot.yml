@@ -1,0 +1,70 @@
+---
+# every ecosystem this repository has but one: the pre-commit hook
+# revisions are left out. Dependabot has a pre-commit ecosystem, and the
+# maintainer decided to keep pre-commit.ci for them instead
+# (btclib-org/.github#1391): its weekly autoupdate, configured in the ci:
+# block of .pre-commit-config.yaml, already rewrites rev: for every repo:
+# but local and meta, so a second bot on the same pin would only compete
+# with it. A hook whose repo: is local is one autoupdate does not reach:
+# typos moves by a hand edit of its additional_dependencies, and pyroma
+# by the uv ecosystem below, uv.lock being where its version is pinned.
+#
+# every pull request here runs the whole merge gate, so each ecosystem
+# groups its updates into a single pull request rather than paying for
+# that once each. None declares a target-branch: without one dependabot
+# opens against the default branch, which is the only branch a change
+# lands on -- and a target-branch naming a branch that is not there is
+# not an error anywhere, it is a repository where nothing is proposed.
+#
+# Weekly: the deps-latest workflow upgrades everything uv resolves and
+# runs the suite, the lint gate and the packaging checks against it, on a
+# schedule, off the critical path, so each pull request is a diff whose
+# result is already known. The github-actions ecosystem gets the same
+# interval for symmetry rather than for evidence: nothing pre-validates an
+# action bump, and a week where no action moved produces no pull request.
+#
+# The seven day cooldown is what the interval trades against: a
+# compromised release is usually yanked within days, so nothing but
+# btclib-org/.github's tags, excluded in the github-actions block, is offered
+# before it has been public a week
+version: 2
+updates:
+  # every action is pinned to a commit SHA, which nothing but this
+  # moves: without it a pin is frozen, and a fix (or a security advisory)
+  # upstream would never reach this repository
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      # thursday, where deps-latest runs wednesday: the sentinel has just
+      # reported when the pull requests are opened, and it is the day
+      # section 10 of the organization's standard gives every repository
+      day: thursday
+    groups:
+      actions:
+        patterns: ["*"]
+    cooldown:
+      default-days: 7
+      # the exclude section 11 of the organization's standard gives for
+      # btclib-org/.github's own tags, which the calls in .github/workflows
+      # pin
+      exclude: ["btclib-org/.github/*"]
+
+  # uv.lock is committed and the jobs that install from it pass --locked, bar
+  # the exceptions CONTRIBUTING.md lists, while the dependency groups declare a
+  # floor, and a ceiling only on uv_build, copied from [build-system]: the
+  # drift of the test dependencies and the tooling above those floors lives in
+  # the lock file, and this moves it, bar the one exception section 1 of
+  # the organization's standard names. The uv-lock pre-commit hook re-locks
+  # what pyproject.toml changed and upgrades nothing, and deps-latest tests an
+  # upgrade it never commits
+  - package-ecosystem: uv
+    directory: /
+    schedule:
+      interval: weekly
+      day: thursday
+    groups:
+      dev-tooling:
+        patterns: ["*"]
+    cooldown:
+      default-days: 7

@@ -1,0 +1,476 @@
+[build-system]
+# a pure-Python package, so the uv backend: what goes into a distribution
+# is declared by the glob patterns of [tool.uv.build-backend] below,
+# beside the rest of the configuration. The floor is where the sdist's
+# own pyproject.toml becomes a normalized copy of this file with the
+# verbatim one kept beside it as pyproject.toml.orig; the ceiling is the
+# minor after the newest one uv.lock locks, which is where uv's versioning
+# policy puts a breaking change, this backend releasing with uv and
+# versioned by it
+requires = ["uv_build>=0.12.0,<0.14"]
+build-backend = "uv_build"
+
+[project]
+name = "seed-scan"
+# the one place the version is declared: seed_scan.__version__ reads
+# it back from the installed metadata, and docs/source/conf.py reads it
+# from this file. A cycle in progress is the month alone; the release's
+# own pull request replaces it by hand with the date the release is cut,
+# YYYY.M.D, whose month need not be the cycle's
+version = "2026.11"
+description = "What a mnemonic of unknown scheme holds: its scheme, addresses, coins and forks"
+readme = "README.md"
+# PEP 639: a SPDX expression and the files it refers to. COPYRIGHT is not
+# among them: it is the notice every source file opens with, CPY001 below
+# being what keeps it there, and a file of the repository rather than of
+# the distribution
+license = "MIT"
+license-files = ["LICENSE", "AUTHORS.md"]
+authors = [{ name = "The btclib developers", email = "devs@btclib.org" }]
+# an application, so the floor is the oldest interpreter it means to run
+# on (section 1 of the organization's standard): the floor of
+# bip39-slip39, bip32-descriptors, btclib-wallet and coin-addresses, the
+# packages it is to build on, so that whoever runs it offline can use
+# the interpreter that machine already has
+requires-python = ">=3.11"
+# none yet: what the package ships imports the standard library alone,
+# which tests/imports_test.py asserts of every module. The pull request
+# whose code first imports a sibling package declares it here
+dependencies = []
+keywords = [
+    # the repository's topics, entry for entry
+    "account-discovery",
+    "bip39",
+    "cryptocurrency",
+    "electrum",
+    "mnemonic",
+    "seed-phrase",
+    "slip39",
+]
+classifiers = [
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Programming Language :: Python :: 3.15",
+    "Programming Language :: Python :: Implementation :: CPython",
+    "Programming Language :: Python :: Implementation :: PyPy",
+    "Development Status :: 1 - Planning",
+    # a command its users run, so an application in section 1's sense,
+    # and none of the `Topic :: Software Development :: Libraries` pair a
+    # library declares
+    "Environment :: Console",
+    "Intended Audience :: End Users/Desktop",
+    "Intended Audience :: Developers",
+    "Natural Language :: English",
+    "Operating System :: OS Independent",
+    "Topic :: Security :: Cryptography",
+    "Typing :: Typed",
+]
+
+[project.urls]
+homepage = "https://btclib.org/seed-scan/"
+download = "https://github.com/btclib-org/seed-scan/releases"
+changelog = "https://github.com/btclib-org/seed-scan/blob/main/RELEASE_NOTES.md"
+repository = "https://github.com/btclib-org/seed-scan"
+issues = "https://github.com/btclib-org/seed-scan/issues"
+pull_requests = "https://github.com/btclib-org/seed-scan/pulls"
+
+# Every entry below declares a lower bound, the release uv.lock resolved
+# when the entry was written: a bound no run has installed would claim a
+# compatibility nothing tested. A bound that has fallen below the lock is
+# by design, `uv lock --upgrade` moving the resolution past it and leaving
+# this file's text alone
+[dependency-groups]
+# what runs the suite, without what the suite reads beside the package:
+# `test` is the two together
+harness = [
+    "coverage>=7.16.1",
+    "pytest>=9.1.1",
+    "pytest-cov>=7.1.0",
+    "pytest-randomly>=5.0.0",
+]
+test = [
+    { include-group = "harness" },
+    # tests/docs_conf_test.py executes docs/source/conf.py, which imports
+    # it; the marker and the bound are `docs`'s, below
+    "sphinx>=9.1.0; python_full_version >= '3.12'",
+    # `typing.override` is 3.12's and the floor is 3.11, so a test
+    # overriding a method takes it from the backport; 4.4 is the release
+    # that adds it
+    "typing-extensions>=4.4",
+]
+lint = [
+    "mypy>=2.3.1",
+    "pre-commit>=4.6.2",
+    "ruff>=0.16.9",
+]
+# what inspects the distribution files uv builds, before an upload
+# consumes the version. Named `check`, not `build`: the tools that build a
+# distribution are not the ones that inspect one
+check = [
+    "check-sdist>=1.6.0",
+    "check-wheel-contents>=0.6.3",
+    "pyroma>=5.0.1",
+    "twine>=7.0.0",
+    # pyroma builds this project non-isolated to read its metadata, so the
+    # environment carries [build-system]'s own specifier and the isolated
+    # fallback, which needs an index, is never asked for
+    "uv_build>=0.12.0,<0.14",
+]
+# the marker because the `sphinx` release the lock resolves declares a
+# Requires-Python above requires-python's floor, and an unmarked bound
+# leaves the older interpreters no release to resolve
+docs = [
+    "furo>=2025.12.19; python_full_version >= '3.12'",
+    "myst-parser>=5.1.0; python_full_version >= '3.12'",
+    "sphinx>=9.1.0; python_full_version >= '3.12'",
+]
+dev = [
+    { include-group = "test" },
+    { include-group = "lint" },
+    { include-group = "check" },
+    { include-group = "docs" },
+]
+
+[tool.uv]
+# the oldest uv that may read uv.lock, at most the uv a Dependabot run's
+# log names -- section 1 of the organization's standard has the argument,
+# section 15 the commands that measure it
+required-version = ">=0.13.4"
+
+[tool.uv.build-backend]
+# `module-name` is not written: it defaults to `project.name` normalized,
+# which is `seed_scan` already.
+#
+# What the sdist carries beyond what the backend puts there by itself --
+# pyproject.toml, the module under `module-root`, and the files
+# `project.readme` and `project.license-files` name. Patterns are
+# anchored, so `*.md` is the root's own markdown and does not reach the
+# module's, and `/**` is what recurses
+source-include = [
+    "*.jsonc",
+    "*.md",
+    "*.toml",
+    "*.yaml",
+    ".python-version",
+    ".secrets.baseline",
+    "uv.lock",
+    "docs/**",
+    "tests/**",
+]
+# exclusions win over the inclusions above, and are unanchored unless a
+# pattern starts with "/"
+source-exclude = [
+    # tests whose subject the sdist does not carry: .github is not in it,
+    # so each of these reads a path an unpacked sdist does not have and
+    # fails there. Anchored, because a name this specific matching at some
+    # other depth would be an accident rather than a decision.
+    # tests/source_exclude_test.py checks that every test its reader finds
+    # reaching .github is named here
+    "/tests/interpreters_test.py",
+    "/tests/normalize_sdist_test.py",
+    "/tests/release_digests_test.py",
+    # where `make html` writes
+    "/docs/build",
+    # a cache a tool writes beside what it has just read, taken out by the
+    # property such caches share -- a dot-prefixed basename under a tree
+    # the archive carries whole -- rather than by the name of the tool.
+    # Anchored, so that the root's own dotted files stay in the archive
+    "/docs/**/.*",
+    "/src/seed_scan/**/.*",
+    "/tests/**/.*",
+    # a leftover of the same kind whose name carries no leading dot
+    "*.egg-info",
+    ".gitignore",
+]
+
+[tool.check-wheel-contents]
+# the wheel's `seed_scan/` diffed against this checkout's
+# `src/seed_scan/`, file for file and in both directions (W101
+# missing, W102 extra): with no `package` given, check-wheel-contents
+# reads the wheel's own RECORD and asks nothing about the tree the wheel
+# was supposed to carry, so a dropped `py.typed` is reported clean
+package = ["src/seed_scan"]
+
+[tool.check-sdist]
+# tracked files the sdist is meant not to carry, beyond what
+# [tool.uv.build-backend] source-exclude takes out, which check-sdist
+# reads for the uv backend: the workspaces of an editor and of an agent,
+# and COPYRIGHT, which `project.license-files` does not name
+git-only = [
+    ".claude/",
+    ".vscode/",
+    "COPYRIGHT",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# -ra summarizes everything that was not a plain pass; --strict-config
+# makes a typo in this table an error, and --strict-markers does the same
+# for a marker nobody registered. pytest-randomly is in the harness group
+# and needs no flag: installed, it shuffles the order and prints the
+# seed, and `-p no:randomly` puts the file order back when a failure has
+# to be reproduced against it.
+#
+# --cov is here so that the ratchet below is what a bare `uv run pytest`
+# measures, and tests/conftest.py's `coverage_fail_under` is what gates a
+# partial run at zero instead. Its position is load-bearing: --cov takes
+# an optional value, so as the last token here it would swallow the first
+# path the command line gives, and --durations=8 after it keeps it safe.
+#
+# No -n: section 7 of the organization's standard asks for a worker pool
+# only where the suite is long enough to pay for one, and this one is
+# not. `uv run pytest --durations=0` prints what each test costs
+addopts = "-ra --cov --durations=8 --strict-config --strict-markers"
+# a test that was expected to fail and passed is a fixed bug still marked
+# as broken: strict turns it red instead of reporting xpass
+xfail_strict = true
+# a deprecation warning is the early form of a break, and there is time to
+# act on it only if it is not silent. An ignore added here names the
+# warning, not a module, and says what would let it be dropped
+filterwarnings = ["error"]
+
+[tool.codespell]
+# .secrets.baseline and uv.lock are hashes, not text to correct
+skip = ".secrets.baseline,uv.lock"
+# not a misspelling: `intoto`, in-toto's own spelling in the bundle's name
+# `<tag>.intoto.jsonl`. RELEASING.md writes it in fenced commands, outside
+# the backticks `ignore-regex` below hides, and the dictionary offers
+# "into" for it, which --write-changes applies
+ignore-words-list = "intoto"
+# a misspelling written on purpose goes in backticks, which hides it from
+# this hook: what is inside backticks is an identifier, typos' half of the
+# work and not this hook's
+ignore-regex = '`[^`]*`'
+
+# the second spell checker, blind in different places from the first:
+# typos splits hyphens, snake_case and camelCase itself, where codespell
+# keeps a hyphenated token whole
+[tool.typos.files]
+# the hashes [tool.codespell] skips above, written again rather than
+# shared because the two take different glob syntaxes
+extend-exclude = [".secrets.baseline", "uv.lock"]
+
+[tool.typos.default.extend-words]
+# `intoto` in the bundle's name `<tag>.intoto.jsonl`, as for codespell above:
+# typos' dictionary offers "into" for it too
+intoto = "intoto"
+
+[tool.typos.type.verbatim]
+# the files that quote a word rather than use it: a changelog entry quotes
+# the misspelling it is about, and .pre-commit-config.yaml the ones the
+# two spell checkers found
+extend-glob = ["CHANGELOG.md", "RELEASE_NOTES.md", ".pre-commit-config.yaml"]
+extend-ignore-re = ['`[^`]*`']
+
+[tool.coverage.run]
+# what the ratchet measures, named here rather than on the command line:
+# unnamed, `--cov` measures every file the run imports. .github/scripts
+# is not an importable package, and coverage measures it by path
+source = ["seed_scan", "tests", ".github/scripts"]
+omit = ["*/site-packages/*"]
+# statement coverage alone calls a half-tested `if` fully covered
+branch = true
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = true
+precision = 2
+# 100 is special-cased by coverage, so nothing short of an exact 100.00%
+# passes, and a line no ordinary run reaches is covered by patching what
+# stands in the way or carries a `pragma: no cover --` whose reason names
+# the case on that same line
+fail_under = 100.0
+
+[tool.mypy]
+strict = true
+show_column_numbers = true
+# the organization's list, the same in every repository that runs mypy
+# (section 6 of the standard)
+enable_error_code = [
+    "deprecated",
+    "exhaustive-match",
+    "explicit-override",
+    "ignore-without-code",
+    "mutable-override",
+    "possibly-undefined",
+    "redundant-expr",
+    "redundant-self",
+    "truthy-bool",
+    "truthy-iterable",
+    "unimported-reveal",
+    "unused-awaitable",
+]
+warn_unreachable = true
+# the oldest interpreter requires-python admits: without the key mypy
+# targets whatever runs it, and a typing construct missing from the floor
+# is then invisible
+python_version = "3.11"
+
+[tool.ruff]
+# target-version is inferred from project.requires-python.
+#
+# what makes an exclude hold for a path named explicitly on the command
+# line, and not only for the bare, path-less command
+force-exclude = true
+
+[tool.ruff.format]
+# the formatter reads the fenced ```python blocks of a .md file, and these
+# two are append-only
+exclude = ["CHANGELOG.md", "RELEASE_NOTES.md"]
+
+[tool.ruff.lint]
+# preview and explicit-preview-rules only make sense as a pair: naming a
+# rule in `ignore` below is itself a preview feature, and the second key
+# keeps every other preview rule off unless this file names it
+preview = true
+explicit-preview-rules = true
+# every rule family ruff ships, so a new family arrives with the bump of
+# ruff's own pin rather than never. Section 5 of the organization's
+# standard states the rule; `ignore` below is where every declined rule's
+# reason lives
+select = ["ALL"]
+# pylint's unspecified-encoding, a preview rule: a call that omits the
+# encoding takes the locale's, which is cp1252 on Windows
+extend-select = ["unspecified-encoding"]
+ignore = [
+    # ruff's own docs/formatter.md, "Conflicting lint rules": each of these
+    # is undone by the formatter's own rewriting
+    "tab-indentation",
+    "indentation-with-invalid-multiple",
+    "indentation-with-invalid-multiple-comment",
+    "over-indented",
+    "docstring-tab-indentation",
+    "triple-single-quotes",
+    "bad-quotes-inline-string",
+    "bad-quotes-multiline-string",
+    "bad-quotes-docstring",
+    "avoidable-escaped-quote",
+    "unnecessary-escaped-quote",
+    "missing-trailing-comma",
+    "prohibited-trailing-comma",
+    # a magic method is documented by the data model it implements, and a
+    # presence check on `__init__`'s docstring is satisfied by a line that
+    # restates the annotations (btclib-org/.github#178)
+    "undocumented-magic-method",
+    "undocumented-public-init",
+    # code length is the formatter's: what it leaves over 88 columns is a
+    # string literal or a comment, neither shorter for being reported
+    "line-too-long",
+    # complexity metrics this codebase does not bound globally
+    "too-many-arguments",
+    "too-many-positional-arguments",
+    "too-many-statements",
+    # flake8-self cannot tell a caller outside the package reaching into
+    # private state from a test verifying an implementation detail on
+    # purpose
+    "private-member-access",
+    # a literal compared is the value its line asserts -- a test's expected
+    # answer, a file mode, an argument count -- and a constant naming it
+    # would only restate it
+    "magic-value-comparison",
+    # the message is built where the exception is raised, the only place
+    # holding the value refused
+    "raise-vanilla-args",
+    "raw-string-in-exception",
+    "f-string-in-exception",
+    "dot-format-in-exception",
+    # a flag passed positionally reads as what it is at a call whose
+    # signature names it, and a keyword-only flag is a decision each
+    # signature makes for itself
+    "boolean-type-hint-positional-argument",
+    "boolean-default-value-positional-argument",
+    "boolean-positional-value-in-call",
+    # a parameter a caller's protocol fixes is unread by design: a pytest
+    # fixture requested for its effect, a sphinx hook's signature
+    "unused-function-argument",
+    "unused-method-argument",
+    "unused-lambda-argument",
+    # an import moved behind `if TYPE_CHECKING:` turns autodoc's resolution
+    # of a deferred annotation into a fallback on its text, which the docs
+    # build's `-n` then fails on
+    "typing-only-first-party-import",
+    "typing-only-third-party-import",
+    "typing-only-standard-library-import",
+    # a parsed document or a set of keyword arguments forwarded unread,
+    # narrowed by whoever consumes it
+    "any-type",
+    # flake8-todos disciplines the format of a marker FIX already refuses
+    "invalid-todo-tag",
+    "missing-todo-author",
+    "missing-todo-link",
+    "missing-todo-colon",
+    "missing-todo-description",
+    "invalid-todo-capitalization",
+    "missing-space-after-todo-colon",
+]
+
+[tool.ruff.lint.per-file-ignores]
+# flake8-no-pep420: entry points a workflow step or sphinx invokes by
+# path, never an import
+".github/scripts/*.py" = ["INP001"]
+"docs/source/conf.py" = ["INP001"]
+"**/__init__.py" = ["F401"]         # re-exported imports
+# preview mode's undefined-export does not special-case a module-level
+# __getattr__ (astral-sh/ruff#18504, open): the root package publishes
+# its submodules that way, as its docstring says, and tests/all_test.py
+# walks `__all__` with getattr and fails on the drift this rule would
+# catch
+"src/seed_scan/__init__.py" = ["F822"]
+# the D rules are not here: a public test function states what it
+# verifies under the same docstring gate as the library
+"tests/**" = [
+    "S101",   # assert
+    "S311",   # non-cryptographic random: fine in tests
+    "PT011",  # pytest-raises-too-broad
+    "PT012",  # pytest-raises-with-multiple-statements
+    "PT018",  # pytest-composite-assertion
+    "RUF043", # pytest-raises-ambiguous-pattern
+]
+
+[tool.ruff.lint.mccabe]
+# ruff's default, and a function over it carries a noqa whose reason is
+# the comment above the def; RUF100 fails the noqa the day a refactor
+# brings the function under the line
+max-complexity = 10
+
+[tool.ruff.lint.pycodestyle]
+# 80 columns on the prose, where the code keeps the formatter's 88:
+# ruff-format reflows code and never a comment or a docstring
+max-doc-length = 80
+
+[tool.ruff.lint.pydocstyle]
+convention = "pep257"
+
+[tool.ruff.lint.flake8-pytest-style]
+# the names of a parametrize are a signature, and the comma-separated
+# string is how pytest's own documentation writes one
+parametrize-names-type = "csv"
+
+[tool.ruff.lint.flake8-copyright]
+# all three lines of the notice COPYRIGHT holds, so that a file keeping
+# the first line and dropping the others does not pass. Anchored with ^:
+# unanchored, CPY001 is a search over the first 4096 bytes and not a check
+# that the notice opens the file or follows its `#!` line, so an import or
+# a docstring placed above it would still pass.
+# `(#![^\n]*\n)?` after the anchor: only a `#!` line may precede
+# the notice, for the shebang a script run by path opens with, and
+# nothing else -- `notice-rgx` is `COPYRIGHT` transcribed this way
+# (btclib-org/.github#1294)
+notice-rgx = "^(#![^\\n]*\\n)?# Copyright \\(c\\) The btclib developers\\n# Distributed under the MIT software license, see the accompanying\\n# LICENSE file or https://opensource\\.org/license/mit for the full text\\."
+
+# what keeps the docstrings of the public surface complete, ruff having no
+# rule for a missing argument
+[tool.pydoclint]
+# napoleon renders it
+style = "google"
+# the types are in the signature, and mypy is strict
+arg-type-hints-in-docstring = false
+check-return-types = false
+# a docstring's contract is prose here, and `false` would ask for each
+# fact a second time in a shape pydoclint can parse
+skip-checking-short-docstrings = true
+allow-init-docstring = true

@@ -1,0 +1,181 @@
+---
+name: codeql
+
+# Code scanning, as a file rather than as a repository setting: GitHub's
+# default setup analyses from a workflow it generates and does not show,
+# which would make the check it produces the one whose definition a diff
+# cannot review. Here the languages, the query suite, the schedule and the
+# action versions are read the way the rest of CI is read. The init, the
+# build of the database and the upload are btclib-org/.github's
+# reusable-codeql.yml, called at a tagged commit (section 10 of
+# the organization's standard).
+#
+# Default setup and an advanced workflow are exclusive, and the collision
+# is at the upload: `init` succeeds and the upload is refused, so a run
+# reports failure. The setting is off, and REPOSITORY.md carries the
+# command that reads it back
+
+on:
+  # three triggers, and each answers something the other two cannot: the
+  # push scans the commit a merge creates, the schedule scans an unchanged
+  # tree against a query pack that moved, and pull_request scans the branch
+  # while a finding is still cheap to answer -- which is also what the
+  # OpenSSF Scorecard's SAST check reads off a merged pull request's own
+  # commits, the reason section 10 of the organization's standard gives
+  # for this workflow's unfiltered pull_request trigger. No `paths` filter
+  # on any of the three: a filter would have to name every path a query
+  # reads
+  push:
+    # the default branch is where code scanning reports what is open, so
+    # without a run here there is no baseline
+    branches: [main]
+  pull_request:
+    # ready_for_review and closed, for the reasons test.yml gives
+    types: [opened, reopened, synchronize, ready_for_review, closed]
+  schedule:
+    # section 10's calendar in btclib-org/.github, and not this file's to
+    # restate
+    - cron: "42 4 * * 0"
+  # the analysis on demand for a branch whose pull request is not open
+  # yet. No workflow_call: a tag publishes the tree the analysis already
+  # passed, and re-analysing it would upload a second set of alerts
+  # against the same commit
+  workflow_dispatch:
+
+# least privilege for the GITHUB_TOKEN; the calling job below declares
+# what it needs on top of it
+permissions:
+  contents: read
+
+# cancel superseded runs on the same branch or pull request, named
+# literally and keyed on the pull request's own number, for the reasons
+# test.yml gives
+concurrency:
+  group: codeql-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # the analysis itself is btclib-org/.github's, called at a tagged commit
+  # (section 10 of the organization's standard); what stays here is the
+  # trigger, the schedule, the concurrency group and the aggregate job below. No
+  # inputs: this tree and every sibling carrying codeql.yml scan the same two
+  # languages the same way, and an input for a difference none of them has would
+  # be a copy in disguise (btclib-org/.github#35)
+  analyze:
+    uses: btclib-org/.github/.github/workflows/reusable-codeql.yml@cb5a79443399980ba717df2dea23dbedf6bdbc3a # v2026.11.12
+    # permissions do not inherit through a call, and the called workflow
+    # names what it needs in its own header: security-events: write for
+    # the SARIF upload, contents: read to check out the tree, and
+    # actions: read for CodeQL to read run metadata in a private
+    # repository, inert here and kept so that making this repository
+    # private is not also a broken required check
+    permissions:
+      security-events: write # the SARIF upload
+      contents: read
+      actions: read # CodeQL's run-metadata read in a private repository
+
+  # one context for a branch rule to name, in place of job names that move:
+  # the matrix the called workflow runs produces one row per language,
+  # under a name this job's own id prefixes -- "analyze / Analyze actions",
+  # "analyze / Analyze python". The step below judges every job of the run
+  # by its conclusion and its status, and reads a row's name for that
+  # prefix alone, which is what says a row is one of analyze's own.
+  # A required status check reports on the run a pull request has, so this
+  # name is requirable only because the pull_request trigger above exists;
+  # whether main's rule actually asks for it is REPOSITORY.md's "Required
+  # checks on main", which reads the endpoint rather than this file
+  codeql-passed:
+    # the name and not the id is what branch protection matches, and it
+    # carries the workflow because a context is keyed by name alone: two
+    # workflows with a job named "every job passed" would produce one
+    # ambiguous check -- and test.yml's aggregate is still required, so the
+    # two names must not converge
+    name: "codeql: every job passed"
+    # nothing in this tree calls this workflow (btclib-org/.github#982), so
+    # the step below reads the run's own job listing rather than
+    # `needs.*.result`. `needs` sequences this job after the call above,
+    # and `needs.analyze.result` is what the step reads for analyze's own
+    # rows where the listing still shows them unfinished, and what fails
+    # the step on its own where it is neither success nor skipped
+    needs: [analyze]
+    # not success(): a job whose dependencies failed is skipped, and a
+    # skipped check reports "skipped", which reads as satisfied wherever a
+    # check is read at all. The gate has to run to be able to fail. The
+    # draft flag is not part of this condition: a skipped required check
+    # reads as passing, and this job's own check run does not exist until
+    # analyze has settled, so declining it here while draft would leave
+    # the draft's skip as the only check of this name on the sha until a
+    # later run's own aggregate exists. The closed condition stays: a
+    # closed pull request has nothing left to become ready
+    # (btclib-org/.github#1327)
+    if: >-
+      ${{ !cancelled()
+      && github.event.action != 'closed' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      # what asking the API for this run's own jobs takes. A read, so the
+      # write-only census REPOSITORY.md's "Token permissions" hands the
+      # reader does not list it, as it does not list analyze's above.
+      # The trailing comment repeats it in one line for the reason the
+      # analyze job's block above also carries one: zizmor's
+      # undocumented-permissions audit (persona=auditor) reads the
+      # permission's own line rather than a comment above it
+      # (btclib-org/.github#1164)
+      actions: read # the run's job listing, which contents: read misses
+    steps:
+      # the run's own job listing rather than `needs.*.result`, which is
+      # section 10 of the organization's standard's shape for a workflow
+      # nothing calls: a matrix cell that died in *Set up job* is a
+      # `failure` row in the listing where `needs.analyze.result` does not
+      # carry it (btclib-org/btclib#1001). The price is a step per
+      # workflow rather than one shared with test.yml's aggregate, `needs`
+      # reaching nothing outside its own workflow -- and test.yml keeps
+      # `needs`, release.yml calling it
+      #
+      # the allowlist in the script names "success" and "skipped", both of them,
+      # whatever this workflow's own jobs can report today: section 10 of
+      # the organization's standard fixes the two names rather than letting
+      # them follow the jobs (btclib-org/.github#990). What the jobs can
+      # report is a condition and not a property -- analyze still declines
+      # while draft, and the step below fails outright on the same flag
+      # before this listing ever runs, so a draft's "skipped" analyze row
+      # never reaches the allowlist. No job here is conditional on the
+      # diff otherwise, there being no `changes` job, so nothing else
+      # produces a "skipped" row while that holds, and a job added later
+      # does. A narrowed allowlist is sound while it holds and expires
+      # with nothing watching: what would say it had stopped matching the
+      # run is this check failing on the first run that legitimately
+      # skips, and here that is a red "codeql: every job passed" rather
+      # than a blocked merge, that context not being one main's rule
+      # requires -- REPOSITORY.md's *Required checks on main* is where the
+      # rule is read back from the endpoint
+      # a skipped required check reads as passing, so the draft flag
+      # moves from the job's own `if:` above into this first step: the
+      # job still runs while draft, and reports a failure instead of a
+      # skip (btclib-org/.github#1327)
+      - name: Fail while this pull request is a draft
+        if: github.event.pull_request.draft
+        run: |
+          echo "::error::this pull request is a draft"
+          exit 1
+      # the script is btclib-org/.github's, served from there at main under a
+      # `path:` of its own and sparse on .github/scripts, so no copy of it is
+      # kept in this tree: the wait and the verdict are tested where it lives
+      # (section 10 of the organization's standard)
+      - name: Check out the check script
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: btclib-org/.github
+          ref: main
+          path: btclib-org-github
+          persist-credentials: false
+          sparse-checkout: .github/scripts
+      - name: Fail unless every other job of this run succeeded
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ANALYZE_RESULT: ${{ needs.analyze.result }}
+        run: >-
+          python3 btclib-org-github/.github/scripts/check_run_jobs.py
+          analyze "${ANALYZE_RESULT}"

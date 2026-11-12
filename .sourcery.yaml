@@ -1,0 +1,14 @@
+---
+# Sourcery's configuration, which the job sourcery.yml calls reads.
+# Section 10 of the organization's standard, *The set, and its cadence*,
+# says what it holds. The rules turned off are TURNED_OFF's in
+# btclib-org/.github's tests/hooks_test.py, each beside the rule of
+# another gate, as section 10 says.
+version: "1"
+
+rule_settings:
+  disable:
+    - dont-import-test-modules # ruff's relative-imports (TID252)
+  # the lowest interpreter this tree's code runs on: pyproject.toml's
+  # requires-python floor
+  python_version: "3.11"

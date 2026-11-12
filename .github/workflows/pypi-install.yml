@@ -1,0 +1,152 @@
+---
+name: pypi-install
+
+# the sentinel on what users actually install. Every other workflow here
+# tests artifacts built in the same run, from the tree that triggered it:
+# nothing else says whether the wheel already on PyPI still installs and
+# still works. What breaks it is not a change in this repository -- a new
+# runner image, a new interpreter, a yanked dependency -- so it runs on a
+# schedule rather than on a pull request
+
+on:
+  # called by release.yml once PyPI has accepted the upload, with the tag,
+  # so the wait below holds until the index serves that version; the
+  # schedule and a dispatch pass none and install whatever the index serves
+  workflow_call:
+    inputs:
+      version:
+        description: >-
+          the tag whose version the index must serve before the matrix
+          installs anything, empty on a run with no release behind it
+        required: false
+        type: string
+        default: ""
+  schedule:
+    # section 10's calendar in btclib-org/.github, and not this file's to
+    # restate
+    - cron: "42 5 * * 3"
+  workflow_dispatch:
+  # so a change to this file is checked by the run it configures. No
+  # closed type, for the reason section 10 of the organization's standard
+  # gives a group that does not cancel in progress: a closed event would
+  # cancel nothing and only start a run
+  pull_request:
+    types: [opened, reopened, synchronize, ready_for_review]
+    paths:
+      - .github/workflows/pypi-install.yml
+
+# least privilege for the GITHUB_TOKEN: everything running in a job
+# (actions, pip) can read the token, so it must not be able to write to
+# the repository
+permissions:
+  contents: read
+
+# never cancel a sentinel: the run a release calls, the weekly one and a
+# dispatch share this group, each is a sample worth keeping, and none
+# supersedes the others. A concurrent run queues instead
+concurrency:
+  group: pypi-install-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  # one question about the index, asked once, ahead of every cell: a cell
+  # that starts before the index serves the new file tests the previous
+  # version and reports a pass for it. The wait is btclib-org/.github's
+  # reusable-wait-for-index.yml, called at a tagged commit (section 10 of
+  # the organization's standard)
+  wait-for-index:
+    if: ${{ !github.event.pull_request.draft }}
+    uses: btclib-org/.github/.github/workflows/reusable-wait-for-index.yml@cb5a79443399980ba717df2dea23dbedf6bdbc3a # v2026.11.12
+    with:
+      package: seed-scan
+      version: ${{ inputs.version }}
+
+  install-published:
+    name: >-
+      ${{ matrix.no-binary && 'Build' || 'Install' }}
+      ${{ matrix.python-version }} from PyPI on ${{ matrix.os }}
+    if: ${{ !github.event.pull_request.draft }}
+    runs-on: ${{ matrix.os }}
+    needs: wait-for-index
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        # every image the platform sweeps run, at the floor and at the two
+        # newest interpreters, each of those two beside its free-threaded
+        # build
+        os:
+          - ubuntu-latest
+          - ubuntu-24.04-arm
+          - macos-latest
+          - windows-latest
+          - windows-11-arm
+        python-version: ["3.11", "3.14", "3.14t", "3.15", "3.15t"]
+        # and one cell that builds the sdist rather than taking the wheel,
+        # which is the other half of what the index serves
+        include:
+          - os: ubuntu-latest
+            python-version: "3.13"
+            no-binary: true
+    steps:
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: ${{ matrix.python-version }}
+          # an X.Y with no final release out matches its release candidate
+          # only with this set, and matches the final once there is one
+          allow-prereleases: true
+      # the install runs through btclib-org/.github's
+      # install_published_release.py, which runs it again after a pause
+      # while the installer says the pinned requirement is not resolvable
+      # (btclib-org/.github#1458): the wait above asks the index from one
+      # runner and each cell reads it through an edge of its own, which can
+      # still hold the page from before the upload. This sparse checkout of
+      # the organization's scripts is the one checkout of this job, and its
+      # `path:` keeps the root files that cone mode adds with the scripts
+      # out of the directory the cell runs in; no source of the tree under
+      # test lands
+      - name: Check out the install script
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: btclib-org/.github
+          ref: main
+          path: btclib-org-github
+          persist-credentials: false
+          sparse-checkout: .github/scripts
+      # `--no-cache-dir` stays here and not in the script: the index sends
+      # `Cache-Control: max-age` on its pages, and neither pip nor uv asks
+      # again for a page it holds for that long, so a retry with the cache
+      # on would read back the page it failed on
+      - name: Install the published package
+        shell: bash
+        env:
+          NO_BINARY: ${{ matrix.no-binary || false }}
+          # the tag release.yml passes and the wait above held for, so the
+          # install takes that version and not whichever the runner's view
+          # of the index calls newest; empty on the schedule and a
+          # dispatch, where the newest is the one wanted
+          TAG: ${{ inputs.version }}
+        run: |
+          python -m pip install -U pip
+          package=seed-scan
+          if [ "$NO_BINARY" = "true" ]; then binary=--no-binary; else binary=--only-binary; fi
+          python btclib-org-github/.github/scripts/install_published_release.py \
+            "$package" "$TAG" -- \
+            python -m pip install --no-cache-dir --verbose "$binary" "$package"
+      # each published module imported, not the package alone: an import
+      # runs `__init__.py` alone, and each module is a lazily loaded one
+      - name: Import the installed package and its modules, read its version
+        shell: bash
+        run: |
+          python - <<'PY'
+          from importlib.metadata import requires, version
+          import seed_scan
+          from seed_scan import exceptions
+
+          print("installed version:", version("seed-scan"))
+          print("requires:", requires("seed-scan"))
+          assert seed_scan.__version__ == version("seed-scan")
+          assert issubclass(exceptions.SeedScanValueError, ValueError)
+          print("ok")
+          PY

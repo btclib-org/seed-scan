@@ -1,0 +1,42 @@
+---
+name: scorecard
+
+# the OpenSSF Scorecard: a public repository's supply-chain practices,
+# scored and published, and its badge in the README's `## Status`
+# section. A check scoring below its maximum is an issue against what it
+# found, section 10 of the organization's standard says, and never a
+# sentence explaining the score.
+#
+# The action, its inputs and the SARIF upload are btclib-org/.github's
+# reusable-scorecard.yml, called at a tagged commit (section 10 of
+# the organization's standard)
+
+# the action's own triggers and not section 10's: ossf/scorecard-action
+# supports push and schedule on the default branch and calls
+# workflow_dispatch experimental, so this takes no workflow_dispatch, an
+# exception section 10 states to `workflow_dispatch` on everything
+on:
+  push:
+    branches: [main]
+  schedule:
+    # section 10's calendar in btclib-org/.github, and not this file's to
+    # restate
+    - cron: "42 5 * * 0"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: scorecard-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  analysis:
+    uses: btclib-org/.github/.github/workflows/reusable-scorecard.yml@cb5a79443399980ba717df2dea23dbedf6bdbc3a # v2026.11.12
+    # a caller's permissions: block bounds the called workflow and refuses
+    # rather than trims, so every scope its job declares is named here
+    permissions:
+      id-token: write # the OpenSSF transparency log publish
+      security-events: write # the SARIF upload
+      contents: read
+      actions: read # the Packaging check's workflow-run history read

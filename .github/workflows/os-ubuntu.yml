@@ -1,0 +1,64 @@
+---
+name: os-ubuntu
+
+# the ubuntu part of the platform sweep: the suite, with the dependencies held
+# at the lock, on every interpreter the package claims and on the images
+# listed below. The gate runs one image and one interpreter, for the
+# reason section 10 of the organization's standard gives: the plan's
+# ceiling on concurrent jobs, which REPOSITORY.md's "Plan-gated settings"
+# records beside the command that re-derives it, makes every further cell
+# before a review a cost to every review.
+#
+# What these cells ask is the standard library beneath this package on a
+# platform the gate does not sample -- the interpreters themselves, PyPy
+# and the free-threaded builds among them. A workflow of its own rather
+# than a row in deps-latest.yml: this one holds the dependencies at the
+# lock and moves the platform, deps-latest.yml moves both, so a red cell
+# there with this workflow green is an upgrade, and red in both is the
+# platform.
+#
+# It gates no merge, but release.yml calls it, so a regression here cannot
+# be published. The suite job, its interpreter set-up and its --no-cov are
+# btclib-org/.github's reusable-os-suite.yml, called at a tagged commit (section
+# 10 of the organization's standard); what stays here is the schedule, the
+# images and the interpreters
+
+on:
+  schedule:
+    # the instant is section 10's calendar in btclib-org/.github, the day
+    # and the hour the workflow's and the minute this repository's, and not
+    # this file's to restate
+    - cron: "42 4 * * 5"
+  # release.yml calls this before it publishes
+  workflow_call:
+    inputs:
+      concurrency-suffix:
+        description: >
+          Appended to the concurrency group, and the release workflow is
+          the only caller that passes one. See the group below.
+        type: string
+        default: ""
+  # the only way to ask about a branch
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# named literally rather than with github.workflow, which in a called
+# workflow is the caller's name. The suffix keeps a release run out of the
+# group a dispatch on the same branch computes
+concurrency:
+  group: os-ubuntu-${{ github.ref }}${{ inputs.concurrency-suffix }}
+  cancel-in-progress: true
+
+jobs:
+  suite-ubuntu:
+    uses: btclib-org/.github/.github/workflows/reusable-os-suite.yml@cb5a79443399980ba717df2dea23dbedf6bdbc3a # v2026.11.12
+    with:
+      # two images of the family, one per architecture it ships runners for
+      runners: '["ubuntu-latest", "ubuntu-24.04-arm"]'
+      # every interpreter the classifiers name, from the floor
+      # requires-python names to the pin, the free-threaded build of the
+      # two newest, and PyPy: what tests/interpreters_test.py holds the
+      # classifiers to
+      python-versions: '["3.11", "3.12", "3.13", "3.14", "3.14t", "3.15", "3.15t", "pypy3.11"]'

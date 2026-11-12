@@ -1,0 +1,45 @@
+---
+name: Question
+description: Ask how seed-scan does something, or why it does it that way
+type: Task
+
+body:
+  - type: markdown
+    attributes:
+      value: >
+        Discussions are not enabled here, so a question is an issue: this
+        form is what keeps one from having to be filed as a bug. The
+        [README](https://github.com/btclib-org/seed-scan/blob/main/README.md)
+        comes first, and for a real-time answer there is the Slack channel
+        behind the *Chat with the developers* link on the new-issue page.
+
+  - type: textarea
+    id: question
+    attributes:
+      label: The question
+      description: >
+        What you are trying to do, and what you have already read or
+        tried. Code, if there is any: what a call returns and what you
+        expected it to return is a sharper question than a description of
+        either.
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: Version, if it matters
+      description: >
+        `python -c "from importlib.metadata import version;
+        print(version('seed-scan'))"`
+      placeholder: "2026.10"
+
+  - type: markdown
+    attributes:
+      value: >
+        **Sign-off.** Whoever takes this issue signs off every commit
+        (`git commit -s`). The required `Sign-off` check refuses a pull
+        request whose commits lack the `Signed-off-by:` trailer;
+        [`CONTRIBUTING.md`'s *Pull
+        requests*](https://github.com/btclib-org/.github/blob/main/CONTRIBUTING.md#pull-requests)
+        says why.

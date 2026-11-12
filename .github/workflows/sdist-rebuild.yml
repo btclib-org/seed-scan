@@ -1,0 +1,48 @@
+---
+name: sdist-rebuild
+
+# section 12 of the organization's standard says a published sdist
+# reproduces from its tag, and this is where that is asked: the latest
+# release's sdist rebuilt from the commit its tag names, by the steps
+# RELEASING.md's "Rebuild a release from its tag" lists, and `gh
+# attestation verify` over the rebuilt file, against the signer
+# btclib-org/.github's reusable-build.yml -- the attestation's digests
+# and not PyPI's, which say what the index holds rather than what was
+# signed. Weekly rather than in the release, where it would compare a
+# build with itself.
+#
+# The checkout at the tag, the rebuild and the verification are
+# btclib-org/.github's reusable-sdist-rebuild.yml, called at a tagged commit
+# (section 10 of the organization's standard)
+
+on:
+  schedule:
+    # section 10's calendar in btclib-org/.github, and not this file's to
+    # restate
+    - cron: "42 3 * * 0"
+  workflow_dispatch:
+  # a change to this file is checked by the run it configures
+  pull_request:
+    types: [opened, reopened, synchronize, ready_for_review, closed]
+    paths:
+      - .github/workflows/sdist-rebuild.yml
+
+permissions:
+  contents: read
+
+# no push trigger, so a merged pull request's run is the only reading the
+# merged file gets: the closed, merged run queues behind the one in flight
+# rather than cancelling it
+concurrency:
+  group: sdist-rebuild-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ !(github.event.action == 'closed' && github.event.pull_request.merged) }}
+
+jobs:
+  rebuild:
+    if: >-
+      ${{ !github.event.pull_request.draft
+      && github.event.action != 'closed' }}
+    permissions:
+      contents: read
+      attestations: read # gh attestation verify reads the attestations API with it
+    uses: btclib-org/.github/.github/workflows/reusable-sdist-rebuild.yml@cb5a79443399980ba717df2dea23dbedf6bdbc3a # v2026.11.12

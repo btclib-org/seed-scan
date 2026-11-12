@@ -1,0 +1,190 @@
+# Copyright (c) The btclib developers
+# Distributed under the MIT software license, see the accompanying
+# LICENSE file or https://opensource.org/license/mit for the full text.
+
+"""The convention-test declaration in tests/README.md is true.
+
+Section 7 of the organization's standard lists conventions a suite can
+turn into a red test, and a repository needs the ones its own prose
+states rather than all of them. The price of that clause is that an
+*absent* convention test reads exactly like a convention this repository
+does not have, so tests/README.md declares which are tested, and this
+module is what keeps the declaration from being prose.
+
+`_CONVENTIONS` below transcribes section 7's list: the standard lives in
+`btclib-org/.github`, so a transcribed copy is the only form this tree
+can hold it in, and a bullet added there is a failure here until both
+the tuple and the table have caught up.
+
+What it does not check is whether a named module tests the convention it
+is named against. Nothing short of reading it can, and the assertions
+below are the ones that fail on the ways a declaration rots: a table the
+row pattern no longer matches, a convention invented here rather than
+taken from section 7, a module renamed or deleted with the row left
+behind, a module emptied of its tests, and a bullet that stops being
+accounted for by either half.
+"""
+
+import ast
+import re
+from pathlib import Path
+
+import pytest
+
+_TESTS = Path(__file__).parent
+_README = _TESTS / "README.md"
+
+# section 7's conventions, in its order and its words: the lead of each
+# bullet, which is what the first column of the table repeats. This
+# tuple is the standard's rather than this repository's, so a bullet
+# added there is a failure here until both this and the table have
+# caught up -- which is the point of naming them rather than accepting
+# whatever the table says.
+_CONVENTIONS = (
+    "the public surface",
+    "the copyright header",
+    "the documentation",
+    "the import graph",
+    "the changelog",
+    "the build system",
+    "the calling convention",
+    "input validation",
+    "the suite opens no socket",
+)
+
+_HEADING = "## Convention tests"
+# the sentinel for the other half of the declaration. DOTALL as well as
+# MULTILINE because a list of names that outgrows eighty columns wraps
+# across lines and the non-greedy match then stops at the first full stop
+# that ends one -- which is why no name in that list may carry a full
+# stop of its own. "none" is a legal answer; the two halves are checked
+# against each other below rather than each against nothing.
+_NOT_TESTED = re.compile(r"^Not tested here: (.+?)\.$", re.MULTILINE | re.DOTALL)
+# a table row, and the separator row is what the second group's leading
+# backtick excludes: `| --- | --- |` has no backtick to match
+_ROW = re.compile(
+    r"^\| (?P<convention>[^|]+?) \| `(?P<module>[^`]+)` \|$", re.MULTILINE
+)
+
+
+def _section() -> str:
+    """Return the declaration section, heading to the next one or the end.
+
+    Read rather than the whole file: a `##` heading elsewhere in
+    tests/README.md must not contribute rows. The slice ends at the next
+    `## ` rather than at the end of the file, so that a section added
+    after this one is not read as part of it.
+    """
+    text = _README.read_text(encoding="utf-8")
+    assert text.count(_HEADING) == 1, f"{_README.name} has no one {_HEADING}"
+    section = text[text.index(_HEADING) + len(_HEADING) :]
+    return _HEADING + section.split("\n## ", 1)[0]
+
+
+_SECTION = _section()
+_ROWS = tuple((m["convention"], m["module"]) for m in _ROW.finditer(_SECTION))
+
+
+def test_the_table_is_not_empty() -> None:
+    """No other assertion here reports an unmatched table as one.
+
+    The assertions parametrized on the rows are skipped on an empty
+    parameter set, so a table this module's regex stopped matching -- a
+    column added, the backticks dropped -- leaves the two-halves
+    assertion below, which is not parametrized, to fail naming every
+    convention the table declared as accounted for by neither half. A
+    retitled heading reaches neither: _section asserts while the module
+    is imported, so collection errors.
+    """
+    assert _ROWS, f"{_README.name}'s {_HEADING} section parsed to no rows"
+
+
+@pytest.mark.parametrize("convention, module", _ROWS, ids=lambda v: v)
+def test_every_convention_named_is_one_of_section_sevens(
+    convention: str, module: str
+) -> None:
+    """A convention invented here is not a convention the standard has."""
+    assert convention in _CONVENTIONS, (
+        f"{module} is declared against {convention!r}, which is not one of"
+        f" section 7's: {', '.join(_CONVENTIONS)}"
+    )
+
+
+@pytest.mark.parametrize("convention, module", _ROWS, ids=lambda v: v)
+def test_every_module_named_exists(convention: str, module: str) -> None:
+    """A row outliving the file it names is the ordinary way this rots."""
+    assert (_TESTS / module).is_file(), (
+        f"{_README.name} declares {convention!r} tested in {module},"
+        " which is not a file in this directory"
+    )
+
+
+@pytest.mark.parametrize("convention, module", _ROWS, ids=lambda v: v)
+def test_every_module_named_holds_a_test(convention: str, module: str) -> None:
+    """A file emptied of its tests still satisfies the check above.
+
+    The source is parsed rather than the suite queried: an import would
+    make this module's result depend on every other module's import
+    side effects, and pytest's own collection is not available to a test
+    it has already collected.
+    """
+    # no guard for a missing file: the test above is what reports that,
+    # and a guard here would be a branch nothing can reach while it passes
+    path = _TESTS / module
+    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+    found = any(
+        isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef)
+        and node.name.startswith("test_")
+        for node in ast.walk(tree)
+    )
+    assert found, (
+        f"{module} is declared to test {convention!r} and defines no"
+        " function whose name begins with test_"
+    )
+
+
+def test_the_two_halves_account_for_every_convention() -> None:
+    """The table and the "Not tested here" line partition section 7's set.
+
+    This is the assertion the declaration exists for. Either half alone
+    is satisfiable by saying less: a table naming three conventions is
+    true about those three and silent about the rest, and silence is
+    exactly what section 7's escape clause makes unreadable. Together
+    they have to name each convention once.
+    """
+    match = _NOT_TESTED.search(_SECTION)
+    assert match, (
+        f'{_README.name} has no "Not tested here: ...." line;'
+        " the declaration is half of one"
+    )
+    listed = " ".join(match[1].split())
+    # the separator is a semicolon and a space, which is what the
+    # collapse above leaves of one written with a space or a line break
+    # after it. The semicolon alone would take any other spelling for a
+    # separator too; here the name keeps whatever the split did not
+    # take, and the assertions below report it
+    absent = () if listed == "none" else tuple(listed.split("; "))
+    tested = {convention for convention, _ in _ROWS}
+
+    overlap = tested.intersection(absent)
+    assert not overlap, (
+        f"{', '.join(sorted(overlap))} is both declared tested and listed as not tested"
+    )
+
+    unknown = [name for name in absent if name not in _CONVENTIONS]
+    # the names come from the file, so repr: one differing from a
+    # convention in whitespace alone is invisible unquoted, and reads as
+    # a name this same message goes on to list as known
+    assert not unknown, (
+        f"{', '.join(map(repr, unknown))} is listed as not tested and is not"
+        f" one of section 7's: {', '.join(_CONVENTIONS)}"
+    )
+
+    unaccounted = [
+        name for name in _CONVENTIONS if name not in tested and name not in absent
+    ]
+    assert not unaccounted, (
+        f"{', '.join(unaccounted)} is neither declared tested nor listed as"
+        " not tested; section 7's conventions are what the two halves"
+        " must cover"
+    )

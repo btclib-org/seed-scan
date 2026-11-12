@@ -1,0 +1,61 @@
+---
+# Read the Docs configuration file
+# See https://docs.readthedocs.io/en/stable/config-file/v2.html for details
+#
+# The dotted name is the canonical one; readthedocs.yml is honored too,
+# but documented as deprecated.
+#
+# The build has to install seed-scan itself, not sphinx alone: every
+# autodoc directive in docs/source imports its module, a failed import is
+# a sphinx warning rather than an error, and a "requirements:
+# docs/requirements.txt" install would publish a bare module title in
+# place of each of them, silently. Which pages would go empty that way is
+# `grep -rl automodule docs/source`'s answer.
+#
+# What this file cannot say is *which* versions run it. `latest`,
+# `stable` and each release tag are versions on read the docs' side, and
+# an automation rule is what activates a new tag there -- so a release
+# that keeps a permanent URL of its own and one that does not differ in
+# a setting, not in this file. REPOSITORY.md's "Read the Docs" section
+# records those settings with the commands that read them back.
+
+# Required
+version: 2
+
+# the interpreter is declared rather than left to whatever read the docs
+# defaults to: conf.py reads the version out of pyproject.toml with
+# tomllib, which is standard library from 3.11 on. Which version above that
+# floor is `.python-version`'s to say -- these docs are built twice, here
+# and by docs.yml, and one interpreter is what keeps the build read on the
+# website and the build that gates a merge from being two questions --
+# except where read the docs does not offer that version yet. The values
+# it accepts are the `build.tools.python` enum of its v2 schema,
+# readthedocs/rtd_tests/fixtures/spec/v2/schema.json in
+# readthedocs/readthedocs.org, and until that lists `.python-version`'s
+# the newest it does list is the one here
+build:
+  os: ubuntu-24.04
+  tools:
+    python: "3.14"
+  # build.commands rather than the sphinx: and python: keys, which cannot
+  # express this and are rejected when it is present.
+  # autodoc has to import seed_scan, so the project has to be
+  # installed, and what read the docs can express natively is "pip install
+  # ." plus a requirements file. uv installs the docs dependency group
+  # instead, from uv.lock, which is why there is no docs/requirements.txt:
+  # the group in pyproject.toml is the single declaration and the lock pins
+  # it, where a requirements file would be unpinned and kept in step by
+  # hand.
+  # uv itself is not pinned: no dependabot ecosystem watches this file, so
+  # a pin here is a version nobody bumps, and --locked makes the uv version
+  # irrelevant to what gets installed -- uv.lock decides that, and a uv too
+  # old to read the lock fails loudly rather than resolving something else.
+  # -W turns a failed import into a failed build, which is the point of
+  # the whole file, and -n is docs.yml's own flag, kept in step here so
+  # the site this file publishes is built by the command that gates a merge
+  commands:
+    - pip install uv
+    - uv sync --locked --no-default-groups --group docs
+    - >-
+      uv run --locked --no-default-groups --group docs
+      sphinx-build -n -W -b html docs/source $READTHEDOCS_OUTPUT/html
