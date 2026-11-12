@@ -36,7 +36,16 @@ from btclib.script import ScriptPubKey
 from btclib_wallet import bip44
 from btclib_wallet.descriptors import add_checksum, parse
 
-from seed_scan.bundle import Account, Bundle, Match, NotChecked, Reading, Search
+from seed_scan.bundle import (
+    REASONS,
+    Account,
+    Bundle,
+    Match,
+    NotChecked,
+    Reading,
+    Search,
+    slip39_passphrase,
+)
 from seed_scan.exceptions import SeedScanTypeError, SeedScanValueError
 
 if TYPE_CHECKING:
@@ -83,18 +92,11 @@ _ELECTRUM = {
 # what each scheme the words may claim and no reading covers is
 # reported as
 _NOT_READ = {
-    "electrum_old": "pre-2.0 Electrum seed: no dependency derives its addresses",
-    "electrum_2fa": "Electrum two-factor seed: its third key is TrustedCoin's",
-    "electrum_2fa_segwit": "Electrum two-factor seed: its third key is TrustedCoin's",
-    "bip39_wordlist": (
-        "every word is in a BIP39 word-list, and the checksum or the word count fails"
-    ),
+    "electrum_old": REASONS["electrum_old"],
+    "electrum_2fa": REASONS["electrum_2fa"],
+    "electrum_2fa_segwit": REASONS["electrum_2fa"],
+    "bip39_wordlist": REASONS["bip39_wordlist"],
 }
-
-_NOT_MAINNET = "not a mainnet address: only Bitcoin mainnet ones are searched"
-_NOT_AN_ADDRESS = (
-    "not a Bitcoin address: neither searched nor written, in case it is a key"
-)
 
 
 def _assert_bound(value: int, name: str) -> None:
@@ -277,7 +279,7 @@ def _read_slip39(
     """Add a reading for each passphrase of a complete set of shares."""
     shares = _shares(mnemonic, prompt)
     if shares is None:
-        reason = "the shares typed do not complete a set"
+        reason = REASONS["incomplete_set"]
         found.not_checked.append(NotChecked("slip39", reason))
         return
     ems = slip39.encrypted_master_secret_from_mnemonics(shares)
@@ -287,7 +289,7 @@ def _read_slip39(
         except ValueError:
             # SLIP-0039 takes printable ASCII alone; the passphrase is
             # named by its number, never quoted
-            reason = f"passphrase {number}: not one SLIP-0039 accepts"
+            reason = slip39_passphrase(number)
             found.not_checked.append(NotChecked("slip39", reason))
             continue
         root = BIP32KeyData.from_seed(seed)
@@ -336,9 +338,9 @@ def _search(found: _Found, address: str, accounts: int, indexes: int) -> Search:
     except ValueError:
         target = None
     if target is None:
-        return Search("", False, _NOT_AN_ADDRESS, accounts, indexes, 0, ())
+        return Search("", False, REASONS["not_an_address"], accounts, indexes, 0, ())
     if target.network != "mainnet":
-        return Search(address, False, _NOT_MAINNET, accounts, indexes, 0, ())
+        return Search(address, False, REASONS["not_mainnet"], accounts, indexes, 0, ())
     matches = []
     searched = 0
     for reading, pairs in enumerate(found.descriptors):

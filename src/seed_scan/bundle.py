@@ -68,13 +68,20 @@ An account object holds:
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import asdict, dataclass
+from hashlib import sha256
 from typing import Any
 
 from seed_scan.exceptions import SeedScanTypeError, SeedScanValueError
 
 __all__ = [
+    "CLAIMS",
+    "COIN_NAMES",
     "FORMAT",
+    "LANGUAGES",
+    "READ_SCHEMES",
+    "REASONS",
     "VERSION",
     "Account",
     "Bundle",
@@ -84,6 +91,7 @@ __all__ = [
     "Search",
     "dumps",
     "loads",
+    "slip39_passphrase",
 ]
 
 #: The value of the ``format`` member.
@@ -91,6 +99,73 @@ FORMAT = "seed-scan-bundle"
 
 #: The value of the ``version`` member this module writes and reads.
 VERSION = 1
+
+#: The schemes a claim, or a scheme not checked, names.
+CLAIMS = (
+    "slip39",
+    "electrum_old",
+    "electrum_standard",
+    "electrum_segwit",
+    "electrum_2fa",
+    "electrum_2fa_segwit",
+    "bip39",
+    "bip39_wordlist",
+)
+
+#: The schemes a reading names.
+READ_SCHEMES = ("bip39", "slip39", "electrum_standard", "electrum_segwit")
+
+#: The BIP39 word-lists a reading names, as bip39-slip39 names them.
+LANGUAGES = ("cs", "en", "es", "fr", "it", "ja", "ko", "pt", "ru", "tr", "zh", "zh_tw")
+
+#: The coins an account names.
+COIN_NAMES = ("bitcoin", "ethereum", "bitcoin-cash", "litecoin", "dogecoin")
+
+#: Each reason a scheme is not checked, or an address not searched, by
+#: name. A passphrase SLIP-0039 refuses is the one reason with a number
+#: in it, `slip39_passphrase` below.
+REASONS = {
+    "electrum_old": "pre-2.0 Electrum seed: no dependency derives its addresses",
+    "electrum_2fa": "Electrum two-factor seed: its third key is TrustedCoin's",
+    "bip39_wordlist": (
+        "every word is in a BIP39 word-list, and the checksum or the word count fails"
+    ),
+    "incomplete_set": "the shares typed do not complete a set",
+    "not_mainnet": "not a mainnet address: only Bitcoin mainnet ones are searched",
+    "not_an_address": (
+        "not a Bitcoin address: neither searched nor written, in case it is a key"
+    ),
+}
+_SLIP39_PASSPHRASE = re.compile(
+    r"passphrase (?:0|[1-9][0-9]{0,8}): not one SLIP-0039 accepts"
+)
+
+# a path as identify writes it: `m`, then indexes, hardened ones with `h`
+_PATH = re.compile(r"m(?:/(?:0|[1-9][0-9]{0,9})h?)*")
+_INDEX = re.compile(r"[0-9]+")
+_HARDENED = 0x80000000
+
+# the version bytes of a BIP32 mainnet extended public key, the one
+# spelling the bundle writes
+_XPUB_VERSION = bytes.fromhex("0488b21e")
+_BASE58 = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"
+# the version bytes of a base58 address: p2pkh and p2sh, mainnet and test
+_ADDRESS_VERSIONS = (0x00, 0x05, 0x6F, 0xC4)
+_BECH32 = "qpzry9x8gf2tvdw0s3jn54khce6mua7l"
+_BECH32_HRPS = ("bc", "tb", "bcrt")
+# BIP173's and BIP350's checksum constants
+_BECH32_CONSTANTS = (1, 0x2BC830A3)
+# a descriptor's checksum, eight characters of its own alphabet
+_CHECKSUM = "#[" + _BECH32 + "]{8}"
+
+
+def slip39_passphrase(number: int) -> str:
+    """Return the reason a passphrase SLIP-0039 refuses is not checked.
+
+    :param number: the passphrase's number, never the passphrase.
+    :returns: the reason.
+    """
+    return f"passphrase {number}: not one SLIP-0039 accepts"
 
 
 @dataclass(frozen=True)
@@ -200,6 +275,144 @@ def _fingerprint(document: dict[str, Any]) -> str:
     return value
 
 
+def _one_of(document: dict[str, Any], key: str, allowed: tuple[str, ...]) -> str:
+    """Return a member that is one of the texts the format defines."""
+    value: str = _member(document, key, str)
+    if value not in allowed:
+        raise SeedScanValueError(
+            f"bundle: member {key!r} is not one the format defines"
+        )
+    return value
+
+
+def _path(document: dict[str, Any], key: str) -> str:
+    """Return a derivation path as identify writes it, refusing another text.
+
+    Each index is below 2^31, so that no level holds more than an index.
+    """
+    value: str = _member(document, key, str)
+    indexes = _INDEX.findall(value)
+    if not _PATH.fullmatch(value) or any(int(i) >= _HARDENED for i in indexes):
+        raise SeedScanValueError(f"bundle: member {key!r} is not a derivation path")
+    return value
+
+
+def _base58check(text: str) -> bytes | None:
+    """Return the payload of a Base58Check text, `None` where it is none."""
+    if not text or len(text) > 112 or set(text) - set(_BASE58):
+        return None
+    number = 0
+    for char in text:
+        number = number * 58 + _BASE58.index(char)
+    zeros = len(text) - len(text.lstrip("1"))
+    raw = bytes(zeros) + number.to_bytes((number.bit_length() + 7) // 8, "big")
+    payload, checksum = raw[:-4], raw[-4:]
+    if len(raw) < 5 or sha256(sha256(payload).digest()).digest()[:4] != checksum:
+        return None
+    return payload
+
+
+def _xpub(document: dict[str, Any]) -> str:
+    """Return a BIP32 mainnet extended public key, refusing any other text.
+
+    The version bytes, the length, the checksum and the prefix of the key
+    are checked: an extended private key, or anything else, is refused.
+    """
+    value: str = _member(document, "xpub", str)
+    payload = _base58check(value)
+    public = (
+        payload is not None
+        and len(payload) == 78
+        and payload[:4] == _XPUB_VERSION
+        and payload[45] in (2, 3)
+    )
+    if not public:
+        raise SeedScanValueError("bundle: member 'xpub' is not an extended public key")
+    return value
+
+
+def _bech32_polymod(values: list[int]) -> int:
+    """Return BIP173's checksum polynomial over the values."""
+    generator = (0x3B6A57B2, 0x26508E6D, 0x1EA119FA, 0x3D4233DD, 0x2A1462B3)
+    check = 1
+    for value in values:
+        top = check >> 25
+        check = (check & 0x1FFFFFF) << 5 ^ value
+        for i, g in enumerate(generator):
+            check ^= g if top >> i & 1 else 0
+    return check
+
+
+def _is_segwit_address(text: str) -> bool:
+    """Return whether a text is a BIP173 or BIP350 address of a known chain."""
+    lower = text.lower()
+    hrp, _, data = lower.rpartition("1")
+    if text not in (lower, text.upper()) or hrp not in _BECH32_HRPS:
+        return False
+    if len(text) > 90 or len(data) < 8 or set(data) - set(_BECH32):
+        return False
+    values = [_BECH32.index(c) for c in data]
+    expanded = [ord(c) >> 5 for c in hrp] + [0] + [ord(c) & 31 for c in hrp]
+    if _bech32_polymod(expanded + values) not in _BECH32_CONSTANTS:
+        return False
+    program_bits = 5 * (len(values) - 7)
+    return values[0] <= 16 and 2 * 8 <= program_bits <= 40 * 8 + 4
+
+
+def _address(document: dict[str, Any]) -> str:
+    """Return an address, or the empty text, refusing any other text."""
+    value: str = _member(document, "address", str)
+    payload = _base58check(value)
+    base58 = payload is not None and len(payload) == 21
+    if (
+        value
+        and not _is_segwit_address(value)
+        and not (
+            base58 and payload[0] in _ADDRESS_VERSIONS  # type: ignore[index]
+        )
+    ):
+        raise SeedScanValueError("bundle: member 'address' is not an address")
+    return value
+
+
+def _reason(document: dict[str, Any]) -> str:
+    """Return a reason the format defines, refusing any other text."""
+    value: str = _member(document, "reason", str)
+    if (
+        value
+        and value not in REASONS.values()
+        and not _SLIP39_PASSPHRASE.fullmatch(value)
+    ):
+        raise SeedScanValueError(
+            "bundle: member 'reason' is not one the format defines"
+        )
+    return value
+
+
+def _descriptors(document: dict[str, Any], coin: str, xpub: str) -> tuple[str, ...]:
+    """Return an account's descriptors, refusing any not of the account's key.
+
+    A Bitcoin account holds its receive and change descriptors over its
+    own `xpub`, with a key origin and a checksum, and no other coin holds
+    any.
+    """
+    values = _strings(document, "descriptors")
+    key = r"\[[0-9a-f]{8}(?:/(?:0|[1-9][0-9]{0,9})h?)*\]" + re.escape(xpub)
+
+    def shape(branch: int) -> str:
+        inner = rf"{key}/{branch}/\*"
+        return rf"(?:(?:pkh|wpkh|tr)\({inner}\)|sh\(wpkh\({inner}\)\)){_CHECKSUM}"
+
+    expected = 2 if coin == "bitcoin" else 0
+    fits = len(values) == expected and all(
+        re.fullmatch(shape(branch), value) for branch, value in enumerate(values)
+    )
+    if not fits:
+        err_msg = "bundle: member 'descriptors' is not the account's two descriptors"
+        raise SeedScanValueError(err_msg)
+    return values
+
+
 def _objects(document: dict[str, Any], key: str) -> list[dict[str, Any]]:
     """Return a member that is a list of objects."""
     values: list[object] = _member(document, key, list)
@@ -212,35 +425,42 @@ def _objects(document: dict[str, Any], key: str) -> list[dict[str, Any]]:
     return objects
 
 
-def _strings(document: dict[str, Any], key: str) -> tuple[str, ...]:
-    """Return a member that is a list of strings."""
+def _strings(
+    document: dict[str, Any], key: str, allowed: tuple[str, ...] | None = None
+) -> tuple[str, ...]:
+    """Return a member that is a list of strings, each `allowed` where given."""
     values = _member(document, key, list)
     for value in values:
         if not isinstance(value, str):
             err_msg = f"bundle: an item of {key!r} of type {type(value).__name__}"
             raise SeedScanTypeError(err_msg)
+        if allowed is not None and value not in allowed:
+            err_msg = f"bundle: an item of {key!r} is not one the format defines"
+            raise SeedScanValueError(err_msg)
     return tuple(values)
 
 
 def _account(document: dict[str, Any]) -> Account:
     """Read one account object."""
     purpose = _member(document, "purpose", (int, type(None)))
+    coin = _one_of(document, "coin", COIN_NAMES)
+    xpub = _xpub(document)
     return Account(
-        coin=_member(document, "coin", str),
+        coin=coin,
         coin_type=_count(document, "coin_type"),
         purpose=None if purpose is None else _count(document, "purpose"),
         account=_count(document, "account"),
-        path=_member(document, "path", str),
-        xpub=_member(document, "xpub", str),
-        descriptors=_strings(document, "descriptors"),
+        path=_path(document, "path"),
+        xpub=xpub,
+        descriptors=_descriptors(document, coin, xpub),
     )
 
 
 def _reading(document: dict[str, Any]) -> Reading:
     """Read one reading object."""
     return Reading(
-        scheme=_member(document, "scheme", str),
-        languages=_strings(document, "languages"),
+        scheme=_one_of(document, "scheme", READ_SCHEMES),
+        languages=_strings(document, "languages", LANGUAGES),
         passphrase=_count(document, "passphrase"),
         master_fingerprint=_fingerprint(document),
         accounts=tuple(_account(a) for a in _objects(document, "accounts")),
@@ -254,11 +474,11 @@ def _search(document: dict[str, Any], readings: int) -> Search:
         reading = _count(match, "reading")
         if reading >= readings:
             raise SeedScanValueError("bundle: a match names no reading")
-        matches.append(Match(reading, _member(match, "path", str)))
+        matches.append(Match(reading, _path(match, "path")))
     return Search(
-        address=_member(document, "address", str),
+        address=_address(document),
         checked=_member(document, "checked", bool),
-        reason=_member(document, "reason", str),
+        reason=_reason(document),
         accounts=_count(document, "accounts"),
         indexes=_count(document, "indexes"),
         searched=_count(document, "searched"),
@@ -275,6 +495,15 @@ def loads(text: str) -> Bundle:
     naming no reading. A member of the wrong type is a
     `SeedScanTypeError`. Members this version does not name are ignored.
     A refusal names the member, never its value.
+
+    A reader echoes the text members, so each holds only what the format
+    defines, and a key put in one is refused: a scheme, a language, a
+    coin or a reason among `CLAIMS`, `READ_SCHEMES`, `LANGUAGES`,
+    `COIN_NAMES` and `REASONS`; a path of `m` and indexes below 2^31; an
+    ``xpub`` whose Base58Check, version bytes, length and key prefix are
+    a BIP32 mainnet public key's; a Bitcoin account's two descriptors
+    over that ``xpub``, and none for another coin; an address that is a
+    base58 or a segwit one, or empty.
     """
     if not isinstance(text, str):
         raise SeedScanTypeError(f"bundle: text of type {type(text).__name__}")
@@ -301,10 +530,10 @@ def loads(text: str) -> Bundle:
     search = _member(document, "search", (dict, type(None)))
     readings = tuple(_reading(r) for r in _objects(document, "readings"))
     return Bundle(
-        claims=_strings(document, "claims"),
+        claims=_strings(document, "claims", CLAIMS),
         readings=readings,
         not_checked=tuple(
-            NotChecked(_member(n, "scheme", str), _member(n, "reason", str))
+            NotChecked(_one_of(n, "scheme", CLAIMS), _reason(n))
             for n in _objects(document, "not_checked")
         ),
         search=None if search is None else _search(search, len(readings)),
