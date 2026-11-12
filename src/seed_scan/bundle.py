@@ -359,8 +359,13 @@ def _is_segwit_address(text: str) -> bool:
     constant = _BECH32_CONSTANT if version == 0 else _BECH32M_CONSTANT
     if _bech32_polymod(expanded + values) != constant:
         return False
-    program_bits = 5 * (len(values) - 7)
-    return version <= 16 and 2 * 8 <= program_bits <= 40 * 8 + 4
+    # the program in 8-bit bytes: at most 4 bits of padding, all zero
+    program = values[1:-6]
+    size, padding = divmod(5 * len(program), 8)
+    if padding > 4 or program[-1] & ((1 << padding) - 1):
+        return False
+    # BIP141 gives version 0 a program of 20 or 32 bytes
+    return version <= 16 and 2 <= size <= 40 and (version != 0 or size in (20, 32))
 
 
 def _address(document: dict[str, Any]) -> str:
