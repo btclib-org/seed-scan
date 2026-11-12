@@ -109,6 +109,9 @@ harness = [
 ]
 test = [
     { include-group = "harness" },
+    # tests/imports_test.py reads the requirements each distribution
+    # declares with it
+    "packaging>=26.3",
     # tests/docs_conf_test.py executes docs/source/conf.py, which imports
     # it; the marker and the bound are `docs`'s, below
     "sphinx>=9.1.0; python_full_version >= '3.12'",

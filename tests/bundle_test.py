@@ -10,13 +10,16 @@ import json
 from typing import Any
 
 import pytest
-from base58_bech32.base58 import b58encode_check
 from bip32_descriptors.bip32 import BIP32KeyData
+from bip39_slip39 import electrum
+from bip39_slip39.mnemonic import BIP39_LANGUAGE_FILES
 from btclib.b58 import wif_from_prv_key
 from btclib_wallet.descriptors import add_checksum
 
 from seed_scan.bundle import (
+    CLAIMS,
     FORMAT,
+    LANGUAGES,
     REASONS,
     VERSION,
     Account,
@@ -294,12 +297,90 @@ def test_a_secret_in_a_text_member_is_refused_unquoted(
     assert_secret_free(caught.value, PLANTED)
 
 
+def relabelled(key: str, version: str) -> str:
+    """Return an extended key with other version bytes, nothing checked.
+
+    :param key: the extended key.
+    :param version: the version bytes, in hex.
+    :returns: the same depth, index, chain code and key under that version.
+    """
+    data = BIP32KeyData.b58decode(key, check_validity=False)
+    forged = BIP32KeyData(
+        bytes.fromhex(version),
+        data.depth,
+        data.parent_fingerprint,
+        data.index,
+        data.chain_code,
+        data.key,
+        check_validity=False,
+    )
+    return forged.b58encode(check_validity=False)
+
+
+#: BIP32's testnet public version, and SLIP-0132's mainnet p2wpkh one.
+OTHER_PUBLIC_VERSIONS = {"tpub": "043587cf", "zpub": "04b24746"}
+
+
+@pytest.mark.parametrize("prefix", OTHER_PUBLIC_VERSIONS)
+def test_a_public_key_of_another_version_is_refused(prefix: str) -> None:
+    """A tpub or a zpub of the same key is refused: the bundle writes xpubs.
+
+    :param prefix: the version, by the prefix its keys are written with.
+    """
+    other = relabelled(BIP86_XPUB, OTHER_PUBLIC_VERSIONS[prefix])
+    assert other.startswith(prefix)
+    changed = document()
+    at(MEMBERS["ethereum xpub"][0])(changed, other)
+    with pytest.raises(SeedScanValueError, match="'xpub' is not an extended public"):
+        loads(json.dumps(changed))
+
+
+def test_the_languages_are_bip39_slip39s() -> None:
+    """`LANGUAGES` is bip39-slip39's BIP39 word-lists, so none is refused.
+
+    A release that adds a word-list fails here, rather than `identify`
+    writing a bundle `loads` refuses.
+    """
+    assert set(LANGUAGES) == set(BIP39_LANGUAGE_FILES)
+
+
+def test_the_claims_are_those_dispatch_can_answer() -> None:
+    """`CLAIMS` is every name `dispatch.all_seed_types_from_mnemonic` answers.
+
+    Its module docstring lists them: SLIP-0039, Electrum's pre-2.0 seed
+    and its versions, and BIP39's two. The Electrum versions are read from
+    `electrum`'s table, which no public name exposes, so that a version
+    added there fails here.
+    """
+    versions = {"old", *electrum._MNEMONIC_VERSIONS}
+    expected = {"slip39", "bip39", "bip39_wordlist"}
+    expected |= {f"electrum_{version}" for version in versions}
+    assert set(CLAIMS) == expected
+
+
+@pytest.mark.parametrize(
+    "address",
+    [
+        # BIP350's invalid vectors: a version 1 program under a BIP173
+        # checksum, and a version 0 one under a BIP350 checksum
+        "bc1p0xlxvlhemja6c4dqv22uapctqupfhlxm9h8z3k2e72q4k9hcz7vqh2y7hd",
+        "bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kemeawh",
+    ],
+)
+def test_a_checksum_of_the_other_witness_version_is_refused(address: str) -> None:
+    """Version 0 takes BIP173's checksum, every later version BIP350's.
+
+    :param address: an address whose checksum is the other version's.
+    """
+    changed = document()
+    changed["search"]["address"] = address
+    with pytest.raises(SeedScanValueError, match="'address' is not an address"):
+        loads(json.dumps(changed))
+
+
 def test_an_xprv_relabelled_as_an_xpub_is_refused() -> None:
     """An xprv given an xpub's version bytes is refused by its key's prefix."""
-    data = BIP32KeyData.b58decode(SHARES_XPRV)
-    forged = b58encode_check(
-        bytes.fromhex("0488b21e") + data.serialize(check_validity=False)[4:]
-    ).decode()
+    forged = relabelled(SHARES_XPRV, "0488b21e")
     changed = document()
     at(MEMBERS["ethereum xpub"][0])(changed, forged)
     with pytest.raises(SeedScanValueError, match="'xpub' is not an extended public"):

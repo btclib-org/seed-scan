@@ -1759,6 +1759,7 @@ dev = [
     { name = "furo", marker = "python_full_version >= '3.12'" },
     { name = "mypy" },
     { name = "myst-parser", marker = "python_full_version >= '3.12'" },
+    { name = "packaging" },
     { name = "pre-commit" },
     { name = "pyroma" },
     { name = "pytest" },
@@ -1788,6 +1789,7 @@ lint = [
 ]
 test = [
     { name = "coverage" },
+    { name = "packaging" },
     { name = "pytest" },
     { name = "pytest-cov" },
     { name = "pytest-randomly" },
@@ -1818,6 +1820,7 @@ dev = [
     { name = "furo", marker = "python_full_version >= '3.12'", specifier = ">=2025.12.19" },
     { name = "mypy", specifier = ">=2.3.1" },
     { name = "myst-parser", marker = "python_full_version >= '3.12'", specifier = ">=5.1.0" },
+    { name = "packaging", specifier = ">=26.3" },
     { name = "pre-commit", specifier = ">=4.6.2" },
     { name = "pyroma", specifier = ">=5.0.1" },
     { name = "pytest", specifier = ">=9.1.1" },
@@ -1847,6 +1850,7 @@ lint = [
 ]
 test = [
     { name = "coverage", specifier = ">=7.16.1" },
+    { name = "packaging", specifier = ">=26.3" },
     { name = "pytest", specifier = ">=9.1.1" },
     { name = "pytest-cov", specifier = ">=7.1.0" },
     { name = "pytest-randomly", specifier = ">=5.0.0" },

@@ -151,10 +151,12 @@ _XPUB_VERSION = bytes.fromhex("0488b21e")
 _BASE58 = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"
 # the version bytes of a base58 address: p2pkh and p2sh, mainnet and test
 _ADDRESS_VERSIONS = (0x00, 0x05, 0x6F, 0xC4)
-_BECH32 = "qpzry9x8gf2tvdw0s3jn54khce6mua7l"
 _BECH32_HRPS = ("bc", "tb", "bcrt")
-# BIP173's and BIP350's checksum constants
-_BECH32_CONSTANTS = (1, 0x2BC830A3)
+_BECH32 = "qpzry9x8gf2tvdw0s3jn54khce6mua7l"
+# BIP173's checksum constant, which a version 0 program takes, and
+# BIP350's, which every later version takes
+_BECH32_CONSTANT = 1
+_BECH32M_CONSTANT = 0x2BC830A3
 # a descriptor's checksum, eight characters of its own alphabet
 _CHECKSUM = "#[" + _BECH32 + "]{8}"
 
@@ -353,10 +355,12 @@ def _is_segwit_address(text: str) -> bool:
         return False
     values = [_BECH32.index(c) for c in data]
     expanded = [ord(c) >> 5 for c in hrp] + [0] + [ord(c) & 31 for c in hrp]
-    if _bech32_polymod(expanded + values) not in _BECH32_CONSTANTS:
+    version = values[0]
+    constant = _BECH32_CONSTANT if version == 0 else _BECH32M_CONSTANT
+    if _bech32_polymod(expanded + values) != constant:
         return False
     program_bits = 5 * (len(values) - 7)
-    return values[0] <= 16 and 2 * 8 <= program_bits <= 40 * 8 + 4
+    return version <= 16 and 2 * 8 <= program_bits <= 40 * 8 + 4
 
 
 def _address(document: dict[str, Any]) -> str:
