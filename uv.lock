@@ -192,7 +192,7 @@ wheels = [
 [[package]]
 name = "btclib-wallet"
 version = "2026.12"
-source = { git = "https://github.com/btclib-org/btclib-wallet?rev=9ffe7b9dec868917a18b10a2bfb50a0b581a1a91#9ffe7b9dec868917a18b10a2bfb50a0b581a1a91" }
+source = { git = "https://github.com/btclib-org/btclib-wallet?rev=824455760bc44904da2d9dd3a340acabe75f5f67#824455760bc44904da2d9dd3a340acabe75f5f67" }
 dependencies = [
     { name = "base58-bech32" },
     { name = "bip39-slip39" },
@@ -1802,7 +1802,7 @@ requires-dist = [
     { name = "bip32-descriptors", git = "https://github.com/btclib-org/bip32-descriptors?rev=e4d182ec5ccbbc7c90afde3ceaa83f6eee3046ce" },
     { name = "bip39-slip39", git = "https://github.com/btclib-org/bip39-slip39?rev=c6844d2764b165d1e9226cfedff386708d547810" },
     { name = "btclib", specifier = ">=2026.11.12" },
-    { name = "btclib-wallet", git = "https://github.com/btclib-org/btclib-wallet?rev=9ffe7b9dec868917a18b10a2bfb50a0b581a1a91" },
+    { name = "btclib-wallet", git = "https://github.com/btclib-org/btclib-wallet?rev=824455760bc44904da2d9dd3a340acabe75f5f67" },
 ]
 
 [package.metadata.requires-dev]

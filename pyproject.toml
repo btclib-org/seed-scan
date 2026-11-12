@@ -33,7 +33,7 @@ authors = [{ name = "The btclib developers", email = "devs@btclib.org" }]
 # packages it is to build on, so that whoever runs it offline can use
 # the interpreter that machine already has
 requires-python = ">=3.11"
-# what `identify` builds on: tests/imports_test.py refuses a module that
+# what the commands build on: tests/imports_test.py refuses a module that
 # imports anything else, and anything these do not pull in
 dependencies = [
     # the BIP39, SLIP-0039 and Electrum readings of a sentence, and the
@@ -44,7 +44,9 @@ dependencies = [
     "bip32-descriptors>=2026.11.12",
     # the account descriptors of a BIP44 purpose, the same
     # `bip44.account_descriptors` that `discover_accounts` reads, and the
-    # BIP32 master key of an Electrum versioned mnemonic
+    # BIP32 master key of an Electrum versioned mnemonic; for `scan`,
+    # `bip44.discover_account`, `fetch.electrum.ElectrumFetcher` and
+    # `fetch.transport.TlsLineTransport`
     "btclib-wallet>=2026.11.12",
     # the script of an address the user knows, `ScriptPubKey.from_address`
     "btclib>=2026.11.12",
@@ -159,13 +161,13 @@ dev = [
 # section 15 the commands that measure it
 required-version = ">=0.13.4"
 
-# the commits of `main` that hold what `identify` calls and no release
+# the commits of `main` that hold what the commands call and no release
 # holds yet. The table goes the day those releases are on the index, and
 # the floors above rise to them
 [tool.uv.sources]
 bip39-slip39 = { git = "https://github.com/btclib-org/bip39-slip39", rev = "c6844d2764b165d1e9226cfedff386708d547810" }
 bip32-descriptors = { git = "https://github.com/btclib-org/bip32-descriptors", rev = "e4d182ec5ccbbc7c90afde3ceaa83f6eee3046ce" }
-btclib-wallet = { git = "https://github.com/btclib-org/btclib-wallet", rev = "9ffe7b9dec868917a18b10a2bfb50a0b581a1a91" }
+btclib-wallet = { git = "https://github.com/btclib-org/btclib-wallet", rev = "824455760bc44904da2d9dd3a340acabe75f5f67" }
 
 [tool.uv.build-backend]
 # `module-name` is not written: it defaults to `project.name` normalized,

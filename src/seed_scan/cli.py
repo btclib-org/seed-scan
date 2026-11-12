@@ -16,24 +16,57 @@ opened the command refuses rather than read standard input. Before it
 reads anything it refuses every socket and every new process for the
 rest of the process. A refusal is one line on standard error, never a
 traceback, and says nothing of what was typed.
+
+``seed-scan scan`` reads a bundle from the file named, runs
+`seed_scan.scan.scan` on it against the Electrum server the user names
+as ``host:port``, and writes the scan result to standard output and a
+summary to standard error. It reads no secret. README.md's *Scanning a
+bundle* says why there is no default server. The connection is TLS,
+through `btclib_wallet.fetch.transport.TlsLineTransport`; plain TCP
+waits on btclib-org/btclib-wallet#861. The server's certificate is
+verified: it must chain to a certificate the context trusts and name the
+host as given, with TLS 1.2 at least. The context trusts the system's CA
+certificates, or, where ``--cafile`` names a file, the certificates of
+that file alone, which is how a server of one's own with a self-signed
+certificate is reached. The server is asked first for its genesis block,
+and one not serving Bitcoin's mainnet is refused. A read of a history
+during which the server's tip moved is read again, a bounded number of
+times. A failure of the server or of the connection is one line of
+fixed text, which names neither the server's answer nor the addresses
+asked.
 """
 
 from __future__ import annotations
 
 import argparse
+import contextlib
 import getpass
+import ssl
 import sys
 import warnings
+from pathlib import Path
 from typing import TYPE_CHECKING
+
+from btclib.exceptions import BTClibValueError
+from btclib_wallet.exceptions import FetchError, RpcError
+from btclib_wallet.fetch.electrum import ElectrumFetcher
+from btclib_wallet.fetch.transport import LineTransport, TlsLineTransport
 
 from seed_scan.bundle import dumps
 from seed_scan.exceptions import SeedScanException, SeedScanValueError
 from seed_scan.identify import identify
+from seed_scan.scan import GAP_LIMIT, scan
+from seed_scan.scan import dumps as scan_dumps
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Sequence
+    from collections.abc import Callable, Iterable, Sequence
+
+    from btclib.alias import Octets
+    from btclib.script import ScriptPubKey
+    from btclib_wallet.fetch.history import ScriptHistory
 
     from seed_scan.bundle import Bundle
+    from seed_scan.scan import ScanResult
 
 __all__ = [
     "main",
@@ -44,6 +77,24 @@ __all__ = [
 # one, or read the secret out of this one, beyond this hook's reach
 _REFUSED = ("socket.", "subprocess.", "os.system", "os.exec", "os.posix_spawn")
 _REFUSED_EXACTLY = ("os.fork", "os.forkpty", "os.spawn")
+
+_MAX_PORT = 65535
+
+# what a backend raises where its tip moved during a read, which
+# `HistoryReader` says the caller asks again. A text and not a class:
+# btclib-org/btclib-wallet#864 asks for a class of its own
+_TIP_MOVED = "the tip moved while the history was read"
+
+# how many times one history is read where the tip moves during each read
+_READS = 3
+
+# what a failure caused by each class says, the first class it is in
+_CAUSES: tuple[tuple[type[BaseException], str], ...] = (
+    (ssl.SSLCertVerificationError, "the server's certificate did not verify"),
+    (ssl.SSLError, "the TLS handshake with the server failed"),
+    (TimeoutError, "the server did not answer in time"),
+    (OSError, "no connection to the server"),
+)
 
 
 def _refuse_network(event: str, args: tuple[object, ...]) -> None:
@@ -115,6 +166,212 @@ def _summary(bundle: Bundle) -> str:
     return "\n".join(lines) + "\n"
 
 
+def _scan_summary(result: ScanResult) -> str:
+    """Return what the scan result says, for the user."""
+    lines = [f"server: {result.server}"]
+    for done in result.searched:
+        purpose = "Electrum" if done.purpose is None else f"purpose {done.purpose}"
+        line = f"reading {done.reading}, {purpose}: accounts read: {done.accounts}"
+        if done.cut_short:
+            line += ", cut short: the bundle's accounts end before the account gap"
+        lines.append(line)
+    lines += [
+        f"used: reading {u.reading}, {u.path}: {len(u.addresses)} addresses,"
+        f" {len(u.transactions)} transactions, {u.confirmed} sat confirmed,"
+        f" {u.unconfirmed} sat unconfirmed"
+        for u in result.used
+    ]
+    if not result.used:
+        lines.append("no account used within that bound")
+    lines += [
+        f"not checked: reading {n.reading}, {n.coin}: {n.reason}"
+        for n in result.not_checked
+    ]
+    return "\n".join(lines) + "\n"
+
+
+def _server(text: str) -> tuple[str, int]:
+    """Return the host and port of ``host:port``, an IPv6 host in brackets."""
+    host, colon, port = text.rpartition(":")
+    if host.startswith("[") and host.endswith("]"):
+        host = host[1:-1]
+    if not (colon and host and port.isascii() and port.isdigit()):
+        raise SeedScanValueError("--server is not host:port")
+    if not 0 < int(port) <= _MAX_PORT:
+        raise SeedScanValueError("--server: the port is not 1 to 65535")
+    return host, int(port)
+
+
+def _tls_context(cafile: str | None) -> ssl.SSLContext:
+    """Return the context a server's certificate is verified against.
+
+    `ssl.create_default_context` requires a certificate chaining to the
+    certificates it trusts and naming the host. It trusts the system's CA
+    certificates, or those of `cafile` alone where one is named.
+    """
+    context = None
+    # FileNotFoundError and ssl.SSLError are both an OSError; the refusal
+    # is raised outside `suppress`, so that it chains neither
+    with contextlib.suppress(OSError):
+        context = ssl.create_default_context(cafile=cafile)
+    if context is None:
+        raise SeedScanValueError("--cafile: no certificate could be loaded from it")
+    context.minimum_version = ssl.TLSVersion.TLSv1_2
+    return context
+
+
+def _connect(host: str, port: int, context: ssl.SSLContext) -> LineTransport:
+    """Return the TLS transport to a server."""
+    return TlsLineTransport(host, port, context=context)
+
+
+class _Mainnet:
+    """A reader that asks its server for Bitcoin's genesis block first.
+
+    So that a server on another chain is refused before any address is
+    asked of it. A read during which the tip moved is read again, up to
+    `_READS` times in all, as `HistoryReader` asks of its caller.
+    """
+
+    def __init__(self, fetcher: ElectrumFetcher) -> None:
+        self._fetcher = fetcher
+        self._checked = False
+
+    def get_history(
+        self, scripts: Iterable[Octets | ScriptPubKey], start_height: int = 0
+    ) -> ScriptHistory:
+        """Return the fetcher's answer, once the chain has been checked."""
+        if not self._checked:
+            other_chain = False
+            try:
+                self._fetcher.assert_network()
+            except BTClibValueError:
+                other_chain = True
+            if other_chain:
+                raise SeedScanValueError("the server does not serve Bitcoin's mainnet")
+            self._checked = True
+        for _ in range(_READS - 1):
+            try:
+                return self._fetcher.get_history(scripts, start_height)
+            except FetchError as e:
+                if str(e) != _TIP_MOVED:
+                    raise
+        return self._fetcher.get_history(scripts, start_height)
+
+
+def _failure(error: FetchError) -> str:
+    """Return the fixed text that says how the server failed.
+
+    Chosen by the class of the error and of its causes, and for a tip
+    that moved by comparing the message with `_TIP_MOVED`. A message is
+    never written: it can hold the server's answers.
+    """
+    if isinstance(error, RpcError):
+        return "the server refused a request"
+    if str(error) == _TIP_MOVED:
+        return "the server's tip moved during every read of a history"
+    cause = error.__cause__
+    while cause is not None:
+        for kind, text in _CAUSES:
+            if isinstance(cause, kind):
+                return text
+        cause = cause.__cause__
+    return "no usable answer from the server"
+
+
+def _read_bundle(name: str) -> str:
+    """Return the text of the bundle file, refusing one it cannot read."""
+    text = None
+    # the refusal is raised outside `suppress`: a decoding error holds the
+    # bytes read, which a file handed in by mistake fills with a secret
+    with contextlib.suppress(OSError, UnicodeDecodeError):
+        text = Path(name).read_text(encoding="utf-8")
+    if text is None:
+        raise SeedScanValueError("the bundle file cannot be read as UTF-8 text")
+    return text
+
+
+def _run_scan(
+    args: argparse.Namespace,
+    connect: Callable[[str, int, ssl.SSLContext], LineTransport],
+) -> ScanResult:
+    """Read the bundle, connect, and scan."""
+    text = _read_bundle(args.bundle)
+    host, port = _server(args.server)
+    context = _tls_context(args.cafile)
+    transport = None
+    # the transport quotes a host it refuses, and the refusal says none
+    with contextlib.suppress(BTClibValueError):
+        transport = connect(host, port, context)
+    if transport is None:
+        raise SeedScanValueError("--server names no host a connection can use")
+    fetcher = ElectrumFetcher(transport=transport, verify_network=False)
+    return scan(
+        text,
+        _Mainnet(fetcher),
+        server=args.server,
+        gap_limit=args.gap_limit,
+        account_gap=args.account_gap,
+    )
+
+
+def _scan_command(
+    args: argparse.Namespace,
+    connect: Callable[[str, int, ssl.SSLContext], LineTransport],
+) -> int:
+    """Run ``seed-scan scan``; answer its exit status."""
+    try:
+        result = _run_scan(args, connect)
+    except SeedScanException as e:
+        err_msg = str(e)
+    except FetchError as e:
+        err_msg = _failure(e)
+    except (ValueError, TypeError) as e:
+        err_msg = f"refused by a dependency: {type(e).__name__}"
+    except KeyboardInterrupt:
+        err_msg = "interrupted"
+    else:
+        sys.stdout.write(scan_dumps(result))
+        sys.stderr.write(_scan_summary(result))
+        return 0
+    sys.stderr.write(f"seed-scan scan: {err_msg}\n")
+    return 1
+
+
+def _identify_command(
+    args: argparse.Namespace,
+    prompt: Callable[[str], str],
+    forbid_network: Callable[[], None],
+) -> int:
+    """Run ``seed-scan identify``; answer its exit status."""
+    forbid_network()
+    try:
+        mnemonic = prompt("Mnemonic: ")
+        passphrases = _passphrases(prompt)
+        bundle = identify(
+            mnemonic,
+            passphrases,
+            prompt,
+            accounts=args.accounts,
+            address=args.address,
+            indexes=args.indexes,
+        )
+    except SeedScanException as e:
+        err_msg = str(e)
+    except (ValueError, TypeError) as e:
+        # a dependency's refusal: those packages print no secret either,
+        # but the class alone is said, and no traceback
+        err_msg = f"refused by a dependency: {type(e).__name__}"
+    except (KeyboardInterrupt, EOFError):
+        err_msg = "interrupted"
+    else:
+        sys.stdout.write(dumps(bundle))
+        sys.stderr.write(_summary(bundle))
+        return 0
+    sys.stderr.write(f"seed-scan identify: {err_msg}\n")
+    return 1
+
+
 def _parser() -> argparse.ArgumentParser:
     """Return the command's parser."""
     parser = argparse.ArgumentParser(
@@ -144,6 +401,37 @@ def _parser() -> argparse.ArgumentParser:
         default=20,
         help="indexes of each branch the address search reads (default: 20)",
     )
+    scan_parser = commands.add_parser(
+        "scan",
+        help="find the used accounts of a bundle on an Electrum server",
+        description=(
+            "Read a public bundle, ask the Electrum server named which of its"
+            " accounts were used, and write the scan result to standard"
+            " output. The server learns every address asked."
+        ),
+    )
+    scan_parser.add_argument("bundle", help="the bundle file identify wrote")
+    scan_parser.add_argument(
+        "--server",
+        required=True,
+        help="the Electrum server to ask, as host:port, over TLS",
+    )
+    scan_parser.add_argument(
+        "--cafile",
+        help="trust the certificates of this file alone for the server",
+    )
+    scan_parser.add_argument(
+        "--gap-limit",
+        type=int,
+        default=GAP_LIMIT,
+        help=f"unused indexes in a row that end a branch (default: {GAP_LIMIT})",
+    )
+    scan_parser.add_argument(
+        "--account-gap",
+        type=int,
+        default=1,
+        help="unused accounts in a row that end a purpose (default: 1)",
+    )
     return parser
 
 
@@ -152,36 +440,15 @@ def main(
     *,
     prompt: Callable[[str], str] = _hidden,
     forbid_network: Callable[[], None] = _forbid_network,
+    connect: Callable[[str, int, ssl.SSLContext], LineTransport] = _connect,
 ) -> int:
     """Run the command; answer its exit status.
 
-    `prompt` and `forbid_network` are what a test replaces: the hidden
-    prompt and the refusal of every socket and new process.
+    `prompt`, `forbid_network` and `connect` are what a test replaces:
+    the hidden prompt, the refusal of every socket and new process, and
+    the transport to a server.
     """
     args = _parser().parse_args(argv)
-    forbid_network()
-    try:
-        mnemonic = prompt("Mnemonic: ")
-        passphrases = _passphrases(prompt)
-        bundle = identify(
-            mnemonic,
-            passphrases,
-            prompt,
-            accounts=args.accounts,
-            address=args.address,
-            indexes=args.indexes,
-        )
-    except SeedScanException as e:
-        err_msg = str(e)
-    except (ValueError, TypeError) as e:
-        # a dependency's refusal: those packages print no secret either,
-        # but the class alone is said, and no traceback
-        err_msg = f"refused by a dependency: {type(e).__name__}"
-    except (KeyboardInterrupt, EOFError):
-        err_msg = "interrupted"
-    else:
-        sys.stdout.write(dumps(bundle))
-        sys.stderr.write(_summary(bundle))
-        return 0
-    sys.stderr.write(f"seed-scan identify: {err_msg}\n")
-    return 1
+    if args.command == "scan":
+        return _scan_command(args, connect)
+    return _identify_command(args, prompt, forbid_network)

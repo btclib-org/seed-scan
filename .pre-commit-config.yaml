@@ -123,6 +123,10 @@ repos:
       - id: check-merge-conflict
       - id: check-vcs-permalinks
       - id: detect-private-key
+        # the key of the test server's certificate, which the TLS tests
+        # serve on the loopback interface and nothing else holds;
+        # .secrets.baseline records it for detect-secrets
+        exclude: ^tests/tls/server\.pem$
       - id: debug-statements
       - id: check-docstring-first
       # the hook's default, *_test.py, with neither args nor exclude.

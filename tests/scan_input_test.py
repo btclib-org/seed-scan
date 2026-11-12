@@ -4,10 +4,11 @@
 
 """The bundle is what `btclib_wallet.bip44`'s account discovery reads.
 
-`scan` is to read a bundle with `seed_scan.bundle` alone and hand it to
-`discover_accounts` and `discover_account`. These tests do that, over a
-history kept in memory, so that the format is checked against the
-reader it is written for and no test reaches the network.
+`seed_scan.scan` reads a bundle with `seed_scan.bundle` alone and hands
+it to `discover_account`, and `discover_accounts` reads the same keys.
+These tests hand the bundle's keys to both, over a history kept in
+memory, so that the format is checked against the reader it is written
+for and no test reaches the network.
 """
 
 from __future__ import annotations
@@ -72,7 +73,7 @@ class Chain:
 
 
 def read_back(bundle: Bundle) -> Bundle:
-    """Write a bundle and read it back, as `scan` will get it.
+    """Write a bundle and read it back, as `scan` gets it.
 
     :param bundle: what `identify` answered.
     :returns: the bundle `seed_scan.bundle.loads` reads from its text.
