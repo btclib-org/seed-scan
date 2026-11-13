@@ -59,6 +59,7 @@ __all__ = [
     "cli",
     "evm",
     "exceptions",
+    "forks",
     "identify",
     "report",
     "scan",

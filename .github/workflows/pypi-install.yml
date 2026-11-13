@@ -142,7 +142,7 @@ jobs:
           python - <<'PY'
           from importlib.metadata import requires, version
           import seed_scan
-          from seed_scan import bundle, cli, exceptions, identify, report, scan
+          from seed_scan import *
 
           print("installed version:", version("seed-scan"))
           print("requires:", requires("seed-scan"))

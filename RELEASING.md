@@ -1140,13 +1140,13 @@ test_dist=seed-scan
 pkg=seed_scan
 rtd=seed-scan
 python=$(grep -Ev '^[[:space:]]*(#|$)' .python-version)
-smoke='from seed_scan import bundle, cli, exceptions, identify, report, scan
+smoke='from seed_scan import *
 import seed_scan; print(seed_scan.__version__)'
 ```
 
-`smoke` imports each published module by name, because `import
-seed_scan` alone imports none of them: the package's docstring says
-why.
+`smoke` imports each published module, each name of
+`seed_scan.__all__`, because `import seed_scan` alone imports none of
+them: the package's docstring says why.
 
 `python` reads `.python-version`, so the block is run from the root of
 the checkout.
