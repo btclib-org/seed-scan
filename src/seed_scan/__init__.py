@@ -57,6 +57,7 @@ except PackageNotFoundError:
 __all__ = [
     "bundle",
     "cli",
+    "evm",
     "exceptions",
     "identify",
     "scan",

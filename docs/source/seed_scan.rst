@@ -18,6 +18,13 @@ seed_scan.cli module
    :members:
    :show-inheritance:
 
+seed_scan.evm module
+--------------------
+
+.. automodule:: seed_scan.evm
+   :members:
+   :show-inheritance:
+
 seed_scan.exceptions module
 ---------------------------
 
