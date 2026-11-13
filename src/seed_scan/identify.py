@@ -69,9 +69,43 @@ class Coin:
     purposes: tuple[int, ...]
 
 
+# Each other coin's purposes are the union of those these wallets derive
+# its accounts at, read at the commits linked:
+# - Litecoin 44, 49 and 84: Electrum-LTC's BIP39 formats,
+#   https://github.com/pooler/electrum-ltc/blob/f9cbfaca5f8b2ab3eef89758bf78b7e4c2c554a0/electrum_ltc/bip39_wallet_formats.json#L1-L19
+#   Trezor Suite,
+#   https://github.com/trezor/trezor-suite/blob/c861929418c13919b335061d65a169de5aa869f3/networks/bitcoin/network-bitcoin-suite-common/src/networkConfig.ts#L149-L177
+#   Ledger Live, which adds 49 and 84 for a coin that supports segwit,
+#   https://github.com/LedgerHQ/ledger-live/blob/91056c17c325bf042f6449c3ed74412adcb84899/libs/ledger-wallet-framework/src/derivation.ts#L504-L539
+#   https://github.com/LedgerHQ/ledger-live/blob/91056c17c325bf042f6449c3ed74412adcb84899/domain/entity/currency-crypto/src/currencies/litecoin.ts#L12-L13
+#   and Trust Wallet's wallet-core, 84 and 44,
+#   https://github.com/trustwallet/wallet-core/blob/7a21615fad32edd8dc0b040d845de3973cde2c5a/registry.json#L56-L75
+# - Bitcoin Cash 44: Electron Cash,
+#   https://github.com/Electron-Cash/Electron-Cash/blob/7f4afadbf62a6daa1d6d0563d0951141ddcc6a7c/electroncash/keystore.py#L809-L810
+#   Trezor Suite, Ledger Live and wallet-core, at the lines above and
+#   https://github.com/trezor/trezor-suite/blob/c861929418c13919b335061d65a169de5aa869f3/networks/bitcoin/network-bitcoin-suite-common/src/networkConfig.ts#L218-L231
+#   https://github.com/trustwallet/wallet-core/blob/7a21615fad32edd8dc0b040d845de3973cde2c5a/registry.json#L1462-L1472
+#   Electron Cash and Ledger Live also offer m/44h/0h, Bitcoin's own.
+# - Dogecoin 44: Trezor Suite, Ledger Live and wallet-core,
+#   https://github.com/trezor/trezor-suite/blob/c861929418c13919b335061d65a169de5aa869f3/networks/bitcoin/network-bitcoin-suite-common/src/networkConfig.ts#L178-L197
+#   https://github.com/trustwallet/wallet-core/blob/7a21615fad32edd8dc0b040d845de3973cde2c5a/registry.json#L95-L105
+# - Ethereum 44: MetaMask, Trezor Suite with Ledger's layouts, and
+#   wallet-core,
+#   https://github.com/MetaMask/accounts/blob/cbb1f487b2746d75ecf8ef05accd8ce338f3873e/packages/keyring-eth-hd/src/hd-keyring.ts#L39
+#   https://github.com/trezor/trezor-suite/blob/c861929418c13919b335061d65a169de5aa869f3/networks/ethereum/network-ethereum-suite-common/src/networkConfig.ts#L43-L80
+#   https://github.com/trustwallet/wallet-core/blob/7a21615fad32edd8dc0b040d845de3973cde2c5a/registry.json#L481-L491
+# Trezor's firmware takes 49 and 84 where a coin's definition sets
+# "segwit", 86 where it sets "taproot"; Litecoin's sets segwit alone,
+# Bitcoin Cash's and Dogecoin's neither:
+#   https://github.com/trezor/trezor-firmware/blob/433075c0a0e643d3a07364226fed40a7bbc717a8/core/src/apps/bitcoin/keychain.py#L130-L153
+#   https://github.com/trezor/trezor-firmware/blob/433075c0a0e643d3a07364226fed40a7bbc717a8/common/defs/bitcoin/litecoin.json#L25-L26
+#   https://github.com/trezor/trezor-firmware/blob/433075c0a0e643d3a07364226fed40a7bbc717a8/common/defs/bitcoin/bcash.json#L25-L26
+#   https://github.com/trezor/trezor-firmware/blob/433075c0a0e643d3a07364226fed40a7bbc717a8/common/defs/bitcoin/dogecoin.json#L25-L26
+
 #: The coins and purposes a bundle declares, the order they are written
 #: in. Bitcoin's are the four `btclib_wallet.bip44` maps to an address
-#: encoding; the others are the purposes their wallets derive from.
+#: encoding; each other coin's are those its wallets derive accounts at,
+#: the comment above citing them.
 COINS = (
     Coin("bitcoin", 0, (44, 49, 84, 86)),
     Coin("ethereum", 60, (44,)),

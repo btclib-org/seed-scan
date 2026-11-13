@@ -173,6 +173,21 @@ def test_the_coins_declared_are_written_in_order() -> None:
     assert ethereum.xpub == master.derive("m/44h/60h/0h").xpub.b58encode()
 
 
+def test_each_coin_takes_the_purposes_its_wallets_derive_at() -> None:
+    """`COINS` holds the purposes the wallets its comment cites derive at.
+
+    A purpose added or dropped is a new reading of those wallets, so
+    this pin moves with that comment.
+    """
+    assert {coin.name: coin.purposes for coin in COINS} == {
+        "bitcoin": (44, 49, 84, 86),
+        "ethereum": (44,),
+        "bitcoin-cash": (44,),
+        "litecoin": (44, 49, 84),
+        "dogecoin": (44,),
+    }
+
+
 def test_each_passphrase_is_a_reading_named_by_its_number() -> None:
     """The empty passphrase and one typed give two readings, 0 and 1."""
     bundle = identify(ABANDON, ["", "TREZOR"], no_share, accounts=1)
