@@ -342,8 +342,8 @@ def scan(
     asked anything. Refused, as `seed_scan.bundle.loads` refuses it: text
     that is not a bundle. Refused as a `SeedScanValueError` too: a
     descriptor that does not parse, as one whose key is no point of the
-    curve, and accounts not numbered from 0. A bound below 1 is refused, and one that is no
-    integer is a `SeedScanTypeError`.
+    curve, and accounts not numbered from 0. A bound below 1 is refused, and
+    one that is no integer is a `SeedScanTypeError`.
     """
     bundle = loads(text)
     if not isinstance(server, str):
