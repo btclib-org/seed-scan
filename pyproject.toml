@@ -36,19 +36,15 @@ requires-python = ">=3.11"
 # what the commands build on: tests/imports_test.py refuses a module that
 # imports anything else, and anything these do not pull in
 dependencies = [
-    # the BIP39, SLIP-0039 and Electrum readings of a sentence, and the
-    # BIP39 languages that hold its words (`bip39.langs_from_mnemonic`)
+    # what a sentence is under BIP39, SLIP-0039 and Electrum, and the seed
+    # each reading gives
     "bip39-slip39>=2026.11.13",
-    # a seed to its account keys: `BIP32KeyData.from_seed`, `derive` and
-    # `xpub`
+    # a seed to its master key and account keys
     "bip32-descriptors>=2026.11.13",
-    # the account descriptors of a BIP44 purpose, the same
-    # `bip44.account_descriptors` that `discover_accounts` reads, and the
-    # BIP32 master key of an Electrum versioned mnemonic; for `scan`,
-    # `bip44.discover_account`, `fetch.electrum.ElectrumFetcher` and
-    # `fetch.transport.TlsLineTransport`
+    # the descriptors of an account, and for `scan` the discovery of the
+    # accounts in use against an Electrum server over TLS
     "btclib-wallet>=2026.11.13",
-    # the script of an address the user knows, `ScriptPubKey.from_address`
+    # Bitcoin's scripts, addresses and transactions
     "btclib>=2026.11.12",
 ]
 keywords = [
