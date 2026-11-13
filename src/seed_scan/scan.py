@@ -185,11 +185,12 @@ def _descriptors(account: Account, where: str) -> tuple[Descriptor, ...]:
     """Return an account's descriptors, parsed.
 
     `seed_scan.bundle.loads` has read them as the receive and change
-    descriptors over the account's own xpub, which holds no private key
-    and ranges every index, checksum included; what it does not verify is
-    that the key is a point of the curve, and `parse` does. Its refusal may quote the descriptor, so it is not
-    kept: the refusal says where the account is in the bundle, raised
-    outside `suppress` so that the error is not its context.
+    descriptors over the account's own xpub, which holds no private key and
+    ranges every index, checksum included; what it does not verify is that
+    the key is a point of the curve, and `parse` does. Its refusal may quote
+    the descriptor, so it is not kept: the refusal says where the account is
+    in the bundle, raised outside `suppress` so that the error is not its
+    context.
     """
     descriptors: tuple[Descriptor, ...] = ()
     with contextlib.suppress(TypeError, ValueError):
