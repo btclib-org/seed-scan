@@ -47,19 +47,19 @@ path. `seed_scan.bundle` documents the bundle, and
 ## Scanning a bundle
 
 ```shell
-seed-scan scan bundle.json --server <host:port> > scan.json
+seed-scan scan bundle.json --server electrum.example.org:50002 > scan.json
 ```
 
-It asks the Electrum server named which accounts of the bundle were
-used, and writes the scan result to standard output and what it found
-to standard error. The server learns every address it is asked about,
-so name your own: there is no default. The connection is TLS, and the
-server's certificate is verified against the system's CA certificates,
-or against those of the file `--cafile` names, which is how a server
-with a self-signed certificate is reached. Bitcoin is the coin it reads,
-and the bundle's other coins are listed as not checked. `seed_scan.scan`
-documents the result, and `seed-scan scan --help` the bounds of the
-search.
+It asks the Electrum server named, as `host:port`, which accounts of the
+bundle were used, and writes the scan result to standard output and what
+it found to standard error. The server learns every address it is asked
+about, so name your own: there is no default. The connection is TLS, and
+the server's certificate is verified against the system's CA
+certificates, or against those of the file `--cafile` names, which is
+how a server with a self-signed certificate is reached. Bitcoin is the
+coin it reads, and the bundle's other coins are listed as not checked.
+`seed_scan.scan` documents the result, and `seed-scan scan --help` the
+bounds of the search.
 
 ## What touches the secret
 
