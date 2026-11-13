@@ -42,8 +42,11 @@ dependencies = [
     # a seed to its master key and account keys
     "bip32-descriptors>=2026.11.13",
     # the descriptors of an account, and for `scan` the discovery of the
-    # accounts in use against an Electrum server over TLS
+    # accounts in use against an Electrum server over TLS, and the HTTP
+    # transport the Ethereum node is asked over
     "btclib-wallet>=2026.11.13",
+    # the Ethereum address of a public key, `evm.address_from_pub_key`
+    "coin-addresses>=2026.11.14",
     # Bitcoin's scripts, addresses and transactions
     "btclib>=2026.11.12",
 ]

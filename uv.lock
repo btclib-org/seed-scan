@@ -531,6 +531,19 @@ wheels = [
 ]
 
 [[package]]
+name = "coin-addresses"
+version = "2026.11.14"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "base58-bech32" },
+    { name = "ecc" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/f2/c9/89e083aa26b6e66c112c3fd26273b8d0cbfb8a00cc3636d08b10f7294a1d/coin_addresses-2026.11.14.tar.gz", hash = "sha256:b5f51731574fc9d7a604f9e934c81456dd35c19fe94503da0882670f28277a64", size = 577954, upload-time = "2026-11-13T23:13:04.478Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/3f/81/ac29a6ca4c311c1f47642370121706c8a923daebfc64e689ac8dca4d22eb/coin_addresses-2026.11.14-py3-none-any.whl", hash = "sha256:52142be917ad50c136567a24edac5647b8393857d4ad19e3dc11ae8ddd4accd8", size = 41423, upload-time = "2026-11-13T23:13:03.137Z" },
+]
+
+[[package]]
 name = "colorama"
 version = "0.4.6"
 source = { registry = "https://pypi.org/simple" }
@@ -1767,6 +1780,7 @@ dependencies = [
     { name = "bip39-slip39" },
     { name = "btclib" },
     { name = "btclib-wallet" },
+    { name = "coin-addresses" },
 ]
 
 [package.dev-dependencies]
@@ -1832,6 +1846,7 @@ requires-dist = [
     { name = "bip39-slip39", specifier = ">=2026.11.13" },
     { name = "btclib", specifier = ">=2026.11.12" },
     { name = "btclib-wallet", specifier = ">=2026.11.13" },
+    { name = "coin-addresses", specifier = ">=2026.11.14" },
 ]
 
 [package.metadata.requires-dev]

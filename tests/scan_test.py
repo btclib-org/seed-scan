@@ -28,13 +28,25 @@ from btclib_wallet.fetch.history import (
     ScriptHistory,
     history_scripts,
 )
+from coin_addresses.evm import address_from_pub_key
 
 from seed_scan import scan as scan_module
 from seed_scan.bundle import dumps, loads
+from seed_scan.evm import Node
 from seed_scan.exceptions import SeedScanTypeError, SeedScanValueError
 from seed_scan.identify import identify
-from seed_scan.scan import FORMAT, VERSION, Address, NotRead, Searched, Tip, scan
+from seed_scan.scan import (
+    FORMAT,
+    VERSION,
+    Address,
+    EvmAddress,
+    NotRead,
+    Searched,
+    Tip,
+    scan,
+)
 
+from .evm_test import Ethereum
 from .identify_test import (
     ABANDON,
     BIP84_CHANGE,
@@ -337,13 +349,17 @@ def test_an_electrum_reading_has_one_account() -> None:
 
 
 def test_the_other_coins_are_not_checked(abandon: str) -> None:
-    """Each coin but Bitcoin is listed once per reading, with the reason."""
+    """Each coin not read is listed once per reading, with the reason."""
     result = scan(abandon, Chain(), server="s:1")
-    reason = "scan reads Bitcoin alone in this version"
-    assert result.not_checked == tuple(
-        NotRead(0, coin, reason)
-        for coin in ("ethereum", "bitcoin-cash", "litecoin", "dogecoin")
+    reason = "scan reads Bitcoin and Ethereum alone in this version"
+    assert result.not_checked == (
+        NotRead(0, "ethereum", "no Ethereum node was named"),
+        *(
+            NotRead(0, coin, reason)
+            for coin in ("bitcoin-cash", "litecoin", "dogecoin")
+        ),
     )
+    assert result.evm is None
 
 
 def test_the_result_is_versioned_json_naming_the_bundle(abandon: str) -> None:
@@ -503,3 +519,190 @@ def test_the_arguments_are_checked_before_the_reader_is_asked(
     arguments: dict[str, object] = {"server": "s:1", **bounds}
     with pytest.raises(error):
         scan(abandon, NEVER, **arguments)  # type: ignore[arg-type]
+
+
+#: The address of m/44h/60h/0h/0/0 for BIP84's mnemonic, as Nethereum's
+#: README derives it, `address0` under *BIP32 Key Derivation*:
+#:
+#: repo    Nethereum/Nethereum
+#: path    src/Nethereum.Wallet/README.md
+#: commit  cde9ee8d69a08f700398abfd5a8c5d1a7bbdfd3f
+#: blob    19bbd360d2c03aa105d1bd28e89af87ef4ee2642
+NETHEREUM_ADDRESS = "0x9858EfFD232B4033E47d90003D41EC34EcaEda94"
+
+
+def eth_address(text: str, path: str, index: int) -> str:
+    """Return the address at an index of an Ethereum account of a bundle.
+
+    :param text: the bundle's text.
+    :param path: the account's path.
+    :param index: the index on the receive branch.
+    :returns: the address, EIP-55 encoded.
+    """
+    (account,) = [a for r in loads(text).readings for a in r.accounts if a.path == path]
+    key = BIP32KeyData.b58decode(account.xpub).derive(f"m/0/{index}")
+    return address_from_pub_key(key.sec)
+
+
+def node(fake: Ethereum) -> Node:
+    """Return a node answered by a fake, with no socket.
+
+    :param fake: the fake.
+    :returns: the node.
+    """
+    return Node("https://node.example/rpc", transport=fake)
+
+
+def test_the_first_ethereum_address_is_the_published_one(abandon: str) -> None:
+    """The receive branch below the bundle's xpub, as Nethereum derives it."""
+    assert eth_address(abandon, "m/44h/60h/0h", 0) == NETHEREUM_ADDRESS
+
+
+def test_an_ethereum_address_with_a_balance_or_a_nonce_is_used(abandon: str) -> None:
+    """Either is enough; the balance is in wei, as decimal digits."""
+    first = eth_address(abandon, "m/44h/60h/0h", 0)
+    sixth = eth_address(abandon, "m/44h/60h/0h", 5)
+    third = eth_address(abandon, "m/44h/60h/2h", 0)
+    fake = Ethereum({first: 10**18, third: 1}, {sixth: 4}, chain_id=1)
+    result = scan(abandon, None, node=node(fake))
+    evm = result.evm
+    assert evm is not None
+    assert (evm.node, evm.chain_id, evm.block) == ("https://node.example", 1, 16)
+    first_account, third_account = evm.used
+    assert first_account.path == "m/44h/60h/0h"
+    assert first_account.addresses == (
+        EvmAddress(0, first, str(10**18), 0),
+        EvmAddress(5, sixth, "0", 4),
+    )
+    assert first_account.balance == str(10**18)
+    assert (third_account.account, third_account.balance) == (2, "1")
+    assert evm.searched == (Searched(0, 44, 5, cut_short=True),)
+    assert fake.asked[:2] == ["eth_chainId", "eth_blockNumber"]
+    assert result.server is None
+    assert not result.searched
+    assert not result.used
+
+
+def test_the_ethereum_bounds_are_the_bitcoin_ones(abandon: str) -> None:
+    """An index past the gap limit, an account past the account gap."""
+    late = eth_address(abandon, "m/44h/60h/0h", 3)
+    fourth = eth_address(abandon, "m/44h/60h/3h", 0)
+    fake = Ethereum({late: 1, fourth: 1})
+    evm = scan(abandon, None, node=node(fake), gap_limit=3).evm
+    assert evm is not None
+    assert not evm.used
+    assert evm.searched == (Searched(0, 44, 3, cut_short=False),)
+    evm = scan(abandon, None, node=node(fake), gap_limit=4, account_gap=4).evm
+    assert evm is not None
+    assert [u.account for u in evm.used] == [0, 3]
+    nothing = Ethereum()
+    scan(abandon, None, node=node(nothing))
+    # two requests ahead, then two per address: three accounts of 20
+    assert len(nothing.asked) == 2 + 2 * 20 * 3
+
+
+def test_without_a_server_bitcoin_is_not_checked(abandon: str) -> None:
+    """The node alone: Bitcoin is listed, with the reason."""
+    result = scan(abandon, None, node=node(Ethereum()))
+    assert result.not_checked[0] == NotRead(
+        0, "bitcoin", "no Electrum server was named"
+    )
+    assert "ethereum" not in [n.coin for n in result.not_checked]
+    document = json.loads(scan_module.dumps(result))
+    assert document["server"] is None
+    assert list(document)[-1] == "evm"
+    assert list(document["evm"]) == ["node", "chain_id", "block", "searched", "used"]
+
+
+def test_a_server_and_a_node_are_both_read(abandon: str) -> None:
+    """Bitcoin's accounts by the reader, then Ethereum's by the node."""
+    receive = script(abandon, "m/84h/0h/0h", 0, 0)
+    chain = Chain(HistoryTx(pay(1, (receive, 1)), BLOCK))
+    first = eth_address(abandon, "m/44h/60h/0h", 0)
+    result = scan(abandon, chain, server="s:1", node=node(Ethereum({first: 2})))
+    assert [u.path for u in result.used] == ["m/84h/0h/0h"]
+    assert result.evm is not None
+    assert [u.path for u in result.evm.used] == ["m/44h/60h/0h"]
+    reason = "scan reads Bitcoin and Ethereum alone in this version"
+    assert {n.reason for n in result.not_checked} == {reason}
+
+
+def test_nothing_the_ethereum_scan_writes_holds_a_secret(abandon: str) -> None:
+    """No piece of the mnemonic's secrets is in the result's ``evm``."""
+    first = eth_address(abandon, "m/44h/60h/0h", 0)
+    text = scan_module.dumps(scan(abandon, None, node=node(Ethereum({first: 1}))))
+    assert first in text
+    secrets = Secrets()
+    secrets.sentence(ABANDON)
+    paths = sorted({a.path for r in loads(abandon).readings for a in r.accounts})
+    secrets.seed(bip39.seed_from_mnemonic(ABANDON, ""), paths)
+    assert_text_secret_free(text, secrets.every())
+
+
+def off_curve(xpub: str) -> str:
+    """Return an extended public key whose key is no point of the curve.
+
+    :param xpub: the key whose other fields are kept.
+    :returns: the same fields, with a key whose x is past the field.
+    """
+    data = BIP32KeyData.b58decode(xpub)
+    forged = BIP32KeyData(
+        data.version,
+        data.depth,
+        data.parent_fingerprint,
+        data.index,
+        data.chain_code,
+        b"\x02" + b"\xff" * 32,
+        check_validity=False,
+    )
+    return forged.b58encode(check_validity=False)
+
+
+def test_an_ethereum_xpub_that_does_not_decode_is_refused(abandon: str) -> None:
+    """`loads` reads its form; decoding finds no point. Nothing is asked."""
+    (account,) = [
+        a
+        for r in loads(abandon).readings
+        for a in r.accounts
+        if a.path == "m/44h/60h/1h"
+    ]
+    text = edited(abandon, "m/44h/60h/1h", xpub=off_curve(account.xpub))
+    loads(text)
+    fake = Ethereum()
+    with pytest.raises(SeedScanValueError) as caught:
+        scan(text, None, node=node(fake))
+    assert (
+        str(caught.value)
+        == "bundle: reading 0, account 21: an xpub that does not decode"
+    )
+    assert caught.value.__context__ is None
+    assert not fake.asked
+
+
+def test_ethereum_accounts_not_numbered_from_0_are_refused(abandon: str) -> None:
+    """The same rule as Bitcoin's, before the node is asked."""
+    fake = Ethereum()
+    text = edited(abandon, "m/44h/60h/1h", account=3)
+    with pytest.raises(SeedScanValueError, match="accounts not numbered from 0"):
+        scan(text, None, node=node(fake))
+    assert not fake.asked
+
+
+@pytest.mark.parametrize(
+    "server, said",
+    [
+        ("s:1", "a server is named, and no reader asks it"),
+        (None, "neither a reader nor a node is given"),
+    ],
+)
+def test_a_scan_of_nothing_is_refused(
+    abandon: str, server: str | None, said: str
+) -> None:
+    """No reader: a server named is refused, and so is no node.
+
+    :param abandon: the bundle.
+    :param server: the server named.
+    :param said: what the refusal says.
+    """
+    with pytest.raises(SeedScanValueError, match=said):
+        scan(abandon, None, server=server)

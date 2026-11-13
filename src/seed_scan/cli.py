@@ -21,9 +21,10 @@ either, in case it is a mnemonic typed there by mistake.
 
 ``seed-scan scan`` reads a bundle from the file named, runs
 `seed_scan.scan.scan` on it against the Electrum server the user names
-as ``host:port``, and writes the scan result to standard output and a
-summary to standard error. It reads no secret. README.md's *Scanning a
-bundle* says why there is no default server. The connection is TLS,
+as ``host:port``, the Ethereum node the user names by its URL, or both,
+and writes the scan result to standard output and a summary to standard
+error. It reads no secret. README.md's *Scanning a bundle* says why
+there is no default server or node. The Electrum connection is TLS,
 through `btclib_wallet.fetch.transport.TlsLineTransport`; plain TCP
 waits on btclib-org/btclib-wallet#861. The server's certificate is
 verified: it must chain to a certificate the context trusts and name the
@@ -33,9 +34,11 @@ that file alone, which is how a server of one's own with a self-signed
 certificate is reached. The server is asked first for its genesis block,
 and one not serving Bitcoin's mainnet is refused. A read of a history
 during which the server's tip moved is read again, a bounded number of
-times. A failure of the server or of the connection is one line of
-fixed text, which names neither the server's answer nor the addresses
-asked.
+times. The node is a `seed_scan.evm.Node`, whose docstring says which
+URLs it takes and how its certificate is verified, over one connection
+kept for the whole scan: ``--cafile`` is the Electrum server's alone. A
+failure of the server, the node or the connection is one line of fixed
+text, which names neither the answer nor the addresses asked.
 """
 
 from __future__ import annotations
@@ -50,11 +53,16 @@ from pathlib import Path
 from typing import TYPE_CHECKING, NoReturn
 
 from btclib.exceptions import BTClibValueError
-from btclib_wallet.exceptions import FetchError, RpcError
+from btclib_wallet.exceptions import FetchError, HttpError, RpcError
 from btclib_wallet.fetch.electrum import ElectrumFetcher
-from btclib_wallet.fetch.transport import LineTransport, TlsLineTransport
+from btclib_wallet.fetch.transport import (
+    LineTransport,
+    SessionTransport,
+    TlsLineTransport,
+)
 
 from seed_scan.bundle import dumps
+from seed_scan.evm import Node
 from seed_scan.exceptions import SeedScanException, SeedScanValueError
 from seed_scan.scan import ACCOUNT_GAP, GAP_LIMIT, scan
 from seed_scan.scan import dumps as scan_dumps
@@ -67,7 +75,7 @@ if TYPE_CHECKING:
     from btclib_wallet.fetch.history import ScriptHistory
 
     from seed_scan.bundle import Bundle
-    from seed_scan.scan import ScanResult
+    from seed_scan.scan import ScanResult, Searched
 
 __all__ = [
     "main",
@@ -107,12 +115,13 @@ _TIP_MOVED = "the tip moved while the history was read"
 # how many times one history is read where the tip moves during each read
 _READS = 3
 
-# what a failure caused by each class says, the first class it is in
+# what a failure caused by each class says, the first class it is in,
+# of the server or the node
 _CAUSES: tuple[tuple[type[BaseException], str], ...] = (
-    (ssl.SSLCertVerificationError, "the server's certificate did not verify"),
-    (ssl.SSLError, "the TLS handshake with the server failed"),
-    (TimeoutError, "the server did not answer in time"),
-    (OSError, "no connection to the server"),
+    (ssl.SSLCertVerificationError, "the {}'s certificate did not verify"),
+    (ssl.SSLError, "the TLS handshake with the {} failed"),
+    (TimeoutError, "the {} did not answer in time"),
+    (OSError, "no connection to the {}"),
 )
 
 
@@ -213,25 +222,40 @@ def _summary(bundle: Bundle) -> str:
     return "\n".join(lines) + "\n"
 
 
+def _searched(done: Searched, coin: str) -> str:
+    """Return the line that says how many accounts of a purpose were read."""
+    purpose = "Electrum" if done.purpose is None else f"purpose {done.purpose}"
+    line = f"reading {done.reading}, {coin}{purpose}: accounts read: {done.accounts}"
+    if done.cut_short:
+        line += ", cut short: the bundle's accounts end before the account gap"
+    return line
+
+
 def _scan_summary(result: ScanResult) -> str:
     """Return what the scan result says, for the user."""
-    lines = [
-        f"server: {result.server}",
-        f"bounds: account gap {result.account_gap}, gap limit {result.gap_limit}",
-    ]
-    for done in result.searched:
-        purpose = "Electrum" if done.purpose is None else f"purpose {done.purpose}"
-        line = f"reading {done.reading}, {purpose}: accounts read: {done.accounts}"
-        if done.cut_short:
-            line += ", cut short: the bundle's accounts end before the account gap"
-        lines.append(line)
+    evm = result.evm
+    lines = [] if result.server is None else [f"server: {result.server}"]
+    if evm is not None:
+        lines.append(f"node: {evm.node}, chain id {evm.chain_id}, block {evm.block}")
+    lines.append(
+        f"bounds: account gap {result.account_gap}, gap limit {result.gap_limit}"
+    )
+    lines += [_searched(done, "") for done in result.searched]
     lines += [
         f"used: reading {u.reading}, {u.path}: {len(u.addresses)} addresses,"
         f" {len(u.transactions)} transactions, {u.confirmed} sat confirmed,"
         f" {u.unconfirmed} sat unconfirmed"
         for u in result.used
     ]
-    if not result.used:
+    if evm is not None:
+        lines.append("ethereum: ether and nonces read, no token balance")
+        lines += [_searched(done, "ethereum ") for done in evm.searched]
+        lines += [
+            f"used: reading {u.reading}, {u.path}: {len(u.addresses)} addresses,"
+            f" {u.balance} wei"
+            for u in evm.used
+        ]
+    if not result.used and (evm is None or not evm.used):
         lines.append("no account used within that bound")
     lines += [
         f"not checked: reading {n.reading}, {n.coin}: {n.reason}"
@@ -309,24 +333,27 @@ class _Mainnet:
         return self._fetcher.get_history(scripts, start_height)
 
 
-def _failure(error: FetchError) -> str:
-    """Return the fixed text that says how the server failed.
+def _failure(error: FetchError, who: str) -> str:
+    """Return the fixed text that says how the server or the node failed.
 
-    Chosen by the class of the error and of its causes, and for a tip
-    that moved by comparing the message with `_TIP_MOVED`. A message is
-    never written: it can hold the server's answers.
+    `who` is ``"server"`` or ``"node"``. The text is chosen by the class
+    of the error and of its causes, and for a tip that moved by comparing
+    the message with `_TIP_MOVED`. A message is never written: it can
+    hold the answers. An HTTP status is, being a number.
     """
     if isinstance(error, RpcError):
-        return "the server refused a request"
+        return f"the {who} refused a request"
+    if isinstance(error, HttpError):
+        return f"the {who} answered HTTP status {error.status}"
     if str(error) == _TIP_MOVED:
         return "the server's tip moved during every read of a history"
     cause = error.__cause__
     while cause is not None:
         for kind, text in _CAUSES:
             if isinstance(cause, kind):
-                return text
+                return text.format(who)
         cause = cause.__cause__
-    return "no usable answer from the server"
+    return f"no usable answer from the {who}"
 
 
 def _read_bundle(name: str) -> str:
@@ -341,12 +368,11 @@ def _read_bundle(name: str) -> str:
     return text
 
 
-def _run_scan(
+def _electrum(
     args: argparse.Namespace,
     connect: Callable[[str, int, ssl.SSLContext], LineTransport],
-) -> ScanResult:
-    """Read the bundle, connect, and scan."""
-    text = _read_bundle(args.bundle)
+) -> _Mainnet:
+    """Return the reader of the Electrum server --server names."""
     host, port = _server(args.server)
     context = _tls_context(args.cafile)
     transport = None
@@ -355,34 +381,53 @@ def _run_scan(
         transport = connect(host, port, context)
     if transport is None:
         raise SeedScanValueError("--server names no host a connection can use")
-    fetcher = ElectrumFetcher(transport=transport, verify_network=False)
-    return scan(
-        text,
-        _Mainnet(fetcher),
-        server=args.server,
-        gap_limit=args.gap_limit,
-        account_gap=args.account_gap,
-    )
+    return _Mainnet(ElectrumFetcher(transport=transport, verify_network=False))
 
 
 def _scan_command(
     args: argparse.Namespace,
     connect: Callable[[str, int, ssl.SSLContext], LineTransport],
 ) -> int:
-    """Run ``seed-scan scan``; answer its exit status."""
+    """Run ``seed-scan scan``; answer its exit status.
+
+    The node is asked once the server is done, so a failure after the
+    node's first request is the node's.
+    """
+    node = None
     try:
-        result = _run_scan(args, connect)
+        if args.server is None and args.node is None:
+            err_msg = "name an Electrum --server, an Ethereum --node or both"
+            raise SeedScanValueError(err_msg)
+        if args.cafile is not None and args.server is None:
+            raise SeedScanValueError("--cafile is for --server, and none is named")
+        text = _read_bundle(args.bundle)
+        reader = None if args.server is None else _electrum(args, connect)
+        with SessionTransport() as session:
+            node = None if args.node is None else Node(args.node, transport=session)
+            result = scan(
+                text,
+                reader,
+                server=args.server,
+                node=node,
+                gap_limit=args.gap_limit,
+                account_gap=args.account_gap,
+            )
+        # written inside the `try`, so that what writing them raises is
+        # one line too
+        out, summary = scan_dumps(result), _scan_summary(result)
     except SeedScanException as e:
         err_msg = str(e)
     except FetchError as e:
-        err_msg = _failure(e)
+        err_msg = _failure(
+            e, "node" if node is not None and node.requests else "server"
+        )
     except (ValueError, TypeError) as e:
         err_msg = f"refused by a dependency: {type(e).__name__}"
     except KeyboardInterrupt:
         err_msg = "interrupted"
     else:
-        sys.stdout.write(scan_dumps(result))
-        sys.stderr.write(_scan_summary(result))
+        sys.stdout.write(out)
+        sys.stderr.write(summary)
         return 0
     sys.stderr.write(f"seed-scan scan: {err_msg}\n")
     return 1
@@ -480,22 +525,31 @@ def _parser() -> argparse.ArgumentParser:
     )
     scan_parser = commands.add_parser(
         "scan",
-        help="find the used accounts of a bundle on an Electrum server",
+        help="find the used accounts of a bundle on your own server or node",
         description=(
             "Read a public bundle, ask the Electrum server named which of its"
-            " accounts were used, and write the scan result to standard"
-            " output. The server learns every address asked."
+            " Bitcoin accounts were used and the Ethereum node named which of"
+            " its Ethereum accounts were, and write the scan result to"
+            " standard output. Each learns every address asked. Ethereum's"
+            " accounts are read for ether and nonces: a token balance is not"
+            " asked."
         ),
     )
     scan_parser.add_argument("bundle", help="the bundle file identify wrote")
     scan_parser.add_argument(
         "--server",
-        required=True,
         help="the Electrum server to ask, as host:port, over TLS",
     )
     scan_parser.add_argument(
         "--cafile",
         help="trust the certificates of this file alone for the server",
+    )
+    scan_parser.add_argument(
+        "--node",
+        help=(
+            "the Ethereum node to ask, as an https URL, or an http one on a"
+            " loopback address such as http://127.0.0.1:8545"
+        ),
     )
     scan_parser.add_argument(
         "--gap-limit",

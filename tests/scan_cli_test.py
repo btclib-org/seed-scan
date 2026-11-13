@@ -2,7 +2,7 @@
 # Distributed under the MIT software license, see the accompanying
 # LICENSE file or https://opensource.org/license/mit for the full text.
 
-"""Tests for ``seed-scan scan``: the server, the TLS check, the refusals.
+"""Tests for ``seed-scan scan``: the server, the node, TLS, the refusals.
 
 The Electrum server is `Electrum`, a fake kept in memory that answers the
 methods `ElectrumFetcher` asks over a chain that is mainnet's genesis
@@ -12,6 +12,10 @@ Most tests hand it to the command in place of the TLS transport. The
 others serve it over TLS on the loopback interface, with the certificates
 the `tls` fixture makes, so that the handshake the command makes is the
 one under test.
+
+The Ethereum node is `tests.evm_test`'s `Ethereum`, served over HTTP, or
+HTTPS with the same certificates, on the loopback interface, so that the
+command and `Node` reach it through the transport they open themselves.
 """
 
 from __future__ import annotations
@@ -35,17 +39,24 @@ from btclib.network import NETWORKS
 from btclib.script import ScriptPubKey
 from btclib.tx import OutPoint, Tx, TxIn, TxOut
 from btclib_wallet.descriptors import parse
+from btclib_wallet.exceptions import FetchError
+from btclib_wallet.fetch.transport import SessionTransport
 
 from seed_scan import cli
 from seed_scan.bundle import dumps, loads
+from seed_scan.evm import Node
 from seed_scan.identify import identify
 
+from .evm_test import Ethereum, cause, replying, serve, serving
 from .identify_test import ABANDON, no_share
+from .scan_test import eth_address
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
+    from collections.abc import Callable, Iterator
 
     from btclib_wallet.fetch.transport import LineTransport
+
+    from .evm_test import Exchange
 
 #: Why a test serving TLS is skipped where the certificates cannot be made.
 NO_CRYPTOGRAPHY = (
@@ -781,3 +792,303 @@ def test_another_failure_of_a_read_is_not_read_again(
     status, _, err = run(capsys, [bundle, "--server", "h:1"], connect)
     assert (status, err) == (1, "seed-scan scan: the server refused a request\n")
     assert server.asked.count("blockchain.headers.subscribe") == 1
+
+
+def test_the_node_alone_is_scanned(
+    capsys: pytest.CaptureFixture[str], bundle: str, bundle_text: str
+) -> None:
+    """The result's ``evm``, and a summary naming the node and the bound."""
+    address = eth_address(bundle_text, "m/44h/60h/0h", 0)
+    with serve(serving(Ethereum({address: 5}))) as node:
+        argv = [bundle, "--node", node.url()]
+        status, out, err = run(capsys, argv, Connections(Electrum()))
+    assert status == 0
+    document = json.loads(out)
+    assert document["server"] is None
+    evm = document["evm"]
+    name = f"http://127.0.0.1:{node.port}"
+    assert (evm["node"], evm["chain_id"], evm["block"]) == (name, 1, 16)
+    (used,) = evm["used"]
+    assert used["addresses"] == [
+        {"index": 0, "address": address, "balance": "5", "nonce": 0}
+    ]
+    elsewhere = "scan reads Bitcoin and Ethereum alone in this version"
+    assert err.splitlines() == [
+        f"node: {name}, chain id 1, block 16",
+        "bounds: account gap 3, gap limit 20",
+        "ethereum: ether and nonces read, no token balance",
+        (
+            "reading 0, ethereum purpose 44: accounts read: 1, cut short:"
+            " the bundle's accounts end before the account gap"
+        ),
+        "used: reading 0, m/44h/60h/0h: 1 addresses, 5 wei",
+        "not checked: reading 0, bitcoin: no Electrum server was named",
+        f"not checked: reading 0, bitcoin-cash: {elsewhere}",
+        f"not checked: reading 0, litecoin: {elsewhere}",
+        f"not checked: reading 0, dogecoin: {elsewhere}",
+    ]
+
+
+def test_nothing_used_on_the_node_is_said(
+    capsys: pytest.CaptureFixture[str], bundle: str
+) -> None:
+    """No Bitcoin read, and no Ethereum account used."""
+    with serve(serving(Ethereum())) as node:
+        argv = [bundle, "--node", node.url()]
+        status, _, err = run(capsys, argv, Connections(Electrum()))
+    assert status == 0
+    assert "\nno account used within that bound\n" in err
+
+
+def test_the_server_and_the_node_are_both_scanned(
+    capsys: pytest.CaptureFixture[str], bundle: str, bundle_text: str
+) -> None:
+    """Each coin by its backend, each named in the summary."""
+    paid = receive_script(bundle_text, "m/84h/0h/0h")
+    address = eth_address(bundle_text, "m/44h/60h/0h", 0)
+    with serve(serving(Ethereum({address: 1}))) as node:
+        argv = [bundle, "--server", "h:1", "--node", node.url()]
+        status, out, err = run(capsys, argv, Connections(Electrum(pay(paid, 2))))
+    assert status == 0
+    document = json.loads(out)
+    assert [u["path"] for u in document["used"]] == ["m/84h/0h/0h"]
+    assert [u["path"] for u in document["evm"]["used"]] == ["m/44h/60h/0h"]
+    assert err.startswith(f"server: h:1\nnode: http://127.0.0.1:{node.port},")
+    assert "used: reading 0, m/84h/0h/0h: 1 addresses, 1 transactions" in err
+    assert "used: reading 0, m/44h/60h/0h: 1 addresses, 1 wei" in err
+    assert "no account used" not in err
+
+
+@pytest.mark.parametrize(
+    "argv, said",
+    [
+        ([], "name an Electrum --server, an Ethereum --node or both"),
+        (
+            ["--node", "http://127.0.0.1:1", "--cafile", "ca.pem"],
+            "--cafile is for --server, and none is named",
+        ),
+        (
+            ["--node", "http://localhost:8545"],
+            "node: plain http is accepted on a loopback address alone",
+        ),
+        (["--node", "https://user@h"], "node: the URL carries a login"),
+    ],
+)
+def test_options_the_command_cannot_scan_with_are_refused(
+    capsys: pytest.CaptureFixture[str], bundle: str, argv: list[str], said: str
+) -> None:
+    """No backend, a CA file for no server, a URL `Node` refuses.
+
+    :param capsys: pytest's capture of the standard streams.
+    :param bundle: the bundle's file.
+    :param argv: the options after the bundle.
+    :param said: the line written.
+    """
+    status, out, err = run(capsys, [bundle, *argv], Connections(Electrum()))
+    assert (status, out, err) == (1, "", f"seed-scan scan: {said}\n")
+
+
+def error_object(_: str, body: bytes) -> Exchange:
+    """Answer a request with a JSON-RPC error object.
+
+    :param _: the path.
+    :param body: the request.
+    :returns: the exchange.
+    """
+    request = json.loads(body)
+    error = {"code": -32000, "message": ABANDON}
+    answer = {"jsonrpc": "2.0", "id": request["id"], "error": error}
+    return 200, json.dumps(answer).encode(), {}
+
+
+def status_500(_: str, __: bytes) -> Exchange:
+    """Answer a request with an HTTP error.
+
+    :returns: the exchange.
+    """
+    return 500, ABANDON.encode(), {}
+
+
+def not_json(_: str, __: bytes) -> Exchange:
+    """Answer a request with text that is not JSON.
+
+    :returns: the exchange.
+    """
+    return 200, ABANDON.encode(), {}
+
+
+@pytest.mark.parametrize(
+    "respond, said",
+    [
+        (error_object, "the node refused a request"),
+        (status_500, "the node answered HTTP status 500"),
+        (not_json, "no usable answer from the node"),
+    ],
+)
+def test_a_failure_of_the_node_is_one_line_of_fixed_text(
+    capsys: pytest.CaptureFixture[str],
+    bundle: str,
+    respond: Callable[[str, bytes], Exchange],
+    said: str,
+) -> None:
+    """The node's answer decides the line, and is never quoted.
+
+    :param capsys: pytest's capture of the standard streams.
+    :param bundle: the bundle's file.
+    :param respond: how the node answers.
+    :param said: the line written.
+    """
+    with serve(respond) as node:
+        argv = [bundle, "--node", node.url()]
+        status, out, err = run(capsys, argv, Connections(Electrum()))
+    assert (status, out, err) == (1, "", f"seed-scan scan: {said}\n")
+
+
+def test_a_closed_port_is_no_connection_to_the_node(
+    capsys: pytest.CaptureFixture[str], bundle: str
+) -> None:
+    """Nothing listens: the connection is refused."""
+    with socket.create_server(("127.0.0.1", 0)) as listening:
+        port = listening.getsockname()[1]
+    argv = [bundle, "--node", f"http://127.0.0.1:{port}"]
+    status, _, err = run(capsys, argv, Connections(Electrum()))
+    assert (status, err) == (1, "seed-scan scan: no connection to the node\n")
+
+
+def node_context(tls: Path) -> ssl.SSLContext:
+    """Return the context a node serves HTTPS with, the `tls` fixture's.
+
+    :param tls: the folder of the certificates.
+    :returns: the context.
+    """
+    context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    context.minimum_version = ssl.TLSVersion.TLSv1_2
+    context.load_cert_chain(tls / "server.pem")
+    return context
+
+
+def trust(monkeypatch: pytest.MonkeyPatch, store: Path) -> None:
+    """Make ``SSL_CERT_FILE`` name a store until the test ends.
+
+    The variable is set empty first, so that undoing it goes through the
+    empty value before deleting it. PyPy on Windows deletes a variable
+    from the process's environment block alone, while OpenSSL reads the C
+    runtime's copy with ``getenv``: a store only deleted would stay
+    trusted by every later test. Set empty with ``_wputenv``, the
+    variable leaves that copy too.
+
+    :param monkeypatch: what sets the variable and undoes it.
+    :param store: the file of CA certificates.
+    """
+    monkeypatch.setenv("SSL_CERT_FILE", "")
+    monkeypatch.setenv("SSL_CERT_FILE", str(store))
+
+
+def test_a_node_whose_certificate_the_store_trusts_is_asked(
+    tls: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``SSL_CERT_FILE`` names the store: here the test CA alone."""
+    trust(monkeypatch, tls / "ca.pem")
+    with (
+        serve(serving(Ethereum(chain_id=5)), node_context(tls)) as served,
+        SessionTransport() as session,
+    ):
+        node = Node(served.url("https"), transport=session)
+        assert node.chain_id() == 5
+        assert node.block_number() == 0x10
+    assert len(served.requests) == 2
+
+
+def test_a_store_trust_set_is_no_longer_trusted_once_undone(tls: Path) -> None:
+    """The test CA is trusted while `trust` holds, and not once undone."""
+    with serve(serving(Ethereum()), node_context(tls)) as served:
+        with pytest.MonkeyPatch.context() as monkeypatch:
+            trust(monkeypatch, tls / "ca.pem")
+            with SessionTransport() as session:
+                assert Node(served.url("https"), transport=session).chain_id() == 1
+        with SessionTransport() as session, pytest.raises(FetchError) as caught:
+            Node(served.url("https"), transport=session).chain_id()
+    assert cause(caught.value, ssl.SSLCertVerificationError) is not None
+    assert len(served.requests) == 1
+
+
+@pytest.mark.parametrize(
+    "host, cafile",
+    [
+        # the CA is in no system store
+        ("127.0.0.1", None),
+        # the certificate names 127.0.0.1, not localhost
+        ("localhost", "ca.pem"),
+    ],
+)
+def test_a_node_certificate_that_does_not_verify_is_a_failure(
+    tls: Path, monkeypatch: pytest.MonkeyPatch, host: str, cafile: str | None
+) -> None:
+    """An untrusted certificate, and a trusted one naming another host.
+
+    :param tls: the folder of the certificates.
+    :param monkeypatch: what sets the store.
+    :param host: the host the URL names.
+    :param cafile: the store in the folder, if not the system's.
+    """
+    if cafile is not None:
+        trust(monkeypatch, tls / cafile)
+    with (
+        serve(serving(Ethereum()), node_context(tls)) as served,
+        SessionTransport() as session,
+        pytest.raises(FetchError) as caught,
+    ):
+        Node(served.url("https", host), transport=session).chain_id()
+    assert cause(caught.value, ssl.SSLCertVerificationError) is not None
+    assert not served.requests
+
+
+def test_a_node_certificate_that_does_not_verify_is_refused(
+    capsys: pytest.CaptureFixture[str], bundle: str, tls: Path
+) -> None:
+    """The test CA is in no system store, and ``--cafile`` is not the node's."""
+    with serve(serving(Ethereum()), node_context(tls)) as node:
+        argv = [bundle, "--node", node.url("https")]
+        status, _, err = run(capsys, argv, Connections(Electrum()))
+    assert status == 1
+    assert err == "seed-scan scan: the node's certificate did not verify\n"
+    assert not node.requests
+
+
+def test_a_failure_of_the_server_is_the_servers_with_a_node_named(
+    capsys: pytest.CaptureFixture[str], bundle: str
+) -> None:
+    """The server is asked first, and the node is then asked nothing."""
+
+    def refusing(request: bytes, timeout: float) -> bytes:
+        parsed = json.loads(request)
+        error = {"code": 1, "message": ABANDON}
+        answer = {"jsonrpc": "2.0", "id": parsed["id"], "error": error}
+        return json.dumps(answer).encode()
+
+    with serve(serving(Ethereum())) as node:
+        argv = [bundle, "--server", "h:1", "--node", node.url()]
+        status, _, err = run(capsys, argv, Connections(refusing))
+    assert (status, err) == (1, "seed-scan scan: the server refused a request\n")
+    assert not node.requests
+
+
+def test_a_reply_that_is_no_http_is_not_quoted(
+    capsys: pytest.CaptureFixture[str], bundle: str
+) -> None:
+    """A status line that does not parse: one line, quoting nothing."""
+    with replying(f"HTTP/1.1 2OO {ABANDON}\r\n\r\n".encode()) as port:
+        argv = [bundle, "--node", f"http://127.0.0.1:{port}"]
+        status, _, err = run(capsys, argv, Connections(Electrum()))
+    assert (status, err) == (1, "seed-scan scan: no usable answer from the node\n")
+
+
+def test_a_quantity_past_256_bits_is_no_usable_answer(
+    capsys: pytest.CaptureFixture[str], bundle: str
+) -> None:
+    """A chain id under the answer's bound, past a quantity's: refused."""
+    with serve(serving(Ethereum(chain_id=int("f" * 3600, 16)))) as node:
+        argv = [bundle, "--node", node.url()]
+        status, out, err = run(capsys, argv, Connections(Electrum()))
+    assert (status, out) == (1, "")
+    assert err == "seed-scan scan: no usable answer from the node\n"

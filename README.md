@@ -47,19 +47,33 @@ path. `seed_scan.bundle` documents the bundle, and
 ## Scanning a bundle
 
 ```shell
-seed-scan scan bundle.json --server electrum.example.org:50002 > scan.json
+seed-scan scan bundle.json --server electrum.example.org:50002 \
+    --node http://127.0.0.1:8545 > scan.json
 ```
 
-It asks the Electrum server named, as `host:port`, which accounts of the
-bundle were used, and writes the scan result to standard output and what
-it found to standard error. The server learns every address it is asked
-about, so name your own: there is no default. The connection is TLS, and
-the server's certificate is verified against the system's CA
-certificates, or against those of the file `--cafile` names, which is
-how a server with a self-signed certificate is reached. Bitcoin is the
-coin it reads, and the bundle's other coins are listed as not checked.
-`seed_scan.scan` documents the result, and `seed-scan scan --help` the
-bounds of the search.
+It asks the Electrum server named, as `host:port`, which Bitcoin
+accounts of the bundle were used, and the Ethereum node named, by its
+URL, which Ethereum accounts were, and writes the scan result to
+standard output and what it found to standard error. Name either or
+both. Each learns every address it is asked about, so name your own:
+there is no default.
+
+The Electrum connection is TLS, and the server's certificate is verified
+against the system's CA certificates, or against those of the file
+`--cafile` names, which is how a server with a self-signed certificate
+is reached.
+
+The node is an execution client's JSON-RPC, at an `https` URL, or an
+`http` one on a loopback address such as `http://127.0.0.1:8545`.
+`--cafile` is the Electrum server's alone: `seed_scan.evm` says what the
+node's certificate is verified against. An Ethereum address is used
+where it holds ether or has a nonce: token balances are not asked, so an
+address that only ever received tokens reads as unused.
+
+A coin with no server or node named, and every coin but Bitcoin and
+Ethereum, is listed as not checked. `seed_scan.scan` documents the
+result, `seed_scan.evm` the node's requests, and `seed-scan scan --help`
+the bounds of the search.
 
 ## What touches the secret
 
@@ -74,10 +88,11 @@ one machine and everything after it reads public data:
   addresses where a coin has no extended public key.
 - **`scan` and `forks` touch the network and no secret.** They read the
   bundle and what the commands before them wrote, and `scan` the CA
-  certificates it verifies its server against, the system's or those of
-  the file the user names; nothing else. *Scanning a bundle* says which
-  server `scan` asks. `forks` takes the balance at the height of each
-  fork from the history, then checks the chains each fork created.
+  certificates it verifies its server and its node against, the system's
+  or, for the server, those of the file the user names; nothing else.
+  *Scanning a bundle* says which server and which node `scan` asks.
+  `forks` takes the balance at the height of each fork from the history,
+  then checks the chains each fork created.
 - **`report` touches neither.** It assembles what `scan` and `forks`
   found: what was searched, what was found, the limits of the search,
   and the digest of the report.

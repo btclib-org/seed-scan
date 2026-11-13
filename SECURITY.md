@@ -40,9 +40,9 @@ describes. Anything that breaks it is a vulnerability to report here:
 - `identify` or `report` opening a connection, or `scan`, `forks` or
   `report` asking for a secret or reading a file other than the bundle,
   what the commands before it wrote and, for `scan`, the CA certificates
-  it verifies its server against: the system's, or those of the file the
-  user names;
-- a query sent to a server or an explorer the user did not name.
+  it verifies its server and its node against: the system's, or, for the
+  server, those of the file the user names;
+- a query sent to a server, a node or an explorer the user did not name.
 
 So is a report that calls a scheme or a coin checked when it was not,
 since a user acts on its "nothing found", and so is a flaw in the
