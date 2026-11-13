@@ -20,12 +20,16 @@ place the answer lives, which is what *Topics* and *Publishing* say of
 them.
 
 Each section carries the command that sets its setting and the command
-that reads it back. **No answer is recorded yet**: this file was written
-before the repository existed on GitHub, so no call below has been run
-against it. Section 16 of the organization's standard has the settings
-made once the root is pushed and each read back with the command here,
-its answer written under that command and dated. Section 11 makes such
-an answer documentation, with a reader as its check.
+that reads it back. **Only *Read the Docs* has answers recorded**, for
+the site and for the project's status, default branch and repository.
+This file was written before the repository existed on GitHub, and no
+other call below has been run against it. The project's tags and
+homepage are not yet what that section says they are to be, and no
+release has yet shown its automation rule at work. Section 16 of the
+organization's standard has the settings made once the root is pushed
+and each read back with the command here, its answer written under that
+command and dated. Section 11 makes such an answer documentation, with a
+reader as its check.
 
 ## Creating the repository
 
@@ -491,32 +495,38 @@ here rather than from `pyproject.toml`'s own copy of it:
 gh api repos/btclib-org/seed-scan --jq '.homepage'
 ```
 
-## Read the Docs, which is to be seed-scan.readthedocs.io
+## Read the Docs, which is seed-scan.readthedocs.io
 
-The project is to be imported on
+The project is imported on
 [readthedocs.org](https://app.readthedocs.org/) from
 `btclib-org/seed-scan` under the slug `seed-scan`, which is what
-`release.yml`'s `documented` job names. The slug is what serves the site,
-and it is not the project's name: renaming the slug makes the old one stop
-answering rather than redirect. `pyproject.toml` declares no
-`documentation` url until the site answers, section 3 giving that field
-only to a tree Read the Docs serves. Whether the site answers:
+`release.yml`'s `documented` job and `pyproject.toml`'s `documentation`
+url name. The slug is what serves the site, and it is not the project's
+name: renaming the slug makes the old one stop answering rather than
+redirect. The site answers:
 
 ```shell
 curl -sL -o /dev/null -w '%{http_code} %{url_effective}\n' \
   https://seed-scan.readthedocs.io/
+# 200 https://seed-scan.readthedocs.io/en/latest/
 ```
 
-Whether the project's public API answers, which it does without a token:
+The project's public API answers without a token:
 
 ```shell
 p=https://app.readthedocs.org/api/v3/projects/seed-scan
 curl -s -o /dev/null -w '%{http_code}\n' "$p/"
+# 200
 curl -s "$p/" | jq -c '{default_branch, repository: .repository.url}'
+# {"default_branch":"main","repository":"https://github.com/btclib-org/seed-scan.git"}
 curl -s "$p/" | jq -c '[.programming_language.code, .homepage]'
 diff <(curl -s "$p/" | jq -r '.tags[]' | sort) \
      <(gh api repos/btclib-org/seed-scan --jq '.topics[]' | sort)
 ```
+
+Read on 2026-11-13T02:05Z, the site, the status and the
+`default_branch` call printed the answers above. The last two calls are
+not recorded, the project's tags and homepage being still unset.
 
 The status is what tells an absent project from one with nothing in it:
 the `default_branch` call reads the `404` body,
