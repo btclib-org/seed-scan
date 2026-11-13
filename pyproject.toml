@@ -38,14 +38,14 @@ requires-python = ">=3.11"
 dependencies = [
     # the BIP39, SLIP-0039 and Electrum readings of a sentence, and the
     # BIP39 languages that hold its words (`bip39.langs_from_mnemonic`)
-    "bip39-slip39>=2026.11.12",
+    "bip39-slip39>=2026.11.13",
     # a seed to its account keys: `BIP32KeyData.from_seed`, `derive` and
     # `xpub`
-    "bip32-descriptors>=2026.11.12",
+    "bip32-descriptors>=2026.11.13",
     # the account descriptors of a BIP44 purpose, the same
     # `bip44.account_descriptors` that `discover_accounts` reads, and the
     # BIP32 master key of an Electrum versioned mnemonic
-    "btclib-wallet>=2026.11.12",
+    "btclib-wallet>=2026.11.13",
     # the script of an address the user knows, `ScriptPubKey.from_address`
     "btclib>=2026.11.12",
 ]
@@ -158,14 +158,6 @@ dev = [
 # log names -- section 1 of the organization's standard has the argument,
 # section 15 the commands that measure it
 required-version = ">=0.13.4"
-
-# the commits of `main` that hold what `identify` calls and no release
-# holds yet. The table goes the day those releases are on the index, and
-# the floors above rise to them
-[tool.uv.sources]
-bip39-slip39 = { git = "https://github.com/btclib-org/bip39-slip39", rev = "c6844d2764b165d1e9226cfedff386708d547810" }
-bip32-descriptors = { git = "https://github.com/btclib-org/bip32-descriptors", rev = "e4d182ec5ccbbc7c90afde3ceaa83f6eee3046ce" }
-btclib-wallet = { git = "https://github.com/btclib-org/btclib-wallet", rev = "9ffe7b9dec868917a18b10a2bfb50a0b581a1a91" }
 
 [tool.uv.build-backend]
 # `module-name` is not written: it defaults to `project.name` normalized,
