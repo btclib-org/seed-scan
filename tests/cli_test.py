@@ -328,17 +328,28 @@ def test_the_guard_returns_once_its_hook_refuses_the_probe(
 
 #: What another hook, added first, does to the guard, as the body of that
 #: hook's `if`: veto every later addition; veto it and answer the probe
-#: with the refusal the guard's own hook raises; fail on the probe; fail
-#: on the addition with another error, which CPython's `sys.addaudithook`
-#: swallows as it does a veto, and which the guard refuses either way;
-#: raise on the probe a `BaseException`, or a `SystemExit`, each with a
-#: payload that must reach no stream.
+#: with the `SeedScanValueError` the guard accepted before it checked a
+#: token, or with its hook's `_InPlace` holding another token or none;
+#: fail on the probe; fail on the addition with another error, which
+#: CPython's `sys.addaudithook` swallows as it does a veto, and which the
+#: guard refuses either way; raise on the probe a `BaseException`, or a
+#: `SystemExit`, each with a payload that must reach no stream.
 OTHER_HOOKS = {
     "veto": "event == 'sys.addaudithook':\n        raise RuntimeError",
-    "veto and forged answer": (
+    "veto and the old answer": (
         "event == 'sys.addaudithook':\n        raise RuntimeError\n"
         "    if event == 'seed_scan.guard':\n"
         "        raise SeedScanValueError('seed_scan.guard refused')"
+    ),
+    "veto and an answer with another token": (
+        "event == 'sys.addaudithook':\n        raise RuntimeError\n"
+        "    if event == 'seed_scan.guard':\n"
+        "        raise sys.modules['seed_scan.cli']._InPlace(object())"
+    ),
+    "veto and an answer with no token": (
+        "event == 'sys.addaudithook':\n        raise RuntimeError\n"
+        "    if event == 'seed_scan.guard':\n"
+        "        raise sys.modules['seed_scan.cli']._InPlace()"
     ),
     "failing probe": "event == 'seed_scan.guard':\n        raise RuntimeError('x')",
     "failing addition": "event == 'sys.addaudithook':\n        raise ValueError('x')",
@@ -382,6 +393,38 @@ def test_another_hook_keeping_the_guard_out_stops_the_command(other: str) -> Non
     assert done.stderr == (
         "seed-scan identify: the refusal of sockets and processes is not in place\n"
     )
+    assert not done.stdout
+
+
+def test_an_interrupt_that_is_also_a_refusal_says_interrupted() -> None:
+    """In a process of its own, an interrupt never writes its own text.
+
+    A hook raises on the probe an interrupt that is also a
+    `SeedScanValueError`, with a payload: the guard raises it again, and
+    `main` says "interrupted" alone.
+    """
+    probe = (
+        "import sys\n"
+        "from seed_scan.exceptions import SeedScanValueError\n"
+        "class Interrupt(KeyboardInterrupt, SeedScanValueError):\n"
+        "    pass\n"
+        "def other(event, args):\n"
+        "    if event == 'seed_scan.guard':\n"
+        "        raise Interrupt('PRIVATE')\n"
+        "sys.addaudithook(other)\n"
+        "from seed_scan import cli\n"
+        "def prompt(text):\n"
+        "    raise AssertionError('prompted')\n"
+        "sys.exit(cli.main(['identify'], prompt=prompt))\n"
+    )
+    done = subprocess.run(  # noqa: S603
+        [sys.executable, "-c", probe],
+        capture_output=True,
+        encoding="utf-8",
+        check=False,
+    )
+    assert done.returncode == 1
+    assert done.stderr == "seed-scan identify: interrupted\n"
     assert not done.stdout
 
 
