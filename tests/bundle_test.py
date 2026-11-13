@@ -63,7 +63,9 @@ BUNDLE = Bundle(
         ),
     ),
     not_checked=(NotChecked("bip39_wordlist", REASONS["bip39_wordlist"]),),
-    search=Search(BIP84_CHANGE, True, "", 5, 20, 400, (Match(0, "bitcoin", "m/0h/0/3"),)),
+    search=Search(
+        BIP84_CHANGE, True, "", 5, 20, 400, (Match(0, "bitcoin", "m/0h/0/3"),)
+    ),
 )
 
 
