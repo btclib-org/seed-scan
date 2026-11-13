@@ -111,6 +111,10 @@ test = [
     # tests/scan_cli_test.py raises bitcoin-core-rpc's `FetchError`, which
     # btclib-wallet's transports raise and do not export
     "bitcoin-core-rpc>=2026.11.9",
+    # tests/scan_cli_test.py makes the TLS server's key and certificates with
+    # it, so that no key is committed; the marker is btclib-wallet's, which
+    # leaves it out on Windows on ARM64, where it has no wheel
+    "cryptography>=50.0.2; platform_machine != 'ARM64' or sys_platform != 'win32'",
     # tests/imports_test.py reads the requirements each distribution
     # declares with it
     "packaging>=26.3",
