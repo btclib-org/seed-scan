@@ -17,9 +17,9 @@ user's own wallet moves them.
 
 ## What is here
 
-No release is out yet. `seed-scan identify` and `seed-scan scan` are
-the first commands, and each of the others arrives in a pull request of
-its own.
+No release is out yet. `seed-scan identify`, `seed-scan scan` and
+`seed-scan report` are the first commands, and `forks` arrives in a pull
+request of its own.
 [btclib-org/.github#2203](https://github.com/btclib-org/.github/issues/2203)
 records the design and tracks the first release. The command is to stay
 thin: what is general goes down to the packages it is to build on,
@@ -75,6 +75,20 @@ Ethereum, is listed as not checked. `seed_scan.scan` documents the
 result, `seed_scan.evm` the node's requests, and `seed-scan scan --help`
 the bounds of the search.
 
+## Reporting what was found
+
+```shell
+seed-scan report bundle.json --scan scan.json > report.txt
+```
+
+It reads the bundle and the scan result made from it, offline, and
+writes what they say to standard output: for each reading, coin and
+purpose, the used accounts with their balance, their used addresses and
+the paths, and what was not checked and why. Without `--scan`, as after
+a server or a node failed, every account is listed as not checked. A
+result made from another bundle is refused. The last line is the SHA-256
+of the lines above it. `seed_scan.report` documents the layout.
+
 ## What touches the secret
 
 The commands are to keep to this split, so that the mnemonic stays on
@@ -99,7 +113,9 @@ one machine and everything after it reads public data:
 
 The bundle holds no secret, but it is not harmless: an account public
 key gives every address of that account, so whoever holds the bundle can
-follow its history and balance, though not spend from it.
+follow its history and balance, though not spend from it. The same holds
+of the report: it holds no secret, but it lets anyone follow the
+wallet's history.
 
 The package is fully annotated and ships `py.typed`. Its refusals are
 `seed_scan.exceptions`'s classes: a `ValueError` or a `TypeError`,
