@@ -14,6 +14,7 @@ network policy under test is the one the request meets.
 from __future__ import annotations
 
 import contextlib
+import gc
 import json
 import socket
 import socketserver
@@ -21,6 +22,7 @@ import ssl
 import threading
 import time
 import traceback
+import warnings
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -698,3 +700,29 @@ def test_a_failure_keeps_its_class_and_drops_its_message() -> None:
     assert cause_.args == ()
     assert cause_.__cause__ is None
     assert cause_.__context__ is None
+
+
+def test_a_failed_exchange_leaves_no_socket_to_the_collector(
+    server: Callable[..., HttpServer],
+) -> None:
+    """Everything the failed exchange held is freed when the call returns.
+
+    `SessionTransport` leaves its response in its frame where its bounded
+    read raises. Left to the collector, the socket under it can be
+    finalized first, and warns that it was never closed. Without the
+    release of those frames, this test fails on 3.12.
+    """
+    padded = response(padding="x" * MAX_ANSWER)
+    served = server(lambda _, __: (200, json.dumps(padded).encode(), {}))
+    assert gc.isenabled()
+    gc.collect()
+    gc.disable()
+    try:
+        with SessionTransport() as session, pytest.raises(FetchError):
+            Node(served.url(), transport=session).chain_id()
+        with warnings.catch_warnings(record=True) as seen:
+            warnings.simplefilter("always", ResourceWarning)
+            gc.collect()
+    finally:
+        gc.enable()
+    assert [str(w.message) for w in seen] == []

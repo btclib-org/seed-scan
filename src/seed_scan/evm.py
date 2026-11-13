@@ -62,6 +62,7 @@ import ipaddress
 import json
 import re
 import ssl
+import traceback
 from typing import TYPE_CHECKING
 from urllib.parse import urlsplit
 
@@ -196,6 +197,21 @@ def _stand_in(error: BaseException) -> OSError | None:
     return None
 
 
+def _release(error: BaseException) -> None:
+    """Clear the frames of an error's chain, so that what they hold is freed.
+
+    A failed exchange can leave its response open in a frame of the
+    transport's: ``SessionTransport`` closes the connection and not the
+    response when its bounded read raises. Held by an error in a
+    reference cycle, the response and its socket wait for the garbage
+    collector, which may finalize the socket first and warn that it was
+    never closed. Cleared here, the response is freed at once, and closes
+    its socket as it goes. A frame still running is left as it is.
+    """
+    for found in _chain(error):
+        traceback.clear_frames(found.__traceback__)
+
+
 def _is_loopback(host: str) -> bool:
     """Answer whether a host is written as a loopback address."""
     try:
@@ -269,6 +285,7 @@ class Node:
             # not its context, and dropped from this frame, whose locals a
             # traceback keeps
             cause = _stand_in(failed)
+            _release(failed)
             del failed
             raise FetchError(f"{self._name}: no answer") from cause
         if status != _OK:
