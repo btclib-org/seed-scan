@@ -11,6 +11,7 @@ import importlib.metadata
 import subprocess
 import sys
 import warnings
+from typing import TYPE_CHECKING
 
 import pytest
 
@@ -20,6 +21,9 @@ from seed_scan.exceptions import SeedScanValueError
 
 from .identify_test import ABANDON, BIP84_CHANGE, SHARES, Prompt
 from .secret_free import assert_secret_free
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 
 def no_guard() -> None:
@@ -298,6 +302,27 @@ def test_the_guard_installs_the_hook(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(sys, "addaudithook", installed.append)
     with pytest.raises(SeedScanValueError, match="not in place"):
         cli._forbid_network()
+    assert installed == [cli._refuse_network]
+
+
+def test_the_guard_returns_once_its_hook_refuses_the_probe(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Where the hook added refuses the guard's own event, the guard returns.
+
+    `sys.audit` stands in for the interpreter's, calling the hooks the
+    stand-in `sys.addaudithook` recorded, so that no hook stays in the
+    process running the suite.
+    """
+    installed: list[Callable[[str, tuple[object, ...]], None]] = []
+
+    def audit(event: str, *args: object) -> None:
+        for hook in installed:
+            hook(event, args)
+
+    monkeypatch.setattr(sys, "addaudithook", installed.append)
+    monkeypatch.setattr(sys, "audit", audit)
+    cli._forbid_network()
     assert installed == [cli._refuse_network]
 
 
