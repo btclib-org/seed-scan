@@ -328,15 +328,15 @@ def test_the_guard_returns_once_its_hook_refuses_the_probe(
 
 #: What another hook, added first, does to the guard, as the body of that
 #: hook's `if`: veto every later addition; veto it and answer the probe
-#: with the `SeedScanValueError` the guard accepted before it checked a
-#: token, or with its hook's `_InPlace` holding another token or none;
-#: fail on the probe; fail on the addition with another error, which
-#: CPython's `sys.addaudithook` swallows as it does a veto, and which the
-#: guard refuses either way; raise on the probe a `BaseException`, or a
+#: with a plain `SeedScanValueError` in place of the hook's `_InPlace`, or
+#: with an `_InPlace` holding another token or none; fail on the probe;
+#: fail on the addition with another error, which CPython's
+#: `sys.addaudithook` swallows as it does a veto, and which the guard
+#: refuses either way; raise on the probe a `BaseException`, or a
 #: `SystemExit`, each with a payload that must reach no stream.
 OTHER_HOOKS = {
     "veto": "event == 'sys.addaudithook':\n        raise RuntimeError",
-    "veto and the old answer": (
+    "veto and a plain refusal": (
         "event == 'sys.addaudithook':\n        raise RuntimeError\n"
         "    if event == 'seed_scan.guard':\n"
         "        raise SeedScanValueError('seed_scan.guard refused')"
