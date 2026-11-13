@@ -42,11 +42,12 @@ The object's members:
   a key typed by mistake is not written; ``checked``, false where the
   search did not run, and then ``reason`` says why; ``accounts`` and
   ``indexes``, the bound (accounts ``0`` to ``accounts - 1`` of each
-  Bitcoin purpose and the one account of an Electrum reading, receive
-  and change branches, indexes ``0`` to ``indexes - 1``); ``searched``,
-  how many positions were compared; and ``matches``, each the position
-  of a reading in ``readings`` and the full derivation path of the
-  address.
+  Bitcoin purpose, of Bitcoin Cash's for a base58 address, and the one
+  account of an Electrum reading, receive and change branches, indexes
+  ``0`` to ``indexes - 1``); ``searched``, how many positions were
+  compared; and ``matches``, each the position of a reading in
+  ``readings``, the ``coin`` of the account the address is in, and the
+  full derivation path of the address.
 
 An account object holds:
 
@@ -204,9 +205,10 @@ class NotChecked:
 
 @dataclass(frozen=True)
 class Match:
-    """Which reading, at which path, gives the address searched."""
+    """Which reading, at which coin's path, gives the address searched."""
 
     reading: int
+    coin: str
     path: str
 
 
@@ -483,7 +485,8 @@ def _search(document: dict[str, Any], readings: int) -> Search:
         reading = _count(match, "reading")
         if reading >= readings:
             raise SeedScanValueError("bundle: a match names no reading")
-        matches.append(Match(reading, _path(match, "path")))
+        coin = _one_of(match, "coin", COIN_NAMES)
+        matches.append(Match(reading, coin, _path(match, "path")))
     return Search(
         address=_address(document),
         checked=_member(document, "checked", bool),
