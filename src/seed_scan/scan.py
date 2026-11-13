@@ -44,7 +44,10 @@ Two transactions of a history that spend one output, as a replacement and
 the transaction it replaces do, would both count, where at most one can
 confirm: the mempool part of an answer is no snapshot, so the account is
 read again once, and refused where that read lists two such transactions
-too.
+too. So is an account whose used positions are not each within
+``gap_limit`` of the one before: discovery reads in windows, and a
+payment a window found, which the last read no longer lists, leaves the
+positions it led to past the gap.
 
 The result is one JSON object, which `dumps` writes. It holds public data
 only. Its members:
@@ -71,7 +74,8 @@ only. Its members:
   ``unconfirmed``, in satoshis; and ``tip``, the height and block id the
   history was read up to.
 - ``not_checked``: one object per reading and coin not read, with
-  ``reading``, ``coin`` and ``reason``.
+  ``reading``, ``coin`` and ``reason``: `NO_SERVER` for Bitcoin,
+  `NO_NODE` for Ethereum, and `NOT_READ` for every other coin.
 - ``evm``: ``null`` where no Ethereum node was asked, or the Ethereum
   scan: ``node``, the node asked, as its scheme, host and port, with no
   path or query; ``chain_id``, as the node answered it; ``block``, the
@@ -85,17 +89,21 @@ only. Its members:
 A balance in ``evm`` is in wei, written as a string of decimal digits:
 an ether is 10**18 wei, and RFC 8259's section 6 holds an integer past
 2**53 to be one JSON readers may not agree on.
+
+`loads` reads a result back, against the text of the bundle it was made
+from.
 """
 
 from __future__ import annotations
 
 import contextlib
 import json
+import re
 from collections.abc import Sequence
 from dataclasses import asdict, dataclass
 from functools import partial
 from hashlib import sha256
-from typing import TYPE_CHECKING, TypeVar
+from typing import TYPE_CHECKING, Any, TypeVar
 
 from bip32_descriptors.bip32 import BIP32KeyData
 from btclib.tx import OutPoint, TxOut
@@ -104,7 +112,8 @@ from btclib_wallet.descriptors import Descriptor, parse
 from btclib_wallet.fetch.history import HistoryReader, ScriptHistory
 from coin_addresses.evm import address_from_pub_key
 
-from seed_scan.bundle import Account, Reading, loads
+from seed_scan.bundle import Account, Bundle, Reading
+from seed_scan.bundle import loads as bundle_loads
 from seed_scan.evm import Node
 from seed_scan.exceptions import SeedScanTypeError, SeedScanValueError
 
@@ -115,6 +124,9 @@ __all__ = [
     "ACCOUNT_GAP",
     "FORMAT",
     "GAP_LIMIT",
+    "NOT_READ",
+    "NO_NODE",
+    "NO_SERVER",
     "VERSION",
     "Address",
     "EvmAccount",
@@ -127,6 +139,7 @@ __all__ = [
     "Transaction",
     "UsedAccount",
     "dumps",
+    "loads",
     "scan",
 ]
 
@@ -147,11 +160,29 @@ ACCOUNT_GAP = 3
 _BITCOIN = "bitcoin"
 _ETHEREUM = "ethereum"
 
-#: Why a coin of the bundle is not read: its backend was not given, or
-#: this version reads it not at all.
-_NO_SERVER = "no Electrum server was named"
-_NO_NODE = "no Ethereum node was named"
-_NOT_READ = "scan reads Bitcoin and Ethereum alone in this version"
+#: The ``reason`` Bitcoin is not checked for, where no server is given.
+NO_SERVER = "no Electrum server was named"
+
+#: The ``reason`` Ethereum is not checked for, where no node is given.
+NO_NODE = "no Ethereum node was named"
+
+#: The ``reason`` every other coin is not checked for.
+NOT_READ = "scan reads Bitcoin and Ethereum alone in this version"
+
+# a server as the result names it: printable ASCII with no space, then
+# a colon and a port
+_SERVER = re.compile(r"[!-~]{1,260}:[0-9]{1,5}")
+# the first hardened index
+_HARDENED = 0x80000000
+# a transaction or a block id, as hex
+_ID = re.compile(r"[0-9a-f]{64}")
+# a balance in wei, as `dumps` writes it: decimal digits, no leading zero
+_WEI = re.compile(r"0|[1-9][0-9]{0,77}")
+# what bounds a balance in wei: an EVM word
+_WORD = 2**256
+# what bounds a balance in satoshis: 21 million bitcoin, Bitcoin Core's
+# MAX_MONEY, which no amount of the chain passes
+_MAX_SATOSHI = 21_000_000 * 100_000_000
 
 _T = TypeVar("_T")
 _U = TypeVar("_U")
@@ -391,22 +422,52 @@ def _spends_one_output_twice(history: ScriptHistory) -> bool:
     return False
 
 
+def _reachable(indexes: Sequence[int], gap_limit: int) -> bool:
+    """Answer whether a branch read from 0 reaches every one of `indexes`.
+
+    The read goes on while fewer than `gap_limit` indexes in a row are
+    unused, so each used index is less than `gap_limit` past the one
+    before it, or past the start.
+    """
+    last = -1
+    for index in sorted(indexes):
+        if index - last > gap_limit:
+            return False
+        last = index
+    return True
+
+
+def _unsound(use: AccountUse, gap_limit: int) -> str:
+    """Return what makes a discovery no answer to rely on, or ``""``.
+
+    Two transactions spending one output, which would both count; or a
+    used position that a branch read under `gap_limit` does not reach:
+    the windows of the read found a payment before it that the last read
+    no longer lists, taken out by a reorganization or the mempool.
+    """
+    if _spends_one_output_twice(use.history):
+        return "two transactions spend one output"
+    if not all(_reachable(indexes, gap_limit) for indexes in use.used):
+        return "a used position past the gap limit"
+    return ""
+
+
 def _read_account(
     descriptors: tuple[Descriptor, ...],
     reader: HistoryReader,
     gap_limit: int,
     where: str,
 ) -> AccountUse | None:
-    """Return the discovery of an account, read again once on a double spend.
+    """Return the discovery of an account, read again once where `_unsound`.
 
-    Refused where both reads list two transactions spending one output.
+    Refused where both reads are.
     """
+    err_msg = ""
     for _ in range(2):
         use = discover_account(descriptors, reader, gap_limit=gap_limit)
-        if use is None or not _spends_one_output_twice(use.history):
+        if use is None or not (err_msg := _unsound(use, gap_limit)):
             return use
-    err_msg = f"{where}: two transactions spend one output, in both reads of it"
-    raise SeedScanValueError(err_msg)
+    raise SeedScanValueError(f"{where}: {err_msg}, in both reads of it")
 
 
 def _used_account(reading: int, account: Account, use: AccountUse) -> UsedAccount:
@@ -558,9 +619,10 @@ def scan(
     below 1 is refused, and one that is no integer is a
     `SeedScanTypeError`, as is a `server` that is no string beside a
     `reader`. Refused once `reader` is asked: an account whose history
-    lists two transactions spending one output in two reads.
+    lists two transactions spending one output, or whose used positions
+    a read under `gap_limit` does not reach, in two reads.
     """
-    bundle = loads(text)
+    bundle = bundle_loads(text)
     _backends(reader, server, node)
     gap_limit = _limit(gap_limit, "gap_limit")
     account_gap = _limit(account_gap, "account_gap")
@@ -570,10 +632,10 @@ def scan(
     not_checked: list[NotRead] = []
     for n, (bitcoin, ethereum, others) in enumerate(plans):
         if reader is None and bitcoin:
-            not_checked.append(NotRead(n, _BITCOIN, _NO_SERVER))
+            not_checked.append(NotRead(n, _BITCOIN, NO_SERVER))
         if node is None and ethereum:
-            not_checked.append(NotRead(n, _ETHEREUM, _NO_NODE))
-        not_checked += [NotRead(n, coin, _NOT_READ) for coin in others]
+            not_checked.append(NotRead(n, _ETHEREUM, NO_NODE))
+        not_checked += [NotRead(n, coin, NOT_READ) for coin in others]
         if reader is None:
             continue
         read = partial(_bitcoin_account, n, reader=reader, gap_limit=gap_limit)
@@ -613,3 +675,490 @@ def _scan_evm(
             searched.append(done)
             used += found
     return EvmScan(node.name, chain_id, block, tuple(searched), tuple(used))
+
+
+def _member(document: dict[str, Any], key: str, kind: type | tuple[type, ...]) -> Any:
+    """Return one member of an object, refusing it missing or of a wrong type.
+
+    `bool` is an `int` to `isinstance`, so it is refused where an integer
+    is asked for.
+    """
+    if key not in document:
+        raise SeedScanValueError(f"scan result: missing member {key!r}")
+    value = document[key]
+    kinds = kind if isinstance(kind, tuple) else (kind,)
+    if (isinstance(value, bool) and bool not in kinds) or not isinstance(value, kinds):
+        err_msg = f"scan result: member {key!r} of type {type(value).__name__}"
+        raise SeedScanTypeError(err_msg)
+    return value
+
+
+def _count(document: dict[str, Any], key: str, least: int = 0) -> int:
+    """Return a member that is an integer from `least`, unquoted."""
+    value: int = _member(document, key, int)
+    if value < least:
+        raise SeedScanValueError(f"scan result: member {key!r} is below {least}")
+    return value
+
+
+def _height(document: dict[str, Any]) -> int | None:
+    """Return the ``height`` member: an integer from 0, or ``None``."""
+    if _member(document, "height", (int, type(None))) is None:
+        return None
+    return _count(document, "height")
+
+
+def _id(document: dict[str, Any], key: str) -> str:
+    """Return a member that is a transaction or block id, 64 hex characters."""
+    value: str = _member(document, key, str)
+    if not _ID.fullmatch(value):
+        raise SeedScanValueError(f"scan result: member {key!r} is not an id")
+    return value
+
+
+def _wei(document: dict[str, Any], key: str) -> str:
+    """Return a member that is a balance in wei, as `dumps` writes one."""
+    value: str = _member(document, key, str)
+    if not _WEI.fullmatch(value) or int(value) >= _WORD:
+        raise SeedScanValueError(f"scan result: member {key!r} is not a wei balance")
+    return value
+
+
+def _objects(document: dict[str, Any], key: str) -> list[dict[str, Any]]:
+    """Return a member that is a list of objects."""
+    values: list[object] = _member(document, key, list)
+    objects: list[dict[str, Any]] = []
+    for value in values:
+        if not isinstance(value, dict):
+            err_msg = f"scan result: an item of {key!r} of type {type(value).__name__}"
+            raise SeedScanTypeError(err_msg)
+        objects.append(value)
+    return objects
+
+
+def _where(document: dict[str, Any]) -> tuple[int, int | None]:
+    """Return the ``reading`` and ``purpose`` members of an object."""
+    purpose = _member(document, "purpose", (int, type(None)))
+    return (
+        _count(document, "reading"),
+        None if purpose is None else _count(document, "purpose"),
+    )
+
+
+#: A bundle's accounts of one coin, by reading, purpose and number.
+_Held = dict[tuple[int, int | None, int], Account]
+
+
+def _held(bundle: Bundle, coin: str) -> _Held:
+    """Return the bundle's accounts of one coin."""
+    return {
+        (n, account.purpose, account.account): account
+        for n, reading in enumerate(bundle.readings)
+        for account in reading.accounts
+        if account.coin == coin
+    }
+
+
+def _searched(document: dict[str, Any], accounts: _Held) -> Searched:
+    """Read one ``searched`` object: the accounts it read are the bundle's."""
+    reading, purpose = _where(document)
+    read = _count(document, "accounts", 1)
+    if (reading, purpose, read - 1) not in accounts:
+        raise SeedScanValueError("scan result: a search reads no account of the bundle")
+    return Searched(reading, purpose, read, _member(document, "cut_short", bool))
+
+
+def _searches(
+    document: dict[str, Any], accounts: _Held
+) -> dict[tuple[int, int | None], Searched]:
+    """Read a ``searched`` member, each purpose searched once."""
+    searched: dict[tuple[int, int | None], Searched] = {}
+    for item in _objects(document, "searched"):
+        done = _searched(item, accounts)
+        if (done.reading, done.purpose) in searched:
+            raise SeedScanValueError("scan result: a purpose searched twice")
+        searched[done.reading, done.purpose] = done
+    return searched
+
+
+def _account(
+    document: dict[str, Any],
+    accounts: _Held,
+    searched: dict[tuple[int, int | None], Searched],
+) -> tuple[int, int | None, Account]:
+    """Return the reading, purpose and account a used object names.
+
+    The account is one the result says it searched, and the ``path`` the
+    bundle's.
+    """
+    reading, purpose = _where(document)
+    number = _count(document, "account")
+    done = searched.get((reading, purpose))
+    account = accounts.get((reading, purpose, number))
+    if done is None or account is None or number >= done.accounts:
+        raise SeedScanValueError("scan result: a used account was not searched")
+    if _member(document, "path", str) != account.path:
+        raise SeedScanValueError("scan result: member 'path' is not the account's")
+    return reading, purpose, account
+
+
+def _sats(document: dict[str, Any]) -> tuple[int, int]:
+    """Return the ``confirmed`` and ``unconfirmed`` members of an object.
+
+    What the confirmed transactions leave, and with the mempool's change,
+    is unspent outputs: from 0 to 21 million bitcoin.
+    """
+    confirmed = _count(document, "confirmed")
+    unconfirmed: int = _member(document, "unconfirmed", int)
+    if confirmed > _MAX_SATOSHI or not 0 <= confirmed + unconfirmed <= _MAX_SATOSHI:
+        err_msg = "scan result: a balance outside 0 to 21 million bitcoin"
+        raise SeedScanValueError(err_msg)
+    return confirmed, unconfirmed
+
+
+def _gaps(indexes: dict[int, list[int]], gap_limit: int) -> None:
+    """Refuse used positions a branch read under `gap_limit` does not reach."""
+    if not all(_reachable(branch, gap_limit) for branch in indexes.values()):
+        raise SeedScanValueError("scan result: an address past the gap limit")
+
+
+def _addresses(
+    document: dict[str, Any], account: Account, gap_limit: int
+) -> tuple[Address, ...]:
+    """Read a Bitcoin account's used positions, each the bundle's there."""
+    descriptors = _descriptors(account, f"account {account.path}")
+    addresses: list[Address] = []
+    for position in _objects(document, "addresses"):
+        branch = _count(position, "branch")
+        index = _count(position, "index")
+        if (branch, index) in {(a.branch, a.index) for a in addresses}:
+            raise SeedScanValueError("scan result: an address listed twice")
+        address: str = _member(position, "address", str)
+        # an index of 2^31 and above would be hardened, which no
+        # descriptor of the bundle derives
+        if (
+            index >= _HARDENED
+            or branch >= len(descriptors)
+            or address
+            not in (s.address for s in descriptors[branch].script_pub_keys(index))
+        ):
+            err_msg = "scan result: an address is not the bundle's at its position"
+            raise SeedScanValueError(err_msg)
+        addresses.append(Address(branch, index, address))
+    if not addresses:
+        raise SeedScanValueError("scan result: a used account lists no address")
+    branches: dict[int, list[int]] = {}
+    for a in addresses:
+        branches.setdefault(a.branch, []).append(a.index)
+    _gaps(branches, gap_limit)
+    return tuple(addresses)
+
+
+def _used(
+    document: dict[str, Any],
+    accounts: _Held,
+    searched: dict[tuple[int, int | None], Searched],
+    gap_limit: int,
+) -> UsedAccount:
+    """Read one ``used`` object: a Bitcoin account the result searched.
+
+    Its history holds what its use and its balance need: a transaction
+    at least, a confirmed one where a confirmed balance is, and one of
+    the mempool's where the mempool changes it.
+    """
+    reading, purpose, account = _account(document, accounts, searched)
+    tip: dict[str, Any] = _member(document, "tip", dict)
+    addresses = _addresses(document, account, gap_limit)
+    transactions = tuple(
+        Transaction(_id(t, "tx_id"), _height(t))
+        for t in _objects(document, "transactions")
+    )
+    confirmed, unconfirmed = _sats(document)
+    in_blocks = any(t.height is not None for t in transactions)
+    in_mempool = any(t.height is None for t in transactions)
+    if (
+        not transactions
+        or (confirmed and not in_blocks)
+        or (unconfirmed and not in_mempool)
+    ):
+        err_msg = "scan result: a balance or a use no transaction listed gives"
+        raise SeedScanValueError(err_msg)
+    return UsedAccount(
+        reading=reading,
+        purpose=purpose,
+        account=account.account,
+        path=account.path,
+        addresses=addresses,
+        transactions=transactions,
+        confirmed=confirmed,
+        unconfirmed=unconfirmed,
+        tip=Tip(_count(tip, "height"), _id(tip, "block_id")),
+    )
+
+
+def _evm_addresses(
+    document: dict[str, Any], account: Account, gap_limit: int
+) -> tuple[EvmAddress, ...]:
+    """Read an Ethereum account's used addresses, each the bundle's there.
+
+    Each holds a balance or a nonce, as `scan` lists no other.
+    """
+    branch = _key(account, f"account {account.path}").derive(0)
+    addresses: list[EvmAddress] = []
+    for position in _objects(document, "addresses"):
+        index = _count(position, "index")
+        if index in {a.index for a in addresses}:
+            raise SeedScanValueError("scan result: an address listed twice")
+        address: str = _member(position, "address", str)
+        # an index of 2^31 and above would be hardened, a key the xpub
+        # does not derive
+        if index >= _HARDENED or address != address_from_pub_key(
+            branch.derive(index).sec
+        ):
+            err_msg = "scan result: an address is not the bundle's at its position"
+            raise SeedScanValueError(err_msg)
+        balance, nonce = _wei(position, "balance"), _count(position, "nonce")
+        if balance == "0" and nonce == 0:
+            raise SeedScanValueError("scan result: an unused address listed as used")
+        addresses.append(EvmAddress(index, address, balance, nonce))
+    _gaps({0: [a.index for a in addresses]}, gap_limit)
+    return tuple(addresses)
+
+
+def _evm_used(
+    document: dict[str, Any],
+    accounts: _Held,
+    searched: dict[tuple[int, int | None], Searched],
+    gap_limit: int,
+) -> EvmAccount:
+    """Read one ``used`` object of ``evm``: an Ethereum account it searched."""
+    reading, purpose, account = _account(document, accounts, searched)
+    addresses = _evm_addresses(document, account, gap_limit)
+    if not addresses:
+        raise SeedScanValueError("scan result: a used account lists no address")
+    balance = str(sum(int(a.balance) for a in addresses))
+    if _member(document, "balance", str) != balance:
+        err_msg = "scan result: the addresses' balances are not the account's"
+        raise SeedScanValueError(err_msg)
+    return EvmAccount(
+        reading=reading,
+        purpose=purpose,
+        account=account.account,
+        path=account.path,
+        addresses=addresses,
+        balance=balance,
+    )
+
+
+def _agrees(done: Searched, used: set[int], held: int, account_gap: int) -> bool:
+    """Answer whether a search's accounts, used ones and ``cut_short`` agree.
+
+    `scan` reads a purpose's accounts from 0 and stops once `account_gap`
+    of them in a row are unused, or once the bundle's `held` accounts run
+    out: then, and only then, the purpose is cut short. An Electrum
+    reading's one account is read alone and never cut short.
+    """
+    if done.purpose is None:
+        return not done.cut_short
+    unused = 0
+    for number in range(done.accounts):
+        if unused == account_gap:
+            return False
+        unused = 0 if number in used else unused + 1
+    if unused == account_gap:
+        return not done.cut_short
+    return done.cut_short and done.accounts == held
+
+
+def _check_searches(
+    searched: dict[tuple[int, int | None], Searched],
+    used: Sequence[UsedAccount | EvmAccount],
+    accounts: _Held,
+    account_gap: int,
+) -> None:
+    """Refuse a search whose accounts and ``cut_short`` are not `scan`'s."""
+    for (reading, purpose), done in searched.items():
+        numbers = {
+            u.account for u in used if (u.reading, u.purpose) == (reading, purpose)
+        }
+        held = sum(1 for r, p, _ in accounts if (r, p) == (reading, purpose))
+        if not _agrees(done, numbers, held, account_gap):
+            err_msg = "scan result: a search's accounts and 'cut_short' do not agree"
+            raise SeedScanValueError(err_msg)
+
+
+def _keyed(used: Sequence[UsedAccount | EvmAccount]) -> None:
+    """Refuse a used account listed twice: its balance would count twice."""
+    keys = [(u.reading, u.purpose, u.account) for u in used]
+    if len(set(keys)) != len(keys):
+        raise SeedScanValueError("scan result: a used account listed twice")
+
+
+def _evm(
+    document: dict[str, Any], bundle: Bundle, bounds: tuple[int, int]
+) -> EvmScan | None:
+    """Read the ``evm`` member: ``null``, or the Ethereum scan.
+
+    `bounds` are the result's ``gap_limit`` and ``account_gap``.
+    """
+    gap_limit, account_gap = bounds
+    evm: dict[str, Any] | None = _member(document, "evm", (dict, type(None)))
+    if evm is None:
+        return None
+    node: str = _member(evm, "node", str)
+    name = None
+    # a refusal of the name is raised outside `suppress`, so that it
+    # chains none
+    with contextlib.suppress(SeedScanTypeError, SeedScanValueError):
+        name = Node(node).name
+    if name != node:
+        err_msg = "scan result: member 'node' is not a scheme, host and port"
+        raise SeedScanValueError(err_msg)
+    accounts = _held(bundle, _ETHEREUM)
+    searched = _searches(evm, accounts)
+    used = [
+        _evm_used(item, accounts, searched, gap_limit) for item in _objects(evm, "used")
+    ]
+    _keyed(used)
+    _check_searches(searched, used, accounts, account_gap)
+    return EvmScan(
+        node=node,
+        chain_id=_count(evm, "chain_id"),
+        block=_count(evm, "block"),
+        searched=tuple(searched.values()),
+        used=tuple(used),
+    )
+
+
+def _not_read(
+    document: dict[str, Any], bundle: Bundle, reasons: dict[str, str | None]
+) -> NotRead:
+    """Read one ``not_checked`` object: a coin of that reading, not read.
+
+    `reasons` gives the reason of Bitcoin and Ethereum, or None where the
+    result reads that coin; any other coin's is `NOT_READ`.
+    """
+    reading = _count(document, "reading")
+    coin: str = _member(document, "coin", str)
+    coins = (
+        {a.coin for a in bundle.readings[reading].accounts}
+        if reading < len(bundle.readings)
+        else set()
+    )
+    if coin not in coins:
+        raise SeedScanValueError("scan result: a coin not checked is not the bundle's")
+    reason = reasons.get(coin, NOT_READ)
+    if reason is None:
+        raise SeedScanValueError("scan result: a coin read is listed as not checked")
+    if _member(document, "reason", str) != reason:
+        err_msg = "scan result: member 'reason' is not the format's for that coin"
+        raise SeedScanValueError(err_msg)
+    return NotRead(reading, coin, reason)
+
+
+def loads(text: str, bundle: str) -> ScanResult:
+    """Read a scan result back from its JSON text, against its bundle.
+
+    `bundle` is the text of the bundle the result was made from, which
+    `seed_scan.bundle.loads` reads. Refused, as a `SeedScanValueError`:
+    text that is not JSON, another ``format``, another ``version``, a
+    missing member, a negative count, a bound below 1, a result whose
+    ``bundle`` is not the SHA-256 of `bundle`, a result naming neither a
+    server nor a node, a Bitcoin search with no server, a purpose
+    searched twice, a used account or an address listed twice, and a
+    number too long for Python to read. The bundle is refused as `scan`
+    refuses it. A member of the wrong type is a `SeedScanTypeError`.
+    Members this version does not name are ignored. A refusal names the
+    member, never its value.
+
+    A reader echoes the text members, so each holds only what the format
+    defines: a ``server`` of printable ASCII with no space, ending in a
+    colon and a port; a ``node`` that `seed_scan.evm.Node` takes, and
+    names as it is written; ids of 64 hex characters; a balance in wei of
+    decimal digits, below 2**256; a ``reason`` that is the one `scan`
+    gives that coin, for a coin of that reading it did not read. What the
+    result says of the bundle is checked against it: each search and each
+    used account names accounts of the bundle of its coin, a used account
+    one its search read, its ``path`` the bundle's, each address the one
+    the account's keys give at that position, an Ethereum address with a
+    balance or a nonce, and an Ethereum account's balance the sum of its
+    addresses'. Each search's ``accounts`` and ``cut_short`` are the ones
+    `scan` gives for the used accounts listed, the bundle's accounts and
+    ``account_gap``.
+
+    What a used account lists is what `scan` could have found: an
+    address at least, each branch's used positions within ``gap_limit``
+    of the one before, from index 0; for Bitcoin, a transaction at least,
+    a confirmed one where ``confirmed`` is not 0 and one of the mempool's
+    where ``unconfirmed`` is not 0, and balances that leave from 0 to 21
+    million bitcoin unspent.
+    """
+    read = bundle_loads(bundle)
+    # refused as `scan` refuses it: a descriptor or a key that does not
+    # parse, or accounts not numbered from 0 with no gap
+    for n, reading in enumerate(read.readings):
+        _plan(n, reading)
+    document = _document(text)
+    digest = sha256(bundle.encode("utf-8")).hexdigest()
+    if _member(document, "bundle", str) != digest:
+        raise SeedScanValueError("scan result: made from another bundle")
+    server: str | None = _member(document, "server", (str, type(None)))
+    if server is not None and not _SERVER.fullmatch(server):
+        raise SeedScanValueError("scan result: member 'server' is not host:port")
+    gap_limit = _count(document, "gap_limit", 1)
+    account_gap = _count(document, "account_gap", 1)
+    accounts = _held(read, _BITCOIN)
+    searched = _searches(document, accounts)
+    if server is None and searched:
+        raise SeedScanValueError("scan result: a Bitcoin search with no server")
+    used = [
+        _used(item, accounts, searched, gap_limit)
+        for item in _objects(document, "used")
+    ]
+    _keyed(used)
+    _check_searches(searched, used, accounts, account_gap)
+    evm = _evm(document, read, (gap_limit, account_gap))
+    if server is None and evm is None:
+        raise SeedScanValueError("scan result: it names neither a server nor a node")
+    reasons = {
+        _BITCOIN: NO_SERVER if server is None else None,
+        _ETHEREUM: NO_NODE if evm is None else None,
+    }
+    return ScanResult(
+        bundle=digest,
+        server=server,
+        gap_limit=gap_limit,
+        account_gap=account_gap,
+        searched=tuple(searched.values()),
+        used=tuple(used),
+        not_checked=tuple(
+            _not_read(n, read, reasons) for n in _objects(document, "not_checked")
+        ),
+        evm=evm,
+    )
+
+
+def _document(text: str) -> dict[str, Any]:
+    """Return the JSON object of a scan result, of its format and version."""
+    if not isinstance(text, str):
+        raise SeedScanTypeError(f"scan result: text of type {type(text).__name__}")
+    document: object = None
+    try:
+        document = json.loads(text)
+    except json.JSONDecodeError as e:
+        where = f"not JSON, at line {e.lineno} column {e.colno}"
+    except ValueError:
+        # an integer of more digits than `sys.get_int_max_str_digits`
+        where = "a number too long to read"
+    else:
+        where = ""
+    # raised outside the `except`, for `seed_scan.bundle.loads`'s reason
+    if where:
+        raise SeedScanValueError(f"scan result: {where}")
+    if not isinstance(document, dict):
+        raise SeedScanTypeError(f"scan result: a JSON {type(document).__name__}")
+    if _member(document, "format", str) != FORMAT:
+        raise SeedScanValueError(f"scan result: format is not {FORMAT!r}")
+    if _member(document, "version", int) != VERSION:
+        raise SeedScanValueError(f"scan result: version is not {VERSION}")
+    return document

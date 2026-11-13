@@ -11,6 +11,7 @@ BIP84 and BIP86 publish for them.
 
 from __future__ import annotations
 
+import dataclasses
 import json
 from hashlib import sha256
 from typing import TYPE_CHECKING
@@ -260,6 +261,57 @@ def test_a_double_spend_in_both_reads_is_refused(
     err_msg = (
         "^reading 0, account m/84h/0h/0h: "
         "two transactions spend one output, in both reads of it$"
+    )
+    with pytest.raises(SeedScanValueError, match=err_msg):
+        scan(abandon, chain, server="s:1")
+    assert len(found) == 2
+
+
+def past_the_gap(use: AccountUse) -> AccountUse:
+    """Return a discovery whose one used position lies past the gap limit.
+
+    As where the windows found a payment at an index the last read no
+    longer lists, and went on reading past it.
+
+    :param use: a discovery.
+    :returns: the same, its receive branch used at index 25 alone.
+    """
+    return dataclasses.replace(use, used=((25,), ()))
+
+
+@pytest.mark.parametrize("reads", [1, 2])
+def test_a_use_past_the_gap_limit_is_read_again(
+    abandon: str, monkeypatch: pytest.MonkeyPatch, reads: int
+) -> None:
+    """Read again once, and refused where the second read is the same.
+
+    :param abandon: the bundle's text.
+    :param monkeypatch: what makes the first `reads` reads of the account
+        list a position past the gap.
+    :param reads: how many reads do.
+    """
+    receive = script(abandon, "m/84h/0h/0h", 0, 3)
+    chain = Chain(HistoryTx(pay(1, (receive, 1)), BLOCK))
+    real = discover_account
+    found: list[AccountUse] = []
+
+    def discover(
+        descriptors: Sequence[Descriptor], reader: HistoryReader, *, gap_limit: int
+    ) -> AccountUse | None:
+        use = real(descriptors, reader, gap_limit=gap_limit)
+        if use is None:
+            return None
+        found.append(use)
+        return past_the_gap(use) if len(found) <= reads else use
+
+    monkeypatch.setattr(scan_module, "discover_account", discover)
+    if reads == 1:
+        (used,) = scan(abandon, chain, server="s:1").used
+        assert [(a.branch, a.index) for a in used.addresses] == [(0, 3)]
+        return
+    err_msg = (
+        "^reading 0, account m/84h/0h/0h: "
+        "a used position past the gap limit, in both reads of it$"
     )
     with pytest.raises(SeedScanValueError, match=err_msg):
         scan(abandon, chain, server="s:1")
