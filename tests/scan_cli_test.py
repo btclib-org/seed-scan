@@ -244,7 +244,9 @@ def test_scan_writes_the_result_and_a_summary(
     assert used["addresses"] == [{"branch": 0, "index": 0, "address": paid.address}]
     assert (used["confirmed"], used["unconfirmed"]) == (0, 2_500)
     assert document["server"] == "node.local:50002"
-    assert err.startswith("server: node.local:50002\n")
+    assert (document["gap_limit"], document["account_gap"]) == (20, 3)
+    bounds = "bounds: account gap 3, gap limit 20"
+    assert err.startswith(f"server: node.local:50002\n{bounds}\n")
     assert "used: reading 0, m/84h/0h/0h: 1 addresses, 1 transactions" in err
     assert "not checked: reading 0, ethereum:" in err
     ((host, port, _),) = connect.made
@@ -263,6 +265,23 @@ def test_the_summary_says_nothing_was_used_and_what_was_cut_short(
     status, _, err = run(capsys, [bundle, "--server", "h:1"], Connections(Electrum()))
     assert status == 0
     assert "no account used within that bound" in err
+
+
+def test_the_bounds_are_the_options_given(
+    capsys: pytest.CaptureFixture[str], bundle: str
+) -> None:
+    """The bound options reach the result and the summary.
+
+    A gap of 1 is reached inside a bundle of one account per purpose, so
+    no purpose is cut short.
+    """
+    argv = [bundle, "--server", "h:1", "--account-gap", "1", "--gap-limit", "7"]
+    status, out, err = run(capsys, argv, Connections(Electrum()))
+    assert status == 0
+    document = json.loads(out)
+    assert (document["gap_limit"], document["account_gap"]) == (7, 1)
+    assert "\nbounds: account gap 1, gap limit 7\n" in err
+    assert "\nreading 0, purpose 44: accounts read: 1\n" in err
 
 
 def test_the_context_verifies_the_certificate_and_the_host(

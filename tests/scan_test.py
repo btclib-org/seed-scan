@@ -140,11 +140,11 @@ def script(text: str, path: str, branch: int, index: int) -> ScriptPubKey:
 
 @pytest.fixture(scope="module")
 def abandon() -> str:
-    """Return the bundle of BIP84's mnemonic, two accounts of each purpose.
+    """Return the bundle of BIP84's mnemonic, five accounts of each purpose.
 
     :returns: its text.
     """
-    return dumps(identify(ABANDON, [""], no_share, accounts=2))
+    return dumps(identify(ABANDON, [""], no_share, accounts=5))
 
 
 def test_used_addresses_transactions_and_balance(abandon: str) -> None:
@@ -173,43 +173,54 @@ def test_used_addresses_transactions_and_balance(abandon: str) -> None:
     assert used.transactions[0].tx_id == paid.id.hex()
     assert (used.confirmed, used.unconfirmed) == (4_000, 2_000 - 4_000)
     assert used.tip == Tip(2, TIP.block_id.hex())
-    assert Searched(0, 84, 2, cut_short=False) in result.searched
-    assert Searched(0, 44, 1, cut_short=False) in result.searched
+    assert Searched(0, 84, 4, cut_short=False) in result.searched
+    assert Searched(0, 44, 3, cut_short=False) in result.searched
 
 
-def test_nothing_used_reads_account_0_of_each_purpose(abandon: str) -> None:
-    """With no history, each purpose stops after its first account."""
+def test_nothing_used_reads_three_accounts_of_each_purpose(abandon: str) -> None:
+    """With no history, each purpose stops at the default account gap."""
     result = scan(abandon, Chain(), server="s:1")
     assert not result.used
     assert [(s.purpose, s.accounts) for s in result.searched] == [
-        (44, 1),
-        (49, 1),
-        (84, 1),
-        (86, 1),
+        (44, 3),
+        (49, 3),
+        (84, 3),
+        (86, 3),
     ]
 
 
 def test_a_purpose_cut_short_where_the_accounts_end(abandon: str) -> None:
-    """Both accounts used: an account after them may be used too."""
+    """Accounts 0 and 2 used: the bundle's accounts end before the gap."""
     first = script(abandon, "m/86h/0h/0h", 0, 0)
-    second = script(abandon, "m/86h/0h/1h", 0, 0)
+    third = script(abandon, "m/86h/0h/2h", 0, 0)
     assert first.address == BIP86_RECEIVE
-    chain = Chain(HistoryTx(pay(1, (first, 1), (second, 1)), BLOCK))
+    chain = Chain(HistoryTx(pay(1, (first, 1), (third, 1)), BLOCK))
     result = scan(abandon, chain, server="s:1")
-    assert [u.account for u in result.used] == [0, 1]
-    assert Searched(0, 86, 2, cut_short=True) in result.searched
+    assert [u.account for u in result.used] == [0, 2]
+    assert Searched(0, 86, 5, cut_short=True) in result.searched
 
 
-def test_a_wider_account_gap_reads_past_an_unused_account(abandon: str) -> None:
-    """Account 1 used and account 0 not: found with a gap of 2 alone."""
-    second = script(abandon, "m/49h/0h/1h", 1, 4)
-    chain = Chain(HistoryTx(pay(1, (second, 7)), None))
-    assert not scan(abandon, chain, server="s:1").used
-    result = scan(abandon, chain, server="s:1", account_gap=2)
+def test_the_default_account_gap_reads_past_two_unused_accounts(
+    abandon: str,
+) -> None:
+    """Account 2 used and accounts 0 and 1 not: found by default."""
+    third = script(abandon, "m/49h/0h/2h", 1, 4)
+    chain = Chain(HistoryTx(pay(1, (third, 7)), None))
+    assert not scan(abandon, chain, server="s:1", account_gap=2).used
+    result = scan(abandon, chain, server="s:1")
     (used,) = result.used
-    assert (used.path, used.addresses[0].index) == ("m/49h/0h/1h", 4)
+    assert (used.path, used.addresses[0].index) == ("m/49h/0h/2h", 4)
     assert (used.confirmed, used.unconfirmed) == (0, 7)
-    assert Searched(0, 49, 2, cut_short=True) in result.searched
+    assert Searched(0, 49, 5, cut_short=True) in result.searched
+
+
+def test_a_wider_account_gap_reads_past_three_unused_accounts(abandon: str) -> None:
+    """Account 3 used and accounts 0 to 2 not: found with a gap of 4 alone."""
+    fourth = script(abandon, "m/44h/0h/3h", 0, 0)
+    chain = Chain(HistoryTx(pay(1, (fourth, 1)), BLOCK))
+    assert not scan(abandon, chain, server="s:1").used
+    (used,) = scan(abandon, chain, server="s:1", account_gap=4).used
+    assert used.path == "m/44h/0h/3h"
 
 
 def test_the_gap_limit_ends_a_branch(abandon: str) -> None:
@@ -227,7 +238,7 @@ def test_an_electrum_reading_has_one_account() -> None:
     change = parse(account.descriptors[1]).script_pub_keys(0)[0]
     assert change.address == SEGWIT_CHANGE
     chain = Chain(HistoryTx(pay(1, (change, 5)), BLOCK))
-    result = scan(text, chain, server="s:1", account_gap=3)
+    result = scan(text, chain, server="s:1", account_gap=5)
     assert result.searched == (Searched(0, None, 1, cut_short=False),)
     (used,) = result.used
     assert (used.purpose, used.addresses) == (None, (Address(1, 0, SEGWIT_CHANGE),))
@@ -251,7 +262,7 @@ def test_the_result_is_versioned_json_naming_the_bundle(abandon: str) -> None:
     assert (document["format"], document["version"]) == (FORMAT, VERSION)
     assert document["bundle"] == sha256(abandon.encode()).hexdigest()
     assert document["server"] == "node.local:50002"
-    assert (document["gap_limit"], document["account_gap"]) == (20, 1)
+    assert (document["gap_limit"], document["account_gap"]) == (20, 3)
 
 
 def test_nothing_scan_writes_holds_a_secret(abandon: str) -> None:
@@ -332,7 +343,7 @@ def test_a_descriptor_whose_checksum_fails_is_refused(abandon: str) -> None:
     with pytest.raises(SeedScanValueError) as caught:
         scan(edited_text, NEVER, server="s:1")
     message = str(caught.value)
-    assert message == "bundle: reading 0, account 5: a descriptor that does not parse"
+    assert message == "bundle: reading 0, account 11: a descriptor that does not parse"
     assert caught.value.__context__ is None
 
 

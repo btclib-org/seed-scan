@@ -36,7 +36,8 @@ only. Its members:
   version.
 - ``bundle``: the SHA-256 of the bundle's text, UTF-8 encoded, as hex.
 - ``server``: the server asked, as the user named it.
-- ``gap_limit`` and ``account_gap``: the bound of the search.
+- ``gap_limit`` and ``account_gap``: the bound of the search, `GAP_LIMIT`
+  and `ACCOUNT_GAP` unless the caller gives others.
 - ``searched``: one object per reading and purpose read: ``reading``, the
   position of the reading in the bundle; ``purpose``, ``null`` for an
   Electrum reading; ``accounts``, how many accounts were read, from 0;
@@ -70,6 +71,7 @@ from seed_scan.bundle import Account, Reading, loads
 from seed_scan.exceptions import SeedScanTypeError, SeedScanValueError
 
 __all__ = [
+    "ACCOUNT_GAP",
     "FORMAT",
     "GAP_LIMIT",
     "VERSION",
@@ -92,6 +94,10 @@ VERSION = 1
 
 #: BIP44's gap limit, the default of ``gap_limit``.
 GAP_LIMIT = 20
+
+#: The default of ``account_gap``. BIP44 stops at the first account whose
+#: external chain has no transactions; a recovery would rather over-search.
+ACCOUNT_GAP = 3
 
 #: The coin `scan` reads.
 _BITCOIN = "bitcoin"
@@ -326,7 +332,7 @@ def scan(
     *,
     server: str,
     gap_limit: int = GAP_LIMIT,
-    account_gap: int = 1,
+    account_gap: int = ACCOUNT_GAP,
 ) -> ScanResult:
     """Run account discovery on the bundle whose text is `text`.
 

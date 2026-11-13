@@ -55,7 +55,7 @@ from btclib_wallet.fetch.transport import LineTransport, TlsLineTransport
 from seed_scan.bundle import dumps
 from seed_scan.exceptions import SeedScanException, SeedScanValueError
 from seed_scan.identify import identify
-from seed_scan.scan import GAP_LIMIT, scan
+from seed_scan.scan import ACCOUNT_GAP, GAP_LIMIT, scan
 from seed_scan.scan import dumps as scan_dumps
 
 if TYPE_CHECKING:
@@ -168,7 +168,10 @@ def _summary(bundle: Bundle) -> str:
 
 def _scan_summary(result: ScanResult) -> str:
     """Return what the scan result says, for the user."""
-    lines = [f"server: {result.server}"]
+    lines = [
+        f"server: {result.server}",
+        f"bounds: account gap {result.account_gap}, gap limit {result.gap_limit}",
+    ]
     for done in result.searched:
         purpose = "Electrum" if done.purpose is None else f"purpose {done.purpose}"
         line = f"reading {done.reading}, {purpose}: accounts read: {done.accounts}"
@@ -429,8 +432,8 @@ def _parser() -> argparse.ArgumentParser:
     scan_parser.add_argument(
         "--account-gap",
         type=int,
-        default=1,
-        help="unused accounts in a row that end a purpose (default: 1)",
+        default=ACCOUNT_GAP,
+        help=f"unused accounts in a row that end a purpose (default: {ACCOUNT_GAP})",
     )
     return parser
 
