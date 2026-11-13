@@ -1778,9 +1778,11 @@ check = [
     { name = "uv-build" },
 ]
 dev = [
+    { name = "bitcoin-core-rpc" },
     { name = "check-sdist" },
     { name = "check-wheel-contents" },
     { name = "coverage" },
+    { name = "cryptography", marker = "platform_machine != 'ARM64' or sys_platform != 'win32'" },
     { name = "furo", marker = "python_full_version >= '3.12'" },
     { name = "mypy" },
     { name = "myst-parser", marker = "python_full_version >= '3.12'" },
@@ -1813,7 +1815,9 @@ lint = [
     { name = "ruff" },
 ]
 test = [
+    { name = "bitcoin-core-rpc" },
     { name = "coverage" },
+    { name = "cryptography", marker = "platform_machine != 'ARM64' or sys_platform != 'win32'" },
     { name = "packaging" },
     { name = "pytest" },
     { name = "pytest-cov" },
@@ -1839,9 +1843,11 @@ check = [
     { name = "uv-build", specifier = ">=0.12.0,<0.14" },
 ]
 dev = [
+    { name = "bitcoin-core-rpc", specifier = ">=2026.11.9" },
     { name = "check-sdist", specifier = ">=1.6.0" },
     { name = "check-wheel-contents", specifier = ">=0.6.3" },
     { name = "coverage", specifier = ">=7.16.1" },
+    { name = "cryptography", marker = "platform_machine != 'ARM64' or sys_platform != 'win32'", specifier = ">=50.0.2" },
     { name = "furo", marker = "python_full_version >= '3.12'", specifier = ">=2025.12.19" },
     { name = "mypy", specifier = ">=2.3.1" },
     { name = "myst-parser", marker = "python_full_version >= '3.12'", specifier = ">=5.1.0" },
@@ -1874,7 +1880,9 @@ lint = [
     { name = "ruff", specifier = ">=0.16.9" },
 ]
 test = [
+    { name = "bitcoin-core-rpc", specifier = ">=2026.11.9" },
     { name = "coverage", specifier = ">=7.16.1" },
+    { name = "cryptography", marker = "platform_machine != 'ARM64' or sys_platform != 'win32'", specifier = ">=50.0.2" },
     { name = "packaging", specifier = ">=26.3" },
     { name = "pytest", specifier = ">=9.1.1" },
     { name = "pytest-cov", specifier = ">=7.1.0" },

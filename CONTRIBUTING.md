@@ -525,12 +525,13 @@ uv pip install "$1"
 .venv/bin/python -c "
 from importlib.metadata import requires, version
 import seed_scan
-from seed_scan import bundle, cli, exceptions, identify
+from seed_scan import bundle, cli, exceptions, identify, scan
 
 print(version('seed-scan'), requires('seed-scan'))
 assert seed_scan.__version__ == version('seed-scan')
 assert issubclass(exceptions.SeedScanValueError, ValueError)
 assert callable(cli.main) and callable(identify.identify)
+assert callable(scan.scan)
 assert bundle.VERSION == 1
 "
 ```

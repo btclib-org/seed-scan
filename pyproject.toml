@@ -33,20 +33,18 @@ authors = [{ name = "The btclib developers", email = "devs@btclib.org" }]
 # packages it is to build on, so that whoever runs it offline can use
 # the interpreter that machine already has
 requires-python = ">=3.11"
-# what `identify` builds on: tests/imports_test.py refuses a module that
+# what the commands build on: tests/imports_test.py refuses a module that
 # imports anything else, and anything these do not pull in
 dependencies = [
-    # the BIP39, SLIP-0039 and Electrum readings of a sentence, and the
-    # BIP39 languages that hold its words (`bip39.langs_from_mnemonic`)
+    # what a sentence is under BIP39, SLIP-0039 and Electrum, and the seed
+    # each reading gives
     "bip39-slip39>=2026.11.13",
-    # a seed to its account keys: `BIP32KeyData.from_seed`, `derive` and
-    # `xpub`
+    # a seed to its master key and account keys
     "bip32-descriptors>=2026.11.13",
-    # the account descriptors of a BIP44 purpose, the same
-    # `bip44.account_descriptors` that `discover_accounts` reads, and the
-    # BIP32 master key of an Electrum versioned mnemonic
+    # the descriptors of an account, and for `scan` the discovery of the
+    # accounts in use against an Electrum server over TLS
     "btclib-wallet>=2026.11.13",
-    # the script of an address the user knows, `ScriptPubKey.from_address`
+    # Bitcoin's scripts, addresses and transactions
     "btclib>=2026.11.12",
 ]
 keywords = [
@@ -110,6 +108,13 @@ harness = [
 ]
 test = [
     { include-group = "harness" },
+    # tests/scan_cli_test.py raises bitcoin-core-rpc's `FetchError`, which
+    # btclib-wallet's transports raise and do not export
+    "bitcoin-core-rpc>=2026.11.9",
+    # tests/scan_cli_test.py makes the TLS server's key and certificates with
+    # it, so that no key is committed; the marker is btclib-wallet's, which
+    # leaves it out on Windows on ARM64, where it has no wheel
+    "cryptography>=50.0.2; platform_machine != 'ARM64' or sys_platform != 'win32'",
     # tests/imports_test.py reads the requirements each distribution
     # declares with it
     "packaging>=26.3",

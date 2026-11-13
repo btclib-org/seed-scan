@@ -69,8 +69,7 @@ extensions = [
 # nobody. Without the extension it is an unknown directive, which -W turns
 # into a failed build -- the open questions belong in the issue tracker
 
-# the standard library, whose types the signatures name. No sibling of
-# this organization: the package imports none
+# the standard library, whose types the signatures name
 intersphinx_mapping = {
     "python": ("https://docs.python.org/3", (None, "_inventories/python.inv")),
 }
@@ -81,6 +80,11 @@ intersphinx_mapping = {
 # To refresh it, run this from the repository root and rewrite the version
 # and source above:
 # curl -fsSL -o docs/source/_inventories/python.inv https://docs.python.org/3/objects.inv
+
+# the one type of a sibling a signature names, `seed_scan.scan.scan`'s
+# reader. Ignored rather than resolved: an inventory of btclib-wallet
+# would be a second one the build fetches, with no copy to fall back on
+nitpick_ignore = [("py:class", "btclib_wallet.fetch.history.HistoryReader")]
 
 source_suffix = [".rst", ".md"]
 

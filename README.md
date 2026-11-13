@@ -17,8 +17,9 @@ user's own wallet moves them.
 
 ## What is here
 
-No release is out yet. `seed-scan identify` is the first command, and
-each of the others arrives in a pull request of its own.
+No release is out yet. `seed-scan identify` and `seed-scan scan` are
+the first commands, and each of the others arrives in a pull request of
+its own.
 [btclib-org/.github#2203](https://github.com/btclib-org/.github/issues/2203)
 records the design and tracks the first release. The command is to stay
 thin: what is general goes down to the packages it is to build on,
@@ -43,6 +44,23 @@ found to standard error. Where you know an address the mnemonic gave,
 path. `seed_scan.bundle` documents the bundle, and
 `seed-scan identify --help` the bounds of what it writes and searches.
 
+## Scanning a bundle
+
+```shell
+seed-scan scan bundle.json --server electrum.example.org:50002 > scan.json
+```
+
+It asks the Electrum server named, as `host:port`, which accounts of the
+bundle were used, and writes the scan result to standard output and what
+it found to standard error. The server learns every address it is asked
+about, so name your own: there is no default. The connection is TLS, and
+the server's certificate is verified against the system's CA
+certificates, or against those of the file `--cafile` names, which is
+how a server with a self-signed certificate is reached. Bitcoin is the
+coin it reads, and the bundle's other coins are listed as not checked.
+`seed_scan.scan` documents the result, and `seed-scan scan --help` the
+bounds of the search.
+
 ## What touches the secret
 
 The commands are to keep to this split, so that the mnemonic stays on
@@ -55,12 +73,11 @@ one machine and everything after it reads public data:
   *public bundle*: the fingerprint and the account public keys, or the
   addresses where a coin has no extended public key.
 - **`scan` and `forks` touch the network and no secret.** They read the
-  bundle and what the commands before them wrote, nothing else. `scan`
-  runs account discovery on each coin, against the user's own node or
-  Electrum server by default. A public explorer is used only where it is
-  named, because it learns the addresses. `forks` takes the balance at
-  the height of each fork from the history, then checks the chains each
-  fork created.
+  bundle and what the commands before them wrote, and `scan` the CA
+  certificates it verifies its server against, the system's or those of
+  the file the user names; nothing else. *Scanning a bundle* says which
+  server `scan` asks. `forks` takes the balance at the height of each
+  fork from the history, then checks the chains each fork created.
 - **`report` touches neither.** It assembles what `scan` and `forks`
   found: what was searched, what was found, the limits of the search,
   and the digest of the report.

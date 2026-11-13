@@ -63,7 +63,7 @@ An account object holds:
   version whatever the coin, so that each reader decodes one spelling;
 - ``descriptors``: for Bitcoin, the receive and change output
   descriptors, checksum included, as Bitcoin Core imports them; empty
-  for the other coins, whose addresses `scan` derives from ``xpub``.
+  for the other coins, whose account key is ``xpub`` alone.
 """
 
 from __future__ import annotations
