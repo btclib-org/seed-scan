@@ -186,8 +186,8 @@ def _descriptors(account: Account, where: str) -> tuple[Descriptor, ...]:
 
     `seed_scan.bundle.loads` has read them as the receive and change
     descriptors over the account's own xpub, which holds no private key
-    and ranges every index; what it does not verify is the checksum, and
-    `parse` does. Its refusal may quote the descriptor, so it is not
+    and ranges every index, checksum included; what it does not verify is
+    that the key is a point of the curve, and `parse` does. Its refusal may quote the descriptor, so it is not
     kept: the refusal says where the account is in the bundle, raised
     outside `suppress` so that the error is not its context.
     """
@@ -340,8 +340,8 @@ def scan(
     bundle is read, and every account of it checked, before `reader` is
     asked anything. Refused, as `seed_scan.bundle.loads` refuses it: text
     that is not a bundle. Refused as a `SeedScanValueError` too: a
-    descriptor whose checksum does not verify, and accounts not numbered
-    from 0. A bound below 1 is refused, and one that is no
+    descriptor that does not parse, as one whose key is no point of the
+    curve, and accounts not numbered from 0. A bound below 1 is refused, and one that is no
     integer is a `SeedScanTypeError`.
     """
     bundle = loads(text)

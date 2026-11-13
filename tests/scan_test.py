@@ -329,16 +329,34 @@ def test_an_account_without_its_public_descriptors_is_refused(
     assert caught.value.__context__ is None
 
 
-def test_a_descriptor_whose_checksum_fails_is_refused(abandon: str) -> None:
-    """`loads` reads the checksum's shape, and `parse` verifies it."""
+def test_a_key_off_the_curve_is_refused(abandon: str) -> None:
+    """`loads` reads a key's encoding, and `parse` that it is a point.
+
+    Its x is 5, and 5**3 + 7 is no square modulo secp256k1's prime, so no
+    point has it: the xpub's version, length, checksum and prefix are
+    valid, and its descriptors carry their checksums.
+    """
     document = json.loads(abandon)
     (account,) = [
         a for a in document["readings"][0]["accounts"] if a["path"] == "m/84h/0h/1h"
     ]
-    text, checksum = account["descriptors"][0].split("#")
-    wrong = "qqqqqqqq" if checksum != "qqqqqqqq" else "pppppppp"
-    bad = [f"{text}#{wrong}", account["descriptors"][1]]
-    edited_text = edited(abandon, "m/84h/0h/1h", descriptors=bad)
+    data = BIP32KeyData.b58decode(account["xpub"], check_validity=False)
+    off_curve = BIP32KeyData(
+        data.version,
+        data.depth,
+        data.parent_fingerprint,
+        data.index,
+        data.chain_code,
+        b"\x02" + (5).to_bytes(32, "big"),
+        check_validity=False,
+    ).b58encode(check_validity=False)
+    descriptors = [
+        add_checksum(d.split("#")[0].replace(account["xpub"], off_curve))
+        for d in account["descriptors"]
+    ]
+    edited_text = edited(
+        abandon, "m/84h/0h/1h", xpub=off_curve, descriptors=descriptors
+    )
     loads(edited_text)
     with pytest.raises(SeedScanValueError) as caught:
         scan(edited_text, NEVER, server="s:1")
