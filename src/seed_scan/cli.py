@@ -14,8 +14,10 @@ The secret is read from the terminal alone, never from an argument, a
 file, standard input or the environment: where no terminal can be
 opened the command refuses rather than read standard input. Before it
 reads anything it refuses every socket and every new process for the
-rest of the process. A refusal is one line on standard error, never a
-traceback, and says nothing of what was typed.
+rest of the process, and where that refusal is not in place it reads
+nothing. A refusal is one line on standard error, never a traceback,
+and says nothing of what was typed. An argument refused is not repeated
+either, in case it is a mnemonic typed there by mistake.
 """
 
 from __future__ import annotations
@@ -24,7 +26,7 @@ import argparse
 import getpass
 import sys
 import warnings
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, NoReturn
 
 from seed_scan.bundle import dumps
 from seed_scan.exceptions import SeedScanException, SeedScanValueError
@@ -41,9 +43,21 @@ __all__ = [
 
 
 # the audit events of a socket, and of a new process, which could open
-# one, or read the secret out of this one, beyond this hook's reach
-_REFUSED = ("socket.", "subprocess.", "os.system", "os.exec", "os.posix_spawn")
-_REFUSED_EXACTLY = ("os.fork", "os.forkpty", "os.spawn")
+# one, or read the secret out of this one, beyond this hook's reach.
+# `os.startfile` is Windows', and covers its `os.startfile/2`
+_REFUSED = (
+    "socket.",
+    "subprocess.",
+    "os.system",
+    "os.exec",
+    "os.posix_spawn",
+    "os.startfile",
+)
+# an event of this package's own, raised once the hook is added: an
+# earlier hook can veto the addition, and `sys.addaudithook` then returns
+# as if it had added it, so only the hook refusing this says it is there
+_PROBE = "seed_scan.guard"
+_REFUSED_EXACTLY = ("os.fork", "os.forkpty", "os.spawn", _PROBE)
 
 
 def _refuse_network(event: str, args: tuple[object, ...]) -> None:
@@ -58,9 +72,15 @@ def _forbid_network() -> None:
     """Refuse every socket and every new process for the rest of the process.
 
     An audit hook cannot be removed, so this runs once per process, in
-    the command alone.
+    the command alone. Where the hook is not in place afterwards, it
+    refuses.
     """
     sys.addaudithook(_refuse_network)
+    try:
+        sys.audit(_PROBE)
+    except SeedScanValueError:
+        return
+    raise SeedScanValueError("the refusal of sockets and processes is not in place")
 
 
 def _hidden(text: str) -> str:
@@ -118,9 +138,30 @@ def _summary(bundle: Bundle) -> str:
     return "\n".join(lines) + "\n"
 
 
+class _Parser(argparse.ArgumentParser):
+    """A parser whose refusal repeats no word given.
+
+    argparse quotes a value it refuses and lists the words it does not
+    take, so a mnemonic typed as arguments by mistake would reach standard
+    error, and any log kept of it. Its refusal of a missing argument names
+    arguments alone, and is kept; every other is replaced.
+    """
+
+    # no @override: `typing.override` is 3.12's, and the floor is 3.11
+    def error(self, message: str) -> NoReturn:  # type: ignore[explicit-override]
+        """Write the usage and the refusal, then exit with status 2."""
+        if not message.startswith("the following arguments are required: "):
+            message = (
+                "an argument is refused, and not repeated in case it is a"
+                f" mnemonic: {self.prog} --help lists them"
+            )
+        self.print_usage(sys.stderr)
+        self.exit(2, f"{self.prog}: error: {message}\n")
+
+
 def _parser() -> argparse.ArgumentParser:
     """Return the command's parser."""
-    parser = argparse.ArgumentParser(
+    parser = _Parser(
         prog="seed-scan", description="What a mnemonic of unknown scheme holds."
     )
     commands = parser.add_subparsers(dest="command", required=True)
@@ -162,8 +203,8 @@ def main(
     prompt and the refusal of every socket and new process.
     """
     args = _parser().parse_args(argv)
-    forbid_network()
     try:
+        forbid_network()
         mnemonic = prompt("Mnemonic: ")
         passphrases = _passphrases(prompt)
         bundle = identify(
