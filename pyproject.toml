@@ -112,6 +112,9 @@ harness = [
 ]
 test = [
     { include-group = "harness" },
+    # tests/scan_cli_test.py raises bitcoin-core-rpc's `FetchError`, which
+    # btclib-wallet's transports raise and do not export
+    "bitcoin-core-rpc>=2026.11.9",
     # tests/imports_test.py reads the requirements each distribution
     # declares with it
     "packaging>=26.3",
