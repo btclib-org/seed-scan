@@ -326,18 +326,39 @@ def test_the_guard_returns_once_its_hook_refuses_the_probe(
     assert installed == [cli._refuse_network]
 
 
-def test_an_earlier_hook_vetoing_the_guard_stops_the_command() -> None:
-    """In a process of its own, a vetoed guard refuses before the prompt.
+#: What another hook, added first, does to the guard, as the body of that
+#: hook's `if`: veto every later addition; veto it and answer the probe
+#: with the refusal the guard's own hook raises; fail on the probe; fail
+#: on the addition with another error, which CPython's `sys.addaudithook`
+#: swallows as it does a veto, and which the guard refuses either way.
+OTHER_HOOKS = {
+    "veto": "event == 'sys.addaudithook':\n        raise RuntimeError",
+    "veto and forged answer": (
+        "event == 'sys.addaudithook':\n        raise RuntimeError\n"
+        "    if event == 'seed_scan.guard':\n"
+        "        raise SeedScanValueError('seed_scan.guard refused')"
+    ),
+    "failing probe": "event == 'seed_scan.guard':\n        raise RuntimeError('x')",
+    "failing addition": "event == 'sys.addaudithook':\n        raise ValueError('x')",
+}
 
-    An audit hook raising a `RuntimeError` on `sys.addaudithook` makes
-    every later addition return without adding the hook.
+
+@pytest.mark.parametrize("other", OTHER_HOOKS)
+def test_another_hook_keeping_the_guard_out_stops_the_command(other: str) -> None:
+    """In a process of its own, a guard not in place refuses before the prompt.
+
+    Each case leaves the guard's hook out, or keeps it from answering its
+    token: the command writes the guard's one line, with no traceback,
+    and asks nothing.
+
+    :param other: what the hook added first does.
     """
     probe = (
         "import sys\n"
-        "def veto(event, args):\n"
-        "    if event == 'sys.addaudithook':\n"
-        "        raise RuntimeError\n"
-        "sys.addaudithook(veto)\n"
+        "from seed_scan.exceptions import SeedScanValueError\n"
+        "def other(event, args):\n"
+        f"    if {OTHER_HOOKS[other]}\n"
+        "sys.addaudithook(other)\n"
         "from seed_scan import cli\n"
         "def prompt(text):\n"
         "    raise AssertionError('prompted')\n"
@@ -353,6 +374,32 @@ def test_an_earlier_hook_vetoing_the_guard_stops_the_command() -> None:
     assert done.stderr == (
         "seed-scan identify: the refusal of sockets and processes is not in place\n"
     )
+
+
+@pytest.mark.parametrize(
+    "answer",
+    [cli._InPlace(object()), cli._InPlace(), RuntimeError("x")],
+    ids=["another token", "no token", "another error"],
+)
+def test_the_guard_refuses_an_answer_that_is_not_its_hooks(
+    monkeypatch: pytest.MonkeyPatch, answer: Exception
+) -> None:
+    """Only its own hook answering this addition's token lets the guard return.
+
+    The refusal is fixed text, and keeps no other error as its context.
+
+    :param monkeypatch: pytest's patcher.
+    :param answer: what the stand-in `sys.audit` raises on the probe.
+    """
+
+    def audit(event: str, *args: object) -> None:
+        raise answer
+
+    monkeypatch.setattr(sys, "addaudithook", lambda hook: None)
+    monkeypatch.setattr(sys, "audit", audit)
+    with pytest.raises(SeedScanValueError, match="not in place") as caught:
+        cli._forbid_network()
+    assert caught.value.__context__ is None
 
 
 def test_a_socket_is_refused_once_the_guard_is_on() -> None:

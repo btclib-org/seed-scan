@@ -53,15 +53,25 @@ _REFUSED = (
     "os.posix_spawn",
     "os.startfile",
 )
-# an event of this package's own, raised once the hook is added: an
-# earlier hook can veto the addition, and `sys.addaudithook` then returns
-# as if it had added it, so only the hook refusing this says it is there
+_REFUSED_EXACTLY = ("os.fork", "os.forkpty", "os.spawn")
+# an event of this package's own, raised once the hook is added, with a
+# token made for that addition: an earlier hook can veto the addition, and
+# `sys.addaudithook` then returns as if it had added it, so only this hook
+# answering the token says it is there
 _PROBE = "seed_scan.guard"
-_REFUSED_EXACTLY = ("os.fork", "os.forkpty", "os.spawn", _PROBE)
+
+
+class _InPlace(Exception):  # noqa: N818 -- a signal, never a failure raised out
+    """The hook's answer to the guard's own event, carrying its token back."""
 
 
 def _refuse_network(event: str, args: tuple[object, ...]) -> None:
-    """Refuse every socket and every new process, as an audit hook."""
+    """Refuse every socket and every new process, as an audit hook.
+
+    The guard's own event is answered with `_InPlace`, holding its token.
+    """
+    if event == _PROBE:
+        raise _InPlace(*args)
     if event.startswith(_REFUSED) or event in _REFUSED_EXACTLY:
         raise SeedScanValueError(
             f"identify opens no connection and starts no process: {event} refused"
@@ -72,15 +82,22 @@ def _forbid_network() -> None:
     """Refuse every socket and every new process for the rest of the process.
 
     An audit hook cannot be removed, so this runs once per process, in
-    the command alone. Where the hook is not in place afterwards, it
-    refuses.
+    the command alone. Where the hook does not answer the token of this
+    addition, or the addition or the probe fails in any other way, it
+    refuses, with fixed text and no context: another hook's failure says
+    nothing of this one's.
     """
-    sys.addaudithook(_refuse_network)
+    token = object()
+    in_place = False
     try:
-        sys.audit(_PROBE)
-    except SeedScanValueError:
-        return
-    raise SeedScanValueError("the refusal of sockets and processes is not in place")
+        sys.addaudithook(_refuse_network)
+        sys.audit(_PROBE, token)
+    except _InPlace as answer:
+        in_place = answer.args == (token,)
+    except Exception:  # noqa: BLE001 -- another hook's failure, refused below
+        in_place = False
+    if not in_place:
+        raise SeedScanValueError("the refusal of sockets and processes is not in place")
 
 
 def _hidden(text: str) -> str:
