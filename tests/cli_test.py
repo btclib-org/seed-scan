@@ -310,15 +310,15 @@ def test_the_guard_returns_once_its_hook_refuses_the_probe(
 ) -> None:
     """Where the hook added refuses the guard's own event, the guard returns.
 
-    `sys.audit` stands in for the interpreter's, calling the hooks the
+    `sys.audit` stands in for the interpreter's, calling the one hook the
     stand-in `sys.addaudithook` recorded, so that no hook stays in the
     process running the suite.
     """
     installed: list[Callable[[str, tuple[object, ...]], None]] = []
 
     def audit(event: str, *args: object) -> None:
-        for hook in installed:
-            hook(event, args)
+        (hook,) = installed
+        hook(event, args)
 
     monkeypatch.setattr(sys, "addaudithook", installed.append)
     monkeypatch.setattr(sys, "audit", audit)
