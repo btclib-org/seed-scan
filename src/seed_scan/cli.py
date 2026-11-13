@@ -85,7 +85,12 @@ def _forbid_network() -> None:
     the command alone. Where the hook does not answer the token of this
     addition, or the addition or the probe fails in any other way, it
     refuses, with fixed text and no context: another hook's failure says
-    nothing of this one's.
+    nothing of this one's. An interrupt is raised again, for `main` to say
+    "interrupted" as it does at a prompt.
+
+    It does not hold against code already running in the process: a hook
+    added before this one sees the token, and can raise `_InPlace` with
+    it, as it could read the secret itself.
     """
     token = object()
     in_place = False
@@ -94,7 +99,9 @@ def _forbid_network() -> None:
         sys.audit(_PROBE, token)
     except _InPlace as answer:
         in_place = answer.args == (token,)
-    except Exception:  # noqa: BLE001 -- another hook's failure, refused below
+    except KeyboardInterrupt:
+        raise
+    except BaseException:  # noqa: BLE001 -- another hook's failure, refused below
         in_place = False
     if not in_place:
         raise SeedScanValueError("the refusal of sockets and processes is not in place")

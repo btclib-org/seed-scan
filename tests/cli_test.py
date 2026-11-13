@@ -330,7 +330,9 @@ def test_the_guard_returns_once_its_hook_refuses_the_probe(
 #: hook's `if`: veto every later addition; veto it and answer the probe
 #: with the refusal the guard's own hook raises; fail on the probe; fail
 #: on the addition with another error, which CPython's `sys.addaudithook`
-#: swallows as it does a veto, and which the guard refuses either way.
+#: swallows as it does a veto, and which the guard refuses either way;
+#: raise on the probe a `BaseException`, or a `SystemExit`, each with a
+#: payload that must reach no stream.
 OTHER_HOOKS = {
     "veto": "event == 'sys.addaudithook':\n        raise RuntimeError",
     "veto and forged answer": (
@@ -340,6 +342,12 @@ OTHER_HOOKS = {
     ),
     "failing probe": "event == 'seed_scan.guard':\n        raise RuntimeError('x')",
     "failing addition": "event == 'sys.addaudithook':\n        raise ValueError('x')",
+    "BaseException on the probe": (
+        "event == 'seed_scan.guard':\n        raise BaseException('PRIVATE')"
+    ),
+    "SystemExit on the probe": (
+        "event == 'seed_scan.guard':\n        raise SystemExit('PRIVATE')"
+    ),
 }
 
 
@@ -374,6 +382,24 @@ def test_another_hook_keeping_the_guard_out_stops_the_command(other: str) -> Non
     assert done.stderr == (
         "seed-scan identify: the refusal of sockets and processes is not in place\n"
     )
+    assert not done.stdout
+
+
+def test_an_interrupt_on_the_probe_is_raised_again(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An interrupt during the probe reaches `main`, which says "interrupted".
+
+    :param monkeypatch: pytest's patcher.
+    """
+
+    def audit(event: str, *args: object) -> None:
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(sys, "addaudithook", lambda hook: None)
+    monkeypatch.setattr(sys, "audit", audit)
+    with pytest.raises(KeyboardInterrupt):
+        cli._forbid_network()
 
 
 @pytest.mark.parametrize(
