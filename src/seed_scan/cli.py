@@ -54,7 +54,6 @@ from btclib_wallet.fetch.transport import LineTransport, TlsLineTransport
 
 from seed_scan.bundle import dumps
 from seed_scan.exceptions import SeedScanException, SeedScanValueError
-from seed_scan.identify import identify
 from seed_scan.scan import ACCOUNT_GAP, GAP_LIMIT, scan
 from seed_scan.scan import dumps as scan_dumps
 
@@ -350,6 +349,10 @@ def _identify_command(
     forbid_network: Callable[[], None],
 ) -> int:
     """Run ``seed-scan identify``; answer its exit status."""
+    # here and not at the top: `scan` reads a bundle, and a command that
+    # reads one never loads the module that handles the secret
+    from seed_scan.identify import identify  # noqa: PLC0415
+
     forbid_network()
     try:
         mnemonic = prompt("Mnemonic: ")

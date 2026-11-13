@@ -21,6 +21,8 @@ from __future__ import annotations
 import json
 import socket
 import ssl
+import subprocess
+import sys
 import threading
 from datetime import UTC, datetime
 from hashlib import sha256
@@ -251,6 +253,43 @@ def test_scan_writes_the_result_and_a_summary(
     assert "not checked: reading 0, ethereum:" in err
     ((host, port, _),) = connect.made
     assert (host, port) == ("node.local", 50002)
+
+
+#: A whole `scan` in an interpreter of its own, against a server that
+#: answers the genesis header and no history, then its exit status and
+#: whether `seed_scan.identify` was loaded. The bundle file and the
+#: header are its arguments
+_SCAN_ALONE = """
+import contextlib, io, json, sys
+from seed_scan import cli
+bundle, genesis = sys.argv[1:]
+def server(request, timeout):
+    parsed = json.loads(request)
+    result = {
+        "blockchain.headers.subscribe": {"height": 0, "hex": genesis},
+        "blockchain.scripthash.get_history": [],
+    }.get(parsed["method"], genesis)
+    return json.dumps({"jsonrpc": "2.0", "id": parsed["id"], "result": result}).encode()
+with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+    status = cli.main(["scan", bundle, "--server", "h:1"], connect=lambda *_: server)
+print(json.dumps([status, "seed_scan.identify" in sys.modules]))
+"""
+
+
+def test_scan_loads_no_identify(bundle: str) -> None:
+    """A whole `scan`, in a fresh interpreter, never loads `seed_scan.identify`.
+
+    The module that handles the secret stays out of a command that reads
+    a bundle. A subprocess, because this module imports `identify` to
+    write the bundle.
+    """
+    stdout = subprocess.run(  # noqa: S603
+        [sys.executable, "-c", _SCAN_ALONE, bundle, GENESIS.serialize().hex()],
+        check=True,
+        capture_output=True,
+        encoding="utf-8",
+    ).stdout
+    assert json.loads(stdout) == [0, False]
 
 
 def test_the_summary_says_nothing_was_used_and_what_was_cut_short(

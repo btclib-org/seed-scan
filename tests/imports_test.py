@@ -273,6 +273,17 @@ def test_the_bundle_loads_nothing_installed() -> None:
     assert _installed_by("seed_scan.bundle") == []
 
 
+def test_the_command_module_loads_no_identify() -> None:
+    """`seed_scan.cli`, imported alone, does not load `seed_scan.identify`.
+
+    `scan` reads a bundle, and a command that reads one never loads the
+    module that handles the secret: the `identify` command imports it
+    itself.
+    """
+    assert "seed_scan.identify" in _loaded_after_importing("seed_scan.identify")
+    assert "seed_scan.identify" not in _loaded_after_importing("seed_scan.cli")
+
+
 def test_the_runtime_check_sees_a_third_party_import() -> None:
     """The check names what an import outside the declared closure adds.
 
