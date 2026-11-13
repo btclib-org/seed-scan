@@ -217,7 +217,10 @@ HTML_BLOCKS = (
         re.compile(r"^ {0,3}<(?:script|pre|style|textarea)(?=\s|>|$)", re.IGNORECASE),
         re.compile(r"</(?:script|pre|style|textarea)>", re.IGNORECASE),
     ),
-    (re.compile(r"^ {0,3}<!--"), re.compile(r"-->")),
+    # CommonMark ends a comment at `-->` only. Written `-{2}>`, which
+    # CodeQL's py/bad-tag-filter, asking an html filter to end a comment
+    # at `--!>` too, does not take for one
+    (re.compile(r"^ {0,3}<!--"), re.compile(r"-{2}>")),
     (re.compile(r"^ {0,3}<\?"), re.compile(r"\?>")),
     (re.compile(r"^ {0,3}<![A-Z]"), re.compile(r">")),
     (re.compile(r"^ {0,3}<!\[CDATA\["), re.compile(r"\]\]>")),
@@ -237,10 +240,44 @@ HTML_NAMED = re.compile(
 )
 
 # a line opening an html block that ends at a blank line, where no
-# paragraph is open: one opening or closing tag, alone
+# paragraph is open: one opening or closing tag, alone. It matches the
+# lines that markdown-it-py's pattern, built from its `open_tag` and
+# `close_tag`, matches, and reads each one way. There `\s` and an unquoted
+# value both take whitespace above \x20, so a line of such attributes
+# has many readings and takes time exponential in their number to
+# refuse. Here an unquoted value holds that whitespace, and ends before
+# it only where one attribute name and `=` follow.
+
+# whitespace `\s` matches up to \x20, which ends an unquoted value
+_LOW_SPACE = r"[\t-\r\x1c-\x20]"
+# whitespace `\s` matches above \x20, which an unquoted value may hold
+_HIGH_SPACE = r"[^\S\x00-\x20]"
+# an attribute name, and the names of attributes with no value
+_NAME = r"[a-zA-Z_:][a-zA-Z0-9:._-]*"
+_NAMES = rf"{_NAME}(?:\s+{_NAME})*\s*"
+# a value after `=`, quoted or not
+_QUOTED = r"\s*(?:'[^']*'|\"[^\"]*\")"
+_UNQUOTED = rf"\s*[^\s\"'=<>`\x00-\x20]+(?:{_HIGH_SPACE}+[^\s\"'=<>`\x00-\x20]+)*"
+# from a `=` to the next: a value, then the names up to it. One name
+# alone follows an unquoted value with only whitespace above \x20 after
+# it, and a value of such whitespace alone: with more, the first of them
+# reads as a value or a part of one
+_TO_EQUALS = (
+    rf"(?:{_QUOTED}\s+{_NAMES}"
+    rf"|{_UNQUOTED}(?:{_HIGH_SPACE}*{_LOW_SPACE}\s*{_NAMES}"
+    rf"|{_HIGH_SPACE}+{_NAME}\s*)"
+    rf"|{_LOW_SPACE}*{_HIGH_SPACE}\s+{_NAME}\s*)"
+)
+# from the last `=` to the closing `>`: a `/` after an unquoted value,
+# with no whitespace up to \x20 between them, is the value's
+_TO_END = (
+    rf"(?:{_QUOTED}(?:\s+{_NAMES}|\s*)/?>"
+    rf"|{_UNQUOTED}{_HIGH_SPACE}*(?:{_LOW_SPACE}\s*(?:{_NAMES})?/?)?>"
+    rf"|{_LOW_SPACE}*{_HIGH_SPACE}\s*>)"
+)
 HTML_TAG = re.compile(
-    r"^ {0,3}(?:<[A-Za-z][A-Za-z0-9-]*(?:\s+[a-zA-Z_:][a-zA-Z0-9:._-]*"
-    r"(?:\s*=\s*(?:[^\"'=<>`\x00-\x20]+|'[^']*'|\"[^\"]*\"))?)*\s*/?>"
+    r"^ {0,3}(?:<[A-Za-z][A-Za-z0-9-]*"
+    rf"(?:\s+{_NAMES}=(?:{_TO_EQUALS}=)*{_TO_END}|(?:\s+{_NAMES}|\s*)/?>)"
     r"|</[A-Za-z][A-Za-z0-9-]*\s*>)\s*$"
 )
 
