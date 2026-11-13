@@ -20,6 +20,7 @@ from bip32_descriptors.bip32 import BIP32KeyData, xpub_from_xprv
 from bip39_slip39 import bip39
 from btclib.script import ScriptPubKey
 from btclib.tx import OutPoint, Tx, TxIn, TxOut
+from btclib_wallet.bip44 import discover_account
 from btclib_wallet.descriptors import add_checksum, parse
 from btclib_wallet.fetch.history import (
     BlockRef,
@@ -57,9 +58,12 @@ from .identify_test import (
 from .no_secret_test import Secrets, assert_text_secret_free
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable, Iterator
+    from collections.abc import Iterable, Iterator, Sequence
 
     from btclib.alias import Octets
+    from btclib_wallet.bip44 import AccountUse
+    from btclib_wallet.descriptors import Descriptor
+    from btclib_wallet.fetch.history import HistoryReader
 
 #: The block every confirmed payment is in, and the tip.
 BLOCK = BlockRef(1, b"\x01" * 32)
@@ -187,6 +191,94 @@ def test_used_addresses_transactions_and_balance(abandon: str) -> None:
     assert used.tip == Tip(2, TIP.block_id.hex())
     assert Searched(0, 84, 4, cut_short=False) in result.searched
     assert Searched(0, 44, 3, cut_short=False) in result.searched
+
+
+def replacements(text: str) -> tuple[HistoryTx, HistoryTx, HistoryTx]:
+    """Return a confirmed payment, and two replacements spending it to change.
+
+    :param text: the bundle's text.
+    :returns: the payment of 10,000 sat, and the replacements paying 9,000
+        and 8,000 of it to the account's change.
+    """
+    receive = script(text, "m/84h/0h/0h", 0, 3)
+    change = script(text, "m/84h/0h/0h", 1, 0)
+    paid = pay(1, (receive, 10_000))
+    return (
+        HistoryTx(paid, BLOCK),
+        HistoryTx(pay(0, (change, 9_000), spends=paid), None),
+        HistoryTx(pay(0, (change, 8_000), spends=paid), None),
+    )
+
+
+def test_a_double_spend_is_read_again(
+    abandon: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A history listing a replacement and what it replaced is read again.
+
+    :param abandon: the bundle's text.
+    :param monkeypatch: what gives the account's second read the mempool
+        after the replacement.
+    """
+    paid, first, second = replacements(abandon)
+    chains = [Chain(paid, first, second), Chain(paid, first)]
+    real = discover_account
+
+    def discover(
+        descriptors: Sequence[Descriptor], reader: HistoryReader, *, gap_limit: int
+    ) -> AccountUse | None:
+        use = real(descriptors, chains[0], gap_limit=gap_limit)
+        if use is not None and len(chains) > 1:
+            chains.pop(0)
+        return use
+
+    monkeypatch.setattr(scan_module, "discover_account", discover)
+    (used,) = scan(abandon, chains[0], server="s:1").used
+    assert (used.confirmed, used.unconfirmed) == (10_000, 9_000 - 10_000)
+
+
+def test_a_double_spend_in_both_reads_is_refused(
+    abandon: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Both replacements would count, where at most one can confirm.
+
+    :param abandon: the bundle's text.
+    :param monkeypatch: what counts the reads of the account.
+    """
+    chain = Chain(*replacements(abandon))
+    real = discover_account
+    found: list[AccountUse] = []
+
+    def discover(
+        descriptors: Sequence[Descriptor], reader: HistoryReader, *, gap_limit: int
+    ) -> AccountUse | None:
+        use = real(descriptors, reader, gap_limit=gap_limit)
+        if use is not None:
+            found.append(use)
+        return use
+
+    monkeypatch.setattr(scan_module, "discover_account", discover)
+    err_msg = (
+        "^reading 0, account m/84h/0h/0h: "
+        "two transactions spend one output, in both reads of it$"
+    )
+    with pytest.raises(SeedScanValueError, match=err_msg):
+        scan(abandon, chain, server="s:1")
+    assert len(found) == 2
+
+
+def test_coinbases_spend_no_output(abandon: str) -> None:
+    """Two coinbases share the input that spends nothing, and both count.
+
+    :param abandon: the bundle's text.
+    """
+    receive = script(abandon, "m/84h/0h/0h", 0, 0)
+    coinbases = [
+        Tx(vin=[TxIn(OutPoint(), height)], vout=[TxOut(50_000, receive)])
+        for height in (b"\x01\x02", b"\x01\x03")
+    ]
+    chain = Chain(*(HistoryTx(tx, BLOCK) for tx in coinbases))
+    (used,) = scan(abandon, chain, server="s:1").used
+    assert (used.confirmed, used.unconfirmed) == (100_000, 0)
 
 
 def test_nothing_used_reads_three_accounts_of_each_purpose(abandon: str) -> None:
@@ -345,16 +437,34 @@ def test_an_account_without_its_public_descriptors_is_refused(
     assert caught.value.__context__ is None
 
 
-def test_a_descriptor_whose_checksum_fails_is_refused(abandon: str) -> None:
-    """`loads` reads the checksum's shape, and `parse` verifies it."""
+def test_a_key_off_the_curve_is_refused(abandon: str) -> None:
+    """`loads` reads a key's encoding, and `parse` that it is a point.
+
+    Its x is 5, and 5**3 + 7 is no square modulo secp256k1's prime, so no
+    point has it: the xpub's version, length, checksum and prefix are
+    valid, and its descriptors carry their checksums.
+    """
     document = json.loads(abandon)
     (account,) = [
         a for a in document["readings"][0]["accounts"] if a["path"] == "m/84h/0h/1h"
     ]
-    text, checksum = account["descriptors"][0].split("#")
-    wrong = "qqqqqqqq" if checksum != "qqqqqqqq" else "pppppppp"
-    bad = [f"{text}#{wrong}", account["descriptors"][1]]
-    edited_text = edited(abandon, "m/84h/0h/1h", descriptors=bad)
+    data = BIP32KeyData.b58decode(account["xpub"], check_validity=False)
+    off_curve = BIP32KeyData(
+        data.version,
+        data.depth,
+        data.parent_fingerprint,
+        data.index,
+        data.chain_code,
+        b"\x02" + (5).to_bytes(32, "big"),
+        check_validity=False,
+    ).b58encode(check_validity=False)
+    descriptors = [
+        add_checksum(d.split("#")[0].replace(account["xpub"], off_curve))
+        for d in account["descriptors"]
+    ]
+    edited_text = edited(
+        abandon, "m/84h/0h/1h", xpub=off_curve, descriptors=descriptors
+    )
     loads(edited_text)
     with pytest.raises(SeedScanValueError) as caught:
         scan(edited_text, NEVER, server="s:1")

@@ -5,7 +5,9 @@
 """Tests for `seed_scan.identify`, against vectors their authors publish.
 
 - BIP39, BIP84 and BIP86: the mnemonic of all `abandon` and `about`,
-  and the account keys and addresses BIP84 and BIP86 give for it.
+  and the account keys and addresses BIP84 and BIP86 give for it. The
+  Bitcoin Cash addresses searched are derived from its seed by BIP32
+  alone.
 - SLIP-0039: trezor/python-shamir-mnemonic's `vectors.json`, whose
   master secrets are those of the passphrase "TREZOR"; bip39-slip39's
   `tests/_data/README.md` pins the file to its upstream commit.
@@ -25,6 +27,8 @@ from typing import Any
 import pytest
 from bip32_descriptors.bip32 import BIP32KeyData, fingerprint, xpub_from_xprv
 from bip39_slip39 import bip39, slip39
+from btclib import b58
+from btclib.hashes import hash160
 
 from seed_scan import identify as identify_module
 from seed_scan.bundle import Match, NotChecked, dumps
@@ -173,6 +177,21 @@ def test_the_coins_declared_are_written_in_order() -> None:
     assert ethereum.xpub == master.derive("m/44h/60h/0h").xpub.b58encode()
 
 
+def test_each_coin_takes_the_purposes_its_wallets_derive_at() -> None:
+    """`COINS` holds the purposes the wallets its comment cites derive at.
+
+    A purpose added or dropped is a new reading of those wallets, so
+    this pin moves with that comment.
+    """
+    assert {coin.name: coin.purposes for coin in COINS} == {
+        "bitcoin": (44, 49, 84, 86),
+        "ethereum": (44,),
+        "bitcoin-cash": (44,),
+        "litecoin": (44, 49, 84),
+        "dogecoin": (44,),
+    }
+
+
 def test_each_passphrase_is_a_reading_named_by_its_number() -> None:
     """The empty passphrase and one typed give two readings, 0 and 1."""
     bundle = identify(ABANDON, ["", "TREZOR"], no_share, accounts=1)
@@ -201,9 +220,47 @@ def test_a_known_address_is_found_with_its_path(address: str, path: str) -> None
     search = bundle.search
     assert search is not None
     assert search.checked
-    assert search.matches == (Match(0, path),)
-    # two readings, four purposes, one account, two branches, two indexes
+    assert search.matches == (Match(0, "bitcoin", path),)
+    # two readings, four purposes, one account, two branches, two indexes:
+    # a segwit address is not searched on Bitcoin Cash's paths
     assert search.searched == 2 * 4 * 1 * 2 * 2
+
+
+def legacy_address(path: str) -> str:
+    """Return the p2pkh address at a path of BIP39's vector, by BIP32 alone.
+
+    :param path: the full derivation path.
+    :returns: the base58 address of the key's hash160.
+    """
+    root = BIP32KeyData.from_seed(bip39.seed_from_mnemonic(ABANDON, ""))
+    key = root.derive(path).xpub.key
+    return b58.address_from_h160("p2pkh", hash160(key), "mainnet")
+
+
+@pytest.mark.parametrize(
+    "coin, path",
+    [
+        ("bitcoin-cash", "m/44h/145h/0h/0/1"),
+        ("bitcoin-cash", "m/44h/145h/0h/1/0"),
+        ("bitcoin", "m/44h/0h/0h/0/1"),
+    ],
+)
+def test_a_base58_address_is_searched_on_bitcoin_cash_paths(
+    coin: str, path: str
+) -> None:
+    """A legacy address is found on either chain's path, which names the coin.
+
+    :param coin: the coin of the path.
+    :param path: where the address is.
+    """
+    address = legacy_address(path)
+    bundle = identify(ABANDON, [""], no_share, accounts=1, address=address, indexes=2)
+    search = bundle.search
+    assert search is not None
+    assert search.matches == (Match(0, coin, path),)
+    # one reading, Bitcoin's four purposes and Bitcoin Cash's one, one
+    # account, two branches, two indexes
+    assert search.searched == 1 * (4 + 1) * 1 * 2 * 2
 
 
 def test_an_address_out_of_the_bound_is_not_found() -> None:
@@ -456,7 +513,7 @@ def test_an_electrum_address_is_found(mnemonic: str, address: str, path: str) ->
     """
     bundle = identify(mnemonic, [""], no_share, accounts=1, address=address, indexes=1)
     assert bundle.search is not None
-    assert bundle.search.matches == (Match(0, path),)
+    assert bundle.search.matches == (Match(0, "bitcoin", path),)
 
 
 @pytest.mark.parametrize(

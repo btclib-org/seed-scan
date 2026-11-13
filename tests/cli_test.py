@@ -11,6 +11,7 @@ import importlib.metadata
 import subprocess
 import sys
 import warnings
+from typing import TYPE_CHECKING
 
 import pytest
 
@@ -20,6 +21,9 @@ from seed_scan.exceptions import SeedScanValueError
 
 from .identify_test import ABANDON, BIP84_CHANGE, SHARES, Prompt
 from .secret_free import assert_secret_free
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 
 def no_guard() -> None:
@@ -52,8 +56,8 @@ def test_identify_writes_the_bundle_and_a_summary(
     assert [r.passphrase for r in bundle.readings] == [0, 1]
     assert "schemes claiming the words: bip39" in err
     assert "reading 1: bip39, passphrase 1" in err
-    assert "found: reading 0, m/84h/0h/0h/1/0" in err
-    assert "accounts 0 to 0 of each Bitcoin purpose" in err
+    assert "found: reading 0, bitcoin, m/84h/0h/0h/1/0" in err
+    assert "accounts 0 to 0 of each Bitcoin purpose, of Bitcoin Cash's" in err
 
 
 def test_the_summary_says_what_was_not_found_and_not_checked(
@@ -150,6 +154,51 @@ def test_a_command_is_required(capsys: pytest.CaptureFixture[str]) -> None:
     assert "required" in capsys.readouterr().err
 
 
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ["identify", "--accounts", ABANDON],
+        ["identify", f"--indexes={ABANDON}"],
+        ["identify", *ABANDON.split()],
+        ABANDON.split(),
+    ],
+)
+def test_an_argument_refused_is_not_repeated(
+    capsys: pytest.CaptureFixture[str], argv: list[str]
+) -> None:
+    """A mnemonic typed as arguments is refused, and not written back.
+
+    argparse would quote the value of a count, list the words it does not
+    take, and name a command it does not know.
+
+    :param capsys: pytest's capture of the standard streams.
+    :param argv: the arguments, a mnemonic among them.
+    """
+    with pytest.raises(SystemExit) as caught:
+        cli.main(argv, prompt=Prompt(), forbid_network=no_guard)
+    assert caught.value.code == 2
+    err = capsys.readouterr().err
+    assert "an argument is refused, and not repeated" in err
+    assert all(word not in err for word in ABANDON.split())
+
+
+def test_a_guard_not_in_place_is_a_refusal_before_any_prompt(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Where the guard refuses, nothing is asked and one line is written."""
+
+    def refusing() -> None:
+        raise SeedScanValueError("the refusal of sockets and processes is not in place")
+
+    status = cli.main(["identify"], prompt=Prompt(), forbid_network=refusing)
+    out, err = capsys.readouterr()
+    assert status == 1
+    assert not out
+    assert err == (
+        "seed-scan identify: the refusal of sockets and processes is not in place\n"
+    )
+
+
 def test_the_prompts_ask_passphrases_until_an_empty_one() -> None:
     """Each passphrase prompt is numbered, and an empty answer ends them."""
     prompt = Prompt("one", "two", "")
@@ -221,6 +270,8 @@ def test_an_answer_that_is_no_utf8_is_refused_without_its_bytes(
         "os.fork",
         "os.forkpty",
         "os.spawn",
+        "os.startfile",
+        "os.startfile/2",
     ],
 )
 def test_a_socket_or_process_event_is_refused(event: str) -> None:
@@ -242,11 +293,182 @@ def test_other_events_pass(event: str) -> None:
 
 
 def test_the_guard_installs_the_hook(monkeypatch: pytest.MonkeyPatch) -> None:
-    """`_forbid_network` installs `_refuse_network`, and nothing else."""
+    """`_forbid_network` adds `_refuse_network`, and nothing else.
+
+    `sys.addaudithook` replaced by a list's `append` puts no hook in
+    place, as an earlier hook's veto does, so the guard refuses.
+    """
     installed: list[object] = []
     monkeypatch.setattr(sys, "addaudithook", installed.append)
+    with pytest.raises(SeedScanValueError, match="not in place"):
+        cli._forbid_network()
+    assert installed == [cli._refuse_network]
+
+
+def test_the_guard_returns_once_its_hook_refuses_the_probe(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Where the hook added refuses the guard's own event, the guard returns.
+
+    `sys.audit` stands in for the interpreter's, calling the one hook the
+    stand-in `sys.addaudithook` recorded, so that no hook stays in the
+    process running the suite.
+    """
+    installed: list[Callable[[str, tuple[object, ...]], None]] = []
+
+    def audit(event: str, *args: object) -> None:
+        (hook,) = installed
+        hook(event, args)
+
+    monkeypatch.setattr(sys, "addaudithook", installed.append)
+    monkeypatch.setattr(sys, "audit", audit)
     cli._forbid_network()
     assert installed == [cli._refuse_network]
+
+
+#: What another hook, added first, does to the guard, as the body of that
+#: hook's `if`: veto every later addition; veto it and answer the probe
+#: with a plain `SeedScanValueError` in place of the hook's `_InPlace`, or
+#: with an `_InPlace` holding another token or none; fail on the probe;
+#: fail on the addition with another error, which CPython's
+#: `sys.addaudithook` swallows as it does a veto, and which the guard
+#: refuses either way; raise on the probe a `BaseException`, or a
+#: `SystemExit`, each with a payload that must reach no stream.
+OTHER_HOOKS = {
+    "veto": "event == 'sys.addaudithook':\n        raise RuntimeError",
+    "veto and a plain refusal": (
+        "event == 'sys.addaudithook':\n        raise RuntimeError\n"
+        "    if event == 'seed_scan.guard':\n"
+        "        raise SeedScanValueError('seed_scan.guard refused')"
+    ),
+    "veto and an answer with another token": (
+        "event == 'sys.addaudithook':\n        raise RuntimeError\n"
+        "    if event == 'seed_scan.guard':\n"
+        "        raise sys.modules['seed_scan.cli']._InPlace(object())"
+    ),
+    "veto and an answer with no token": (
+        "event == 'sys.addaudithook':\n        raise RuntimeError\n"
+        "    if event == 'seed_scan.guard':\n"
+        "        raise sys.modules['seed_scan.cli']._InPlace()"
+    ),
+    "failing probe": "event == 'seed_scan.guard':\n        raise RuntimeError('x')",
+    "failing addition": "event == 'sys.addaudithook':\n        raise ValueError('x')",
+    "BaseException on the probe": (
+        "event == 'seed_scan.guard':\n        raise BaseException('PRIVATE')"
+    ),
+    "SystemExit on the probe": (
+        "event == 'seed_scan.guard':\n        raise SystemExit('PRIVATE')"
+    ),
+}
+
+
+@pytest.mark.parametrize("other", OTHER_HOOKS)
+def test_another_hook_keeping_the_guard_out_stops_the_command(other: str) -> None:
+    """In a process of its own, a guard not in place refuses before the prompt.
+
+    Each case leaves the guard's hook out, or keeps it from answering its
+    token: the command writes the guard's one line, with no traceback,
+    and asks nothing.
+
+    :param other: what the hook added first does.
+    """
+    probe = (
+        "import sys\n"
+        "from seed_scan.exceptions import SeedScanValueError\n"
+        "def other(event, args):\n"
+        f"    if {OTHER_HOOKS[other]}\n"
+        "sys.addaudithook(other)\n"
+        "from seed_scan import cli\n"
+        "def prompt(text):\n"
+        "    raise AssertionError('prompted')\n"
+        "sys.exit(cli.main(['identify'], prompt=prompt))\n"
+    )
+    done = subprocess.run(  # noqa: S603
+        [sys.executable, "-c", probe],
+        capture_output=True,
+        encoding="utf-8",
+        check=False,
+    )
+    assert done.returncode == 1
+    assert done.stderr == (
+        "seed-scan identify: the refusal of sockets and processes is not in place\n"
+    )
+    assert not done.stdout
+
+
+def test_an_interrupt_that_is_also_a_refusal_says_interrupted() -> None:
+    """In a process of its own, an interrupt never writes its own text.
+
+    A hook raises on the probe an interrupt that is also a
+    `SeedScanValueError`, with a payload: the guard raises it again, and
+    `main` says "interrupted" alone.
+    """
+    probe = (
+        "import sys\n"
+        "from seed_scan.exceptions import SeedScanValueError\n"
+        "class Interrupt(KeyboardInterrupt, SeedScanValueError):\n"
+        "    pass\n"
+        "def other(event, args):\n"
+        "    if event == 'seed_scan.guard':\n"
+        "        raise Interrupt('PRIVATE')\n"
+        "sys.addaudithook(other)\n"
+        "from seed_scan import cli\n"
+        "def prompt(text):\n"
+        "    raise AssertionError('prompted')\n"
+        "sys.exit(cli.main(['identify'], prompt=prompt))\n"
+    )
+    done = subprocess.run(  # noqa: S603
+        [sys.executable, "-c", probe],
+        capture_output=True,
+        encoding="utf-8",
+        check=False,
+    )
+    assert done.returncode == 1
+    assert done.stderr == "seed-scan identify: interrupted\n"
+    assert not done.stdout
+
+
+def test_an_interrupt_on_the_probe_is_raised_again(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An interrupt during the probe reaches `main`, which says "interrupted".
+
+    :param monkeypatch: pytest's patcher.
+    """
+
+    def audit(event: str, *args: object) -> None:
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(sys, "addaudithook", lambda hook: None)
+    monkeypatch.setattr(sys, "audit", audit)
+    with pytest.raises(KeyboardInterrupt):
+        cli._forbid_network()
+
+
+@pytest.mark.parametrize(
+    "answer",
+    [cli._InPlace(object()), cli._InPlace(), RuntimeError("x")],
+    ids=["another token", "no token", "another error"],
+)
+def test_the_guard_refuses_an_answer_that_is_not_its_hooks(
+    monkeypatch: pytest.MonkeyPatch, answer: Exception
+) -> None:
+    """Only its own hook answering this addition's token lets the guard return.
+
+    The refusal is fixed text, and keeps no other error as its context.
+
+    :param monkeypatch: pytest's patcher.
+    :param answer: what the stand-in `sys.audit` raises on the probe.
+    """
+
+    def audit(event: str, *args: object) -> None:
+        raise answer
+
+    monkeypatch.setattr(sys, "addaudithook", lambda hook: None)
+    monkeypatch.setattr(sys, "audit", audit)
+    with pytest.raises(SeedScanValueError, match="not in place") as caught:
+        cli._forbid_network()
+    assert caught.value.__context__ is None
 
 
 def test_a_socket_is_refused_once_the_guard_is_on() -> None:

@@ -42,11 +42,12 @@ The object's members:
   a key typed by mistake is not written; ``checked``, false where the
   search did not run, and then ``reason`` says why; ``accounts`` and
   ``indexes``, the bound (accounts ``0`` to ``accounts - 1`` of each
-  Bitcoin purpose and the one account of an Electrum reading, receive
-  and change branches, indexes ``0`` to ``indexes - 1``); ``searched``,
-  how many positions were compared; and ``matches``, each the position
-  of a reading in ``readings`` and the full derivation path of the
-  address.
+  Bitcoin purpose, of Bitcoin Cash's for a base58 address, and the one
+  account of an Electrum reading, receive and change branches, indexes
+  ``0`` to ``indexes - 1``); ``searched``, how many positions were
+  compared; and ``matches``, each the position of a reading in
+  ``readings``, the ``coin`` of the account the address is in, and the
+  full derivation path of the address.
 
 An account object holds:
 
@@ -158,7 +159,15 @@ _BECH32 = "qpzry9x8gf2tvdw0s3jn54khce6mua7l"
 _BECH32_CONSTANT = 1
 _BECH32M_CONSTANT = 0x2BC830A3
 # a descriptor's checksum, eight characters of its own alphabet
-_CHECKSUM = "#[" + _BECH32 + "]{8}"
+_CHECKSUM = f"#[{_BECH32}]{{8}}"
+# BIP380's checksum of a descriptor: the characters a descriptor may hold,
+# in the order whose index is their value, and its code's generator
+_DESCRIPTOR_CHARS = (
+    "0123456789()[],'/*abcdefgh@:$%{}"
+    "IJKLMNOPQRSTUVWXYZ&+-.;<=>?!^_|~"
+    'ijklmnopqrstuvwxyzABCDEFGH`#"\\ '
+)
+_GENERATOR = (0xF5DEE51989, 0xA9FDCA3312, 0x1BAB10E32D, 0x3706B1677A, 0x644D626FFD)
 
 
 def slip39_passphrase(number: int) -> str:
@@ -204,9 +213,10 @@ class NotChecked:
 
 @dataclass(frozen=True)
 class Match:
-    """Which reading, at which path, gives the address searched."""
+    """Which reading, at which coin's path, gives the address searched."""
 
     reading: int
+    coin: str
     path: str
 
 
@@ -398,12 +408,40 @@ def _reason(document: dict[str, Any]) -> str:
     return value
 
 
+def _checksum_holds(descriptor: str) -> bool:
+    """Return whether a descriptor ends with its BIP380 checksum.
+
+    `descsum_check` of BIP380, on a descriptor whose characters are all
+    in its set: the shape `_descriptors` asks for puts them there.
+    """
+    symbols: list[int] = []
+    group = count = 0
+    for char in descriptor[:-9]:
+        value = _DESCRIPTOR_CHARS.index(char)
+        symbols.append(value & 31)
+        group, count = group * 3 + (value >> 5), count + 1
+        if count == 3:
+            symbols.append(group)
+            group = count = 0
+    if count:
+        symbols.append(group)
+    symbols += [_BECH32.index(char) for char in descriptor[-8:]]
+    check = 1
+    for symbol in symbols:
+        top = check >> 35
+        check = (check & 0x7FFFFFFFF) << 5 ^ symbol
+        for i, generator in enumerate(_GENERATOR):
+            if (top >> i) & 1:
+                check ^= generator
+    return check == 1
+
+
 def _descriptors(document: dict[str, Any], coin: str, xpub: str) -> tuple[str, ...]:
     """Return an account's descriptors, refusing any not of the account's key.
 
     A Bitcoin account holds its receive and change descriptors over its
     own `xpub`, with a key origin and a checksum, and no other coin holds
-    any.
+    any. A descriptor's checksum is checked, not only its shape.
     """
     values = _strings(document, "descriptors")
     key = r"\[[0-9a-f]{8}(?:/(?:0|[1-9][0-9]{0,9})h?)*\]" + re.escape(xpub)
@@ -414,7 +452,8 @@ def _descriptors(document: dict[str, Any], coin: str, xpub: str) -> tuple[str, .
 
     expected = 2 if coin == "bitcoin" else 0
     fits = len(values) == expected and all(
-        re.fullmatch(shape(branch), value) for branch, value in enumerate(values)
+        re.fullmatch(shape(branch), value) and _checksum_holds(value)
+        for branch, value in enumerate(values)
     )
     if not fits:
         err_msg = "bundle: member 'descriptors' is not the account's two descriptors"
@@ -483,7 +522,8 @@ def _search(document: dict[str, Any], readings: int) -> Search:
         reading = _count(match, "reading")
         if reading >= readings:
             raise SeedScanValueError("bundle: a match names no reading")
-        matches.append(Match(reading, _path(match, "path")))
+        coin = _one_of(match, "coin", COIN_NAMES)
+        matches.append(Match(reading, coin, _path(match, "path")))
     return Search(
         address=_address(document),
         checked=_member(document, "checked", bool),

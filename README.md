@@ -33,26 +33,30 @@ never passed over: the costly failure is a wrong "nothing found".
 ## Identifying a mnemonic
 
 ```shell
-seed-scan identify --address <an address it gave, if you know one> > bundle.json
+seed-scan identify > bundle.json
 ```
 
 It asks for the mnemonic, then for passphrases until an empty one, at
 hidden prompts, and for further shares where the words are one
 SLIP-0039 share. It writes the bundle to standard output and what it
-found to standard error. `seed_scan.bundle` documents the bundle, and
+found to standard error. Where you know an address the mnemonic gave,
+`--address` followed by it has the command search for the address's
+path. `seed_scan.bundle` documents the bundle, and
 `seed-scan identify --help` the bounds of what it writes and searches.
 
 ## Scanning a bundle
 
 ```shell
-seed-scan scan bundle.json --server <host:port> --node <url> > scan.json
+seed-scan scan bundle.json --server electrum.example.org:50002 \
+    --node http://127.0.0.1:8545 > scan.json
 ```
 
-It asks the Electrum server named which Bitcoin accounts of the bundle
-were used, and the Ethereum node named which Ethereum accounts were,
-and writes the scan result to standard output and what it found to
-standard error. Name either or both. Each learns every address it is
-asked about, so name your own: there is no default.
+It asks the Electrum server named, as `host:port`, which Bitcoin
+accounts of the bundle were used, and the Ethereum node named, by its
+URL, which Ethereum accounts were, and writes the scan result to
+standard output and what it found to standard error. Name either or
+both. Each learns every address it is asked about, so name your own:
+there is no default.
 
 The Electrum connection is TLS, and the server's certificate is verified
 against the system's CA certificates, or against those of the file

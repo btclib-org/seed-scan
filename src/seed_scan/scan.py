@@ -40,6 +40,11 @@ history spends it. ``confirmed`` is what the confirmed transactions leave
 unspent; ``unconfirmed`` is the change the mempool's transactions make to
 it, negative where they spend a confirmed output. The history is what the
 reader answers, so the balance is only as complete as the server's list.
+Two transactions of a history that spend one output, as a replacement and
+the transaction it replaces do, would both count, where at most one can
+confirm: the mempool part of an answer is no snapshot, so the account is
+read again once, and refused where that read lists two such transactions
+too.
 
 The result is one JSON object, which `dumps` writes. It holds public data
 only. Its members:
@@ -268,11 +273,12 @@ def _descriptors(account: Account, where: str) -> tuple[Descriptor, ...]:
     """Return an account's descriptors, parsed.
 
     `seed_scan.bundle.loads` has read them as the receive and change
-    descriptors over the account's own xpub, which holds no private key
-    and ranges every index; what it does not verify is the checksum, and
-    `parse` does. Its refusal may quote the descriptor, so it is not
-    kept: the refusal says where the account is in the bundle, raised
-    outside `suppress` so that the error is not its context.
+    descriptors over the account's own xpub, which holds no private key and
+    ranges every index, checksum included; what it does not verify is that
+    the key is a point of the curve, and `parse` does. Its refusal may quote
+    the descriptor, so it is not kept: the refusal says where the account is
+    in the bundle, raised outside `suppress` so that the error is not its
+    context.
     """
     descriptors: tuple[Descriptor, ...] = ()
     with contextlib.suppress(TypeError, ValueError):
@@ -370,6 +376,39 @@ def _balance(history: ScriptHistory, scripts: frozenset[bytes]) -> tuple[int, in
     return confirmed, total - confirmed
 
 
+def _spends_one_output_twice(history: ScriptHistory) -> bool:
+    """Answer whether two transactions of `history` spend the same output.
+
+    A coinbase input spends no output, and is skipped.
+    """
+    spender: dict[OutPoint, bytes] = {}
+    for entry in history.txs:
+        for tx_in in entry.tx.vin:
+            if tx_in.is_coinbase:
+                continue
+            if spender.setdefault(tx_in.prev_out, entry.tx.id) != entry.tx.id:
+                return True
+    return False
+
+
+def _read_account(
+    descriptors: tuple[Descriptor, ...],
+    reader: HistoryReader,
+    gap_limit: int,
+    where: str,
+) -> AccountUse | None:
+    """Return the discovery of an account, read again once on a double spend.
+
+    Refused where both reads list two transactions spending one output.
+    """
+    for _ in range(2):
+        use = discover_account(descriptors, reader, gap_limit=gap_limit)
+        if use is None or not _spends_one_output_twice(use.history):
+            return use
+    err_msg = f"{where}: two transactions spend one output, in both reads of it"
+    raise SeedScanValueError(err_msg)
+
+
 def _used_account(reading: int, account: Account, use: AccountUse) -> UsedAccount:
     """Return what an account's discovery found, as public data."""
     addresses: list[Address] = []
@@ -417,7 +456,8 @@ def _bitcoin_account(
     gap_limit: int,
 ) -> UsedAccount | None:
     """Return what a Bitcoin account used, or None where it used nothing."""
-    use = discover_account(descriptors, reader, gap_limit=gap_limit)
+    where = f"reading {reading}, account {account.path}"
+    use = _read_account(descriptors, reader, gap_limit, where)
     return None if use is None else _used_account(reading, account, use)
 
 
@@ -512,11 +552,13 @@ def scan(
     checked. The bundle is read, and every account of it checked, before
     `reader` or `node` is asked anything. Refused, as
     `seed_scan.bundle.loads` refuses it: text that is not a bundle.
-    Refused as a `SeedScanValueError` too: a descriptor whose checksum
-    does not verify, an extended public key that does not decode, and
-    accounts not numbered from 0. A bound below 1 is refused, and one
-    that is no integer is a `SeedScanTypeError`, as is a `server` that is
-    no string beside a `reader`.
+    Refused as a `SeedScanValueError` too: a descriptor that does not
+    parse, as one whose key is no point of the curve, an extended public
+    key that does not decode, and accounts not numbered from 0. A bound
+    below 1 is refused, and one that is no integer is a
+    `SeedScanTypeError`, as is a `server` that is no string beside a
+    `reader`. Refused once `reader` is asked: an account whose history
+    lists two transactions spending one output in two reads.
     """
     bundle = loads(text)
     _backends(reader, server, node)

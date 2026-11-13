@@ -10,14 +10,12 @@ block alone, and lists each payment as a mempool transaction: no header
 past the genesis is needed, whose proof of work no test could produce.
 Most tests hand it to the command in place of the TLS transport. The
 others serve it over TLS on the loopback interface, with the certificates
-of ``tests/tls``, so that the handshake the command makes is the one
-under test. Those were made with OpenSSL, valid until 2126:
-``ca.pem`` a self-signed CA certificate, and ``server.pem`` a certificate
-it signed for ``IP:127.0.0.1``, with its key, which only these tests use.
+the `tls` fixture makes, so that the handshake the command makes is the
+one under test.
 
-The Ethereum node is `tests.evm_test`'s `Ethereum`, served over HTTP on
-the loopback interface, so that the command reaches it through the
-transport it opens itself.
+The Ethereum node is `tests.evm_test`'s `Ethereum`, served over HTTP, or
+HTTPS with the same certificates, on the loopback interface, so that the
+command and `Node` reach it through the transport they open themselves.
 """
 
 from __future__ import annotations
@@ -25,9 +23,12 @@ from __future__ import annotations
 import json
 import socket
 import ssl
+import subprocess
+import sys
 import threading
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from hashlib import sha256
+from ipaddress import IPv4Address
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -38,12 +39,15 @@ from btclib.network import NETWORKS
 from btclib.script import ScriptPubKey
 from btclib.tx import OutPoint, Tx, TxIn, TxOut
 from btclib_wallet.descriptors import parse
+from btclib_wallet.exceptions import FetchError
+from btclib_wallet.fetch.transport import SessionTransport
 
 from seed_scan import cli
 from seed_scan.bundle import dumps, loads
+from seed_scan.evm import Node
 from seed_scan.identify import identify
 
-from .evm_test import Ethereum, replying, serve, serving
+from .evm_test import Ethereum, cause, replying, serve, serving
 from .identify_test import ABANDON, no_share
 from .scan_test import eth_address
 
@@ -54,8 +58,11 @@ if TYPE_CHECKING:
 
     from .evm_test import Exchange
 
-#: The certificates the loopback server presents and the client trusts.
-TLS = Path(__file__).parent / "tls"
+#: Why a test serving TLS is skipped where the certificates cannot be made.
+NO_CRYPTOGRAPHY = (
+    "cryptography is not installed: btclib-wallet leaves it out on Windows on"
+    " ARM64, where it has no wheel, and the test certificates are made with it"
+)
 
 #: A script that is none of the bundle's.
 ELSEWHERE = ScriptPubKey(b"\x00\x14" + bytes(20))
@@ -261,6 +268,43 @@ def test_scan_writes_the_result_and_a_summary(
     assert (host, port) == ("node.local", 50002)
 
 
+#: A whole `scan` in an interpreter of its own, against a server that
+#: answers the genesis header and no history, then its exit status and
+#: whether `seed_scan.identify` was loaded. The bundle file and the
+#: header are its arguments
+_SCAN_ALONE = """
+import contextlib, io, json, sys
+from seed_scan import cli
+bundle, genesis = sys.argv[1:]
+def server(request, timeout):
+    parsed = json.loads(request)
+    result = {
+        "blockchain.headers.subscribe": {"height": 0, "hex": genesis},
+        "blockchain.scripthash.get_history": [],
+    }.get(parsed["method"], genesis)
+    return json.dumps({"jsonrpc": "2.0", "id": parsed["id"], "result": result}).encode()
+with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+    status = cli.main(["scan", bundle, "--server", "h:1"], connect=lambda *_: server)
+print(json.dumps([status, "seed_scan.identify" in sys.modules]))
+"""
+
+
+def test_scan_loads_no_identify(bundle: str) -> None:
+    """A whole `scan`, in a fresh interpreter, never loads `seed_scan.identify`.
+
+    The module that handles the secret stays out of a command that reads
+    a bundle. A subprocess, because this module imports `identify` to
+    write the bundle.
+    """
+    stdout = subprocess.run(  # noqa: S603
+        [sys.executable, "-c", _SCAN_ALONE, bundle, GENESIS.serialize().hex()],
+        check=True,
+        capture_output=True,
+        encoding="utf-8",
+    ).stdout
+    assert json.loads(stdout) == [0, False]
+
+
 def test_the_summary_says_nothing_was_used_and_what_was_cut_short(
     capsys: pytest.CaptureFixture[str], bundle: str, bundle_text: str
 ) -> None:
@@ -293,12 +337,12 @@ def test_the_bounds_are_the_options_given(
 
 
 def test_the_context_verifies_the_certificate_and_the_host(
-    capsys: pytest.CaptureFixture[str], bundle: str
+    capsys: pytest.CaptureFixture[str], bundle: str, tls: Path
 ) -> None:
     """The system's CA certificates by default, the file's with --cafile."""
     connect = Connections(Electrum())
     run(capsys, [bundle, "--server", "h:1"], connect)
-    run(capsys, [bundle, "--server", "h:1", "--cafile", str(TLS / "ca.pem")], connect)
+    run(capsys, [bundle, "--server", "h:1", "--cafile", str(tls / "ca.pem")], connect)
     for _, _, context in connect.made:
         assert context.verify_mode == ssl.CERT_REQUIRED
         assert context.check_hostname
@@ -491,16 +535,106 @@ def test_a_file_that_is_no_bundle_is_refused_unquoted(
         assert server.asked == []
 
 
+@pytest.fixture(scope="module")
+def tls(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    """Return a folder holding a test CA's certificate and a server's.
+
+    Made at each run, so that the repository holds no private key for its
+    key scanner to pass over. ``ca.pem`` is a self-signed CA certificate,
+    and ``server.pem`` a certificate it signs for ``IP:127.0.0.1``, with
+    its key; both are EC P-256, valid from a day before the run to a day
+    after it. Skipped where cryptography is not installed.
+
+    :param tmp_path_factory: pytest's temporary folders.
+    :returns: the folder.
+    """
+    pytest.importorskip("cryptography", reason=NO_CRYPTOGRAPHY)
+    # imported after the skip above, which a module-level import would beat
+    from cryptography import x509  # noqa: PLC0415
+    from cryptography.hazmat.primitives import hashes, serialization  # noqa: PLC0415
+    from cryptography.hazmat.primitives.asymmetric import ec  # noqa: PLC0415
+    from cryptography.x509.oid import ExtendedKeyUsageOID, NameOID  # noqa: PLC0415
+
+    def usage(*granted: str) -> x509.KeyUsage:
+        names = (
+            "digital_signature",
+            "content_commitment",
+            "key_encipherment",
+            "data_encipherment",
+            "key_agreement",
+            "key_cert_sign",
+            "crl_sign",
+            "encipher_only",
+            "decipher_only",
+        )
+        return x509.KeyUsage(**{name: name in granted for name in names})
+
+    now = datetime.now(UTC)
+    ca_key = ec.generate_private_key(ec.SECP256R1())
+    ca_name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "seed-scan test CA")])
+
+    def builder(name: str, key: ec.EllipticCurvePrivateKey) -> x509.CertificateBuilder:
+        subject = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, name)])
+        return (
+            x509.CertificateBuilder()
+            .subject_name(subject)
+            .issuer_name(ca_name)
+            .public_key(key.public_key())
+            .serial_number(x509.random_serial_number())
+            .not_valid_before(now - timedelta(days=1))
+            .not_valid_after(now + timedelta(days=1))
+            .add_extension(
+                x509.SubjectKeyIdentifier.from_public_key(key.public_key()),
+                critical=False,
+            )
+        )
+
+    ca = (
+        builder("seed-scan test CA", ca_key)
+        .add_extension(x509.BasicConstraints(ca=True, path_length=0), critical=True)
+        .add_extension(usage("key_cert_sign", "crl_sign"), critical=True)
+        .sign(ca_key, hashes.SHA256())
+    )
+    server_key = ec.generate_private_key(ec.SECP256R1())
+    ca_id = x509.SubjectKeyIdentifier.from_public_key(ca_key.public_key())
+    server = (
+        builder("seed-scan test server", server_key)
+        .add_extension(x509.BasicConstraints(ca=False, path_length=None), critical=True)
+        .add_extension(usage("digital_signature"), critical=True)
+        .add_extension(
+            x509.ExtendedKeyUsage([ExtendedKeyUsageOID.SERVER_AUTH]), critical=False
+        )
+        .add_extension(
+            x509.SubjectAlternativeName([x509.IPAddress(IPv4Address("127.0.0.1"))]),
+            critical=False,
+        )
+        .add_extension(
+            x509.AuthorityKeyIdentifier.from_issuer_subject_key_identifier(ca_id),
+            critical=False,
+        )
+        .sign(ca_key, hashes.SHA256())
+    )
+    folder = tmp_path_factory.mktemp("tls")
+    pem = serialization.Encoding.PEM
+    (folder / "ca.pem").write_bytes(ca.public_bytes(pem))
+    key = server_key.private_bytes(
+        pem, serialization.PrivateFormat.PKCS8, serialization.NoEncryption()
+    )
+    (folder / "server.pem").write_bytes(server.public_bytes(pem) + key)
+    return folder
+
+
 class TlsServer:
     """`Electrum` over TLS on the loopback interface, in a thread."""
 
-    def __init__(self, electrum: Electrum) -> None:
+    def __init__(self, electrum: Electrum, tls: Path) -> None:
         """Listen on a port of 127.0.0.1, and serve until stopped.
 
         :param electrum: what answers each request.
+        :param tls: the folder of the certificates.
         """
         self.context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
-        self.context.load_cert_chain(TLS / "server.pem")
+        self.context.load_cert_chain(tls / "server.pem")
         self.electrum = electrum
         self.listening = socket.create_server(("127.0.0.1", 0))
         self.listening.settimeout(0.05)
@@ -533,23 +667,25 @@ class TlsServer:
 
 
 @pytest.fixture
-def tls_server(bundle_text: str) -> Iterator[TlsServer]:
+def tls_server(bundle_text: str, tls: Path) -> Iterator[TlsServer]:
     """Serve a payment to the first BIP84 address over TLS.
 
     :param bundle_text: the bundle.
+    :param tls: the folder of the certificates.
     :yields: the server, stopped at teardown.
     """
-    server = TlsServer(Electrum(pay(receive_script(bundle_text, "m/84h/0h/0h"), 9)))
+    electrum = Electrum(pay(receive_script(bundle_text, "m/84h/0h/0h"), 9))
+    server = TlsServer(electrum, tls)
     yield server
     server.stop()
 
 
 def test_a_server_whose_certificate_the_cafile_names_is_scanned(
-    capsys: pytest.CaptureFixture[str], bundle: str, tls_server: TlsServer
+    capsys: pytest.CaptureFixture[str], bundle: str, tls_server: TlsServer, tls: Path
 ) -> None:
     """The certificate chains to the file's CA, and names the host."""
     argv = ["scan", bundle, "--server", f"127.0.0.1:{tls_server.port}"]
-    argv += ["--cafile", str(TLS / "ca.pem"), "--gap-limit", "2"]
+    argv += ["--cafile", str(tls / "ca.pem"), "--gap-limit", "2"]
     assert cli.main(argv) == 0
     (used,) = json.loads(capsys.readouterr().out)["used"]
     assert used["unconfirmed"] == 9
@@ -561,26 +697,28 @@ def test_a_server_whose_certificate_the_cafile_names_is_scanned(
         # the CA is in no system store
         ("127.0.0.1", None),
         # the certificate names 127.0.0.1, not localhost
-        ("localhost", TLS / "ca.pem"),
+        ("localhost", "ca.pem"),
     ],
 )
 def test_a_certificate_that_does_not_verify_is_refused(
     capsys: pytest.CaptureFixture[str],
     bundle: str,
     tls_server: TlsServer,
+    tls: Path,
     host: str,
-    cafile: Path | None,
+    cafile: str | None,
 ) -> None:
     """An untrusted certificate, and a trusted one naming another host.
 
     :param capsys: pytest's capture of the standard streams.
     :param bundle: the bundle's file.
     :param tls_server: the server.
+    :param tls: the folder of the certificates.
     :param host: the host the command is given.
-    :param cafile: the file --cafile names, if any.
+    :param cafile: the file of that folder --cafile names, if any.
     """
     argv = ["scan", bundle, "--server", f"{host}:{tls_server.port}"]
-    argv += [] if cafile is None else ["--cafile", str(cafile)]
+    argv += [] if cafile is None else ["--cafile", str(tls / cafile)]
     assert cli.main(argv) == 1
     err = capsys.readouterr().err
     assert err == "seed-scan scan: the server's certificate did not verify\n"
@@ -817,13 +955,68 @@ def test_a_closed_port_is_no_connection_to_the_node(
     assert (status, err) == (1, "seed-scan scan: no connection to the node\n")
 
 
+def node_context(tls: Path) -> ssl.SSLContext:
+    """Return the context a node serves HTTPS with, the `tls` fixture's.
+
+    :param tls: the folder of the certificates.
+    :returns: the context.
+    """
+    context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    context.load_cert_chain(tls / "server.pem")
+    return context
+
+
+def test_a_node_whose_certificate_the_store_trusts_is_asked(
+    tls: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``SSL_CERT_FILE`` names the store: here the test CA alone."""
+    monkeypatch.setenv("SSL_CERT_FILE", str(tls / "ca.pem"))
+    with (
+        serve(serving(Ethereum(chain_id=5)), node_context(tls)) as served,
+        SessionTransport() as session,
+    ):
+        node = Node(served.url("https"), transport=session)
+        assert node.chain_id() == 5
+        assert node.block_number() == 0x10
+    assert len(served.requests) == 2
+
+
+@pytest.mark.parametrize(
+    "host, cafile",
+    [
+        # the CA is in no system store
+        ("127.0.0.1", None),
+        # the certificate names 127.0.0.1, not localhost
+        ("localhost", "ca.pem"),
+    ],
+)
+def test_a_node_certificate_that_does_not_verify_is_a_failure(
+    tls: Path, monkeypatch: pytest.MonkeyPatch, host: str, cafile: str | None
+) -> None:
+    """An untrusted certificate, and a trusted one naming another host.
+
+    :param tls: the folder of the certificates.
+    :param monkeypatch: what sets the store.
+    :param host: the host the URL names.
+    :param cafile: the store in the folder, if not the system's.
+    """
+    if cafile is not None:
+        monkeypatch.setenv("SSL_CERT_FILE", str(tls / cafile))
+    with (
+        serve(serving(Ethereum()), node_context(tls)) as served,
+        SessionTransport() as session,
+        pytest.raises(FetchError) as caught,
+    ):
+        Node(served.url("https", host), transport=session).chain_id()
+    assert cause(caught.value, ssl.SSLCertVerificationError) is not None
+    assert not served.requests
+
+
 def test_a_node_certificate_that_does_not_verify_is_refused(
-    capsys: pytest.CaptureFixture[str], bundle: str
+    capsys: pytest.CaptureFixture[str], bundle: str, tls: Path
 ) -> None:
     """The test CA is in no system store, and ``--cafile`` is not the node's."""
-    context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
-    context.load_cert_chain(TLS / "server.pem")
-    with serve(serving(Ethereum()), context) as node:
+    with serve(serving(Ethereum()), node_context(tls)) as node:
         argv = [bundle, "--node", node.url("https")]
         status, _, err = run(capsys, argv, Connections(Electrum()))
     assert status == 1

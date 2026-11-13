@@ -28,6 +28,7 @@ from seed_scan.bundle import (
     NotChecked,
     Reading,
     Search,
+    _checksum_holds,
     dumps,
     loads,
     slip39_passphrase,
@@ -63,7 +64,9 @@ BUNDLE = Bundle(
         ),
     ),
     not_checked=(NotChecked("bip39_wordlist", REASONS["bip39_wordlist"]),),
-    search=Search(BIP84_CHANGE, True, "", 5, 20, 400, (Match(0, "m/0h/0/3"),)),
+    search=Search(
+        BIP84_CHANGE, True, "", 5, 20, 400, (Match(0, "bitcoin", "m/0h/0/3"),)
+    ),
 )
 
 
@@ -199,8 +202,8 @@ def test_a_document_that_is_no_bundle_is_refused(
 @pytest.mark.parametrize(
     "text, error, match",
     [
-        ('{"key": "' + KEY_TEXT + '", ', SeedScanValueError, "not JSON, at line 1"),
-        ("[" + str(KEY_NUMBER) + "]", SeedScanTypeError, "a JSON list"),
+        (f'{{"key": "{KEY_TEXT}", ', SeedScanValueError, "not JSON, at line 1"),
+        (f"[{KEY_NUMBER}]", SeedScanTypeError, "a JSON list"),
         (KEY_TEXT.encode(), SeedScanTypeError, "text of type bytes"),
     ],
 )
@@ -267,6 +270,7 @@ MEMBERS = {
     "address": (("search", "address"), "'address'"),
     "search reason": (("search", "reason"), "'reason'"),
     "match path": (("search", "matches", 0, "path"), "'path'"),
+    "match coin": (("search", "matches", 0, "coin"), "'coin'"),
 }
 
 
@@ -484,3 +488,35 @@ def test_a_path_past_an_index_is_refused(path: str) -> None:
     at(MEMBERS["path"][0])(changed, path)
     with pytest.raises(SeedScanValueError, match="'path' is not a derivation path"):
         loads(json.dumps(changed))
+
+
+@pytest.mark.parametrize("position", range(8))
+def test_a_descriptor_with_another_checksum_is_refused(position: int) -> None:
+    """Each character of a descriptor's checksum is checked, not its shape.
+
+    :param position: the checksum character changed, to another of its
+        alphabet.
+    """
+    changed = document()
+    descriptors = changed["readings"][0]["accounts"][0]["descriptors"]
+    body, checksum = descriptors[0].split("#")
+    other = "q" if checksum[position] != "q" else "p"
+    descriptors[0] = f"{body}#{checksum[:position]}{other}{checksum[position + 1 :]}"
+    with pytest.raises(SeedScanValueError, match="'descriptors' is not"):
+        loads(json.dumps(changed))
+
+
+@pytest.mark.parametrize("body", ["raw()", "raw(ab)", "raw(abab)", "raw(deadbeef)"])
+def test_the_checksum_is_bip380s(body: str) -> None:
+    """The checksum `loads` checks is BIP380's, whatever a body's length.
+
+    btclib-wallet's `add_checksum` is the reference, and the bodies' lengths
+    leave each remainder modulo 3, which BIP380's expansion groups by.
+    ``raw(deadbeef)#89f8spxm`` is BIP380's valid test vector.
+
+    :param body: a descriptor without its checksum.
+    """
+    assert add_checksum("raw(deadbeef)") == "raw(deadbeef)#89f8spxm"
+    descriptor = add_checksum(body)
+    assert _checksum_holds(descriptor)
+    assert not _checksum_holds(descriptor.replace("raw(", "raw(0", 1))

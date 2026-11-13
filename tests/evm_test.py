@@ -6,9 +6,10 @@
 
 The node is `Ethereum`, a fake kept in memory that answers the four
 methods `Node` asks. Some tests hand it to `Node` as its transport; the
-others serve it over HTTP, or HTTPS with the certificates of
-``tests/tls``, on the loopback interface, with `HttpServer`, so that the
-network policy under test is the one the request meets.
+others serve it over HTTP on the loopback interface, with `HttpServer`,
+so that the network policy under test is the one the request meets.
+`tests.scan_cli_test` serves it over HTTPS, where the `tls` fixture
+makes the certificates.
 """
 
 from __future__ import annotations
@@ -24,7 +25,6 @@ import time
 import traceback
 import warnings
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from pathlib import Path
 from typing import TYPE_CHECKING
 
 import pytest
@@ -38,9 +38,6 @@ from seed_scan.exceptions import SeedScanTypeError, SeedScanValueError
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator
     from urllib.request import Request
-
-#: The certificates the loopback server presents and the client trusts.
-TLS = Path(__file__).parent / "tls"
 
 #: Text a node puts in an answer, which no refusal may quote.
 MARK = "node-said-this"
@@ -557,60 +554,6 @@ def test_a_closed_port_is_no_connection() -> None:
     with SessionTransport() as session, pytest.raises(FetchError) as caught:
         Node(f"http://127.0.0.1:{port}", transport=session).chain_id()
     assert cause(caught.value, ConnectionRefusedError) is not None
-
-
-@pytest.fixture
-def tls_server(server: Callable[..., HttpServer]) -> HttpServer:
-    """Serve a node over HTTPS, with the certificate of ``tests/tls``.
-
-    :param server: what starts the server.
-    :returns: the server.
-    """
-    context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
-    context.load_cert_chain(TLS / "server.pem")
-    return server(serving(Ethereum(chain_id=5)), context)
-
-
-def test_a_node_whose_certificate_the_store_trusts_is_asked(
-    tls_server: HttpServer, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """``SSL_CERT_FILE`` names the store: here the test CA alone."""
-    monkeypatch.setenv("SSL_CERT_FILE", str(TLS / "ca.pem"))
-    with SessionTransport() as session:
-        node = Node(tls_server.url("https"), transport=session)
-        assert node.chain_id() == 5
-        assert node.block_number() == 0x10
-    assert len(tls_server.requests) == 2
-
-
-@pytest.mark.parametrize(
-    "host, cafile",
-    [
-        # the CA is in no system store
-        ("127.0.0.1", None),
-        # the certificate names 127.0.0.1, not localhost
-        ("localhost", TLS / "ca.pem"),
-    ],
-)
-def test_a_certificate_that_does_not_verify_is_refused(
-    tls_server: HttpServer,
-    monkeypatch: pytest.MonkeyPatch,
-    host: str,
-    cafile: Path | None,
-) -> None:
-    """An untrusted certificate, and a trusted one naming another host.
-
-    :param tls_server: the server.
-    :param monkeypatch: what sets the store.
-    :param host: the host the URL names.
-    :param cafile: the store, if not the system's.
-    """
-    if cafile is not None:
-        monkeypatch.setenv("SSL_CERT_FILE", str(cafile))
-    with SessionTransport() as session, pytest.raises(FetchError) as caught:
-        Node(tls_server.url("https", host), transport=session).chain_id()
-    assert cause(caught.value, ssl.SSLCertVerificationError) is not None
-    assert not tls_server.requests
 
 
 class _Reply(socketserver.StreamRequestHandler):
