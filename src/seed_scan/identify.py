@@ -16,9 +16,12 @@ shares.
 
 Given an address the user knows, it compares the address's script with
 those of every Bitcoin account it wrote, within a bound written beside
-the result. An address of another network is not searched, and the
-bundle says so; a text that is no Bitcoin address is not written either,
-since a key typed by mistake would otherwise land in the bundle.
+the result. A base58 address is also compared with those of each
+Bitcoin Cash account, since it spells the same script on both chains;
+a match names the coin of the path it is at. An address of another
+network is not searched, and the bundle says so; a text that is no
+Bitcoin address is not written either, since a key typed by mistake
+would otherwise land in the bundle.
 
 Nothing here opens a connection: `seed_scan.cli` refuses one for the
 whole run. What leaves this module is `seed_scan.bundle`'s objects,
@@ -123,6 +126,9 @@ _ELECTRUM = {
     "electrum_segwit": ("m/0h", "/0h", "wpkh"),
 }
 
+# the script types of a base58 address, which Bitcoin Cash spells alike
+_BASE58 = ("p2pkh", "p2sh")
+
 # what each scheme the words may claim and no reading covers is
 # reported as
 _NOT_READ = {
@@ -141,6 +147,24 @@ def _assert_bound(value: int, name: str) -> None:
         raise SeedScanValueError(f"invalid {name}: {value} is below 1")
 
 
+def _searched(
+    coin: Coin, xpub: str, path: str, master_fingerprint: bytes
+) -> tuple[Descriptor, ...]:
+    """Return the receive and change descriptors an address is searched in.
+
+    Bitcoin's purpose names its encoding. Bitcoin Cash's one purpose, 44,
+    gives p2pkh scripts, built here since `btclib_wallet.bip44` refuses
+    its coin type; the bundle does not write them, as it writes
+    descriptors for Bitcoin alone. Any other coin answers none.
+    """
+    if coin.coin_type == 0:
+        return bip44.account_descriptors(xpub, path, master_fingerprint)
+    if coin.name != "bitcoin-cash":
+        return ()
+    origin = f"[{master_fingerprint.hex()}{path[1:]}]"
+    return tuple(parse(f"pkh({origin}{xpub}/{branch}/*)") for branch in (0, 1))
+
+
 def _accounts(
     root: BIP32KeyData, accounts: int
 ) -> list[tuple[Account, tuple[Descriptor, ...]]]:
@@ -153,12 +177,10 @@ def _accounts(
             for account in range(accounts):
                 path = f"m/{purpose}h/{coin.coin_type}h/{account}h"
                 xpub = parent.derive(HARDENED_OFFSET + account).xpub.b58encode()
-                descriptors: tuple[Descriptor, ...] = (
-                    bip44.account_descriptors(xpub, path, master_fingerprint)
-                    if coin.coin_type == 0
-                    else ()
+                descriptors = _searched(coin, xpub, path, master_fingerprint)
+                texts = tuple(
+                    add_checksum(str(d)) for d in descriptors if coin.coin_type == 0
                 )
-                texts = tuple(add_checksum(str(d)) for d in descriptors)
                 found.append(
                     (
                         Account(
@@ -375,17 +397,20 @@ def _search(found: _Found, address: str, accounts: int, indexes: int) -> Search:
         return Search("", False, REASONS["not_an_address"], accounts, indexes, 0, ())
     if target.network != "mainnet":
         return Search(address, False, REASONS["not_mainnet"], accounts, indexes, 0, ())
+    coins = ("bitcoin", "bitcoin-cash") if target.type in _BASE58 else ("bitcoin",)
     matches = []
     searched = 0
     for reading, pairs in enumerate(found.descriptors):
         for account, descriptors in pairs:
+            if account.coin not in coins:
+                continue
             for branch, descriptor in enumerate(descriptors):
                 for index in range(indexes):
                     searched += 1
                     scripts = descriptor.script_pub_keys(index)
                     if any(s.script == target.script for s in scripts):
                         path = f"{account.path}/{branch}/{index}"
-                        matches.append(Match(reading, path))
+                        matches.append(Match(reading, account.coin, path))
     return Search(address, True, "", accounts, indexes, searched, tuple(matches))
 
 
@@ -407,8 +432,9 @@ def identify(
 
     `accounts` is how many accounts of each coin and purpose are written,
     from account 0. Where `address` is given, the receive and change
-    branches of each Bitcoin account written are searched for it, from
-    index 0 to `indexes` - 1.
+    branches of each Bitcoin account written, and of each Bitcoin Cash
+    one where it is a base58 address, are searched for it, from index 0
+    to `indexes` - 1.
 
     A refusal names no secret: the words and the passphrases are never
     quoted.

@@ -106,10 +106,13 @@ def _summary(bundle: Bundle) -> str:
     elif search is not None:
         lines.append(
             f"address searched in {search.searched} positions: accounts 0 to"
-            f" {search.accounts - 1} of each Bitcoin purpose and Electrum's"
-            f" account, receive and change, indexes 0 to {search.indexes - 1}"
+            f" {search.accounts - 1} of each Bitcoin purpose, of Bitcoin Cash's"
+            " for a base58 address, and Electrum's account, receive and change,"
+            f" indexes 0 to {search.indexes - 1}"
         )
-        lines += [f"found: reading {m.reading}, {m.path}" for m in search.matches]
+        lines += [
+            f"found: reading {m.reading}, {m.coin}, {m.path}" for m in search.matches
+        ]
         if not search.matches:
             lines.append("not found within that bound")
     return "\n".join(lines) + "\n"
