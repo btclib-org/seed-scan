@@ -20,16 +20,13 @@ place the answer lives, which is what *Topics* and *Publishing* say of
 them.
 
 Each section carries the command that sets its setting and the command
-that reads it back. **Only *Read the Docs* has answers recorded**, for
-the site and for the project's status, default branch and repository.
-This file was written before the repository existed on GitHub, and no
-other call below has been run against it. The project's tags and
-homepage are not yet what that section says they are to be, and no
-release has yet shown its automation rule at work. Section 16 of the
-organization's standard has the settings made once the root is pushed
-and each read back with the command here, its answer written under that
-command and dated. Section 11 makes such an answer documentation, with a
-reader as its check.
+that reads it back. **Only *Read the Docs* has answers recorded**, and
+that section says which. This file was written before the repository
+existed on GitHub, and no other call below has been run against it.
+Section 16 of the organization's standard has the settings made once the
+root is pushed and each read back with the command here, its answer
+written under that command and dated. Section 11 makes such an answer
+documentation, with a reader as its check.
 
 ## Creating the repository
 
