@@ -33,10 +33,22 @@ authors = [{ name = "The btclib developers", email = "devs@btclib.org" }]
 # packages it is to build on, so that whoever runs it offline can use
 # the interpreter that machine already has
 requires-python = ">=3.11"
-# none yet: what the package ships imports the standard library alone,
-# which tests/imports_test.py asserts of every module. The pull request
-# whose code first imports a sibling package declares it here
-dependencies = []
+# what `identify` builds on: tests/imports_test.py refuses a module that
+# imports anything else, and anything these do not pull in
+dependencies = [
+    # the BIP39, SLIP-0039 and Electrum readings of a sentence, and the
+    # BIP39 languages that hold its words (`bip39.langs_from_mnemonic`)
+    "bip39-slip39>=2026.11.13",
+    # a seed to its account keys: `BIP32KeyData.from_seed`, `derive` and
+    # `xpub`
+    "bip32-descriptors>=2026.11.13",
+    # the account descriptors of a BIP44 purpose, the same
+    # `bip44.account_descriptors` that `discover_accounts` reads, and the
+    # BIP32 master key of an Electrum versioned mnemonic
+    "btclib-wallet>=2026.11.13",
+    # the script of an address the user knows, `ScriptPubKey.from_address`
+    "btclib>=2026.11.12",
+]
 keywords = [
     # the repository's topics, entry for entry
     "account-discovery",
@@ -70,6 +82,9 @@ classifiers = [
     "Typing :: Typed",
 ]
 
+[project.scripts]
+seed-scan = "seed_scan.cli:main"
+
 [project.urls]
 homepage = "https://btclib.org/seed-scan/"
 documentation = "https://seed-scan.readthedocs.io/"
@@ -95,6 +110,9 @@ harness = [
 ]
 test = [
     { include-group = "harness" },
+    # tests/imports_test.py reads the requirements each distribution
+    # declares with it
+    "packaging>=26.3",
     # tests/docs_conf_test.py executes docs/source/conf.py, which imports
     # it; the marker and the bound are `docs`'s, below
     "sphinx>=9.1.0; python_full_version >= '3.12'",
@@ -254,6 +272,13 @@ ignore-regex = '`[^`]*`'
 # the hashes [tool.codespell] skips above, written again rather than
 # shared because the two take different glob syntaxes
 extend-exclude = [".secrets.baseline", "uv.lock"]
+
+[tool.typos.default]
+# keys and addresses written inline in the test sources, as btclib-wallet
+# ignores them: an unbroken run of 26 characters or more is a literal,
+# not a word, 26 being the length of the shortest base58 address, and the
+# trailing = covering base64 padding
+extend-ignore-re = ['[0-9A-Za-z+/]{26,}={0,2}']
 
 [tool.typos.default.extend-words]
 # `intoto` in the bundle's name `<tag>.intoto.jsonl`, as for codespell above:

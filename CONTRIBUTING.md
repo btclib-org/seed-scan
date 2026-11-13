@@ -350,14 +350,15 @@ to. `tests/all_test.py` checks all of this and finds the modules rather
 than listing them: a public name kept out of a list is recorded in its
 `UNEXPORTED` table.
 
-**The package imports the standard library alone**, `dependencies` in
-`pyproject.toml` being empty; the pull request whose code first needs a
-sibling package declares it there. What it is to build on is
-`bip39-slip39`, `bip32-descriptors`, `btclib-wallet` and `coin-addresses`,
-and what is general goes down to them rather than staying here
+**The package imports the standard library and what `dependencies` in
+`pyproject.toml` declares.** What it builds on is `bip39-slip39`,
+`bip32-descriptors`, `btclib-wallet` and `coin-addresses`, and what is
+general goes down to them rather than staying here
 (btclib-org/.github#2203). `tests/imports_test.py` imports each module
-alone and refuses one that loads a module neither the standard library's
-nor this package's.
+alone and refuses one that loads a module of no declared package and of
+nothing they require, and holds `seed_scan.bundle` to the standard
+library, so that a command reading a bundle needs no dependency of
+`identify`.
 
 **The package re-exports nothing it does not own**
 (btclib-org/btclib#2404): a name is published by the module that defines
@@ -415,8 +416,9 @@ that do not are deliberate:
   and `deps-oldest.yml` calls `reusable-deps-oldest.yml`, which re-locks to
   the floors; neither commits the lock.
 - `pypi-install.yml` runs `pip install` to test the published release.
-- `test.yml`'s `dist` job smoke-tests the wheel with `uv pip install`; the
-  package has no runtime dependency, so it installs the wheel alone.
+- `test.yml`'s `dist` job smoke-tests the wheel with `uv pip install`,
+  which resolves its dependencies from the index rather than from the
+  lock.
 - `uv build` and `uv run --no-project` install none of the project's
   dependencies.
 - The `dev-version` action re-locks after writing a rehearsal's version
@@ -523,11 +525,13 @@ uv pip install "$1"
 .venv/bin/python -c "
 from importlib.metadata import requires, version
 import seed_scan
-from seed_scan import exceptions
+from seed_scan import bundle, cli, exceptions, identify
 
 print(version('seed-scan'), requires('seed-scan'))
 assert seed_scan.__version__ == version('seed-scan')
 assert issubclass(exceptions.SeedScanValueError, ValueError)
+assert callable(cli.main) and callable(identify.identify)
+assert bundle.VERSION == 1
 "
 ```
 

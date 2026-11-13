@@ -17,8 +17,8 @@ user's own wallet moves them.
 
 ## What is here
 
-No release is out yet, and this tree holds no command: each arrives in
-a pull request of its own.
+No release is out yet. `seed-scan identify` is the first command, and
+each of the others arrives in a pull request of its own.
 [btclib-org/.github#2203](https://github.com/btclib-org/.github/issues/2203)
 records the design and tracks the first release. The command is to stay
 thin: what is general goes down to the packages it is to build on,
@@ -28,6 +28,20 @@ thin: what is general goes down to the packages it is to build on,
 [coin-addresses](https://github.com/btclib-org/coin-addresses). A
 scheme or a coin they do not cover is to be reported as not checked,
 never passed over: the costly failure is a wrong "nothing found".
+
+## Identifying a mnemonic
+
+```shell
+seed-scan identify > bundle.json
+```
+
+It asks for the mnemonic, then for passphrases until an empty one, at
+hidden prompts, and for further shares where the words are one
+SLIP-0039 share. It writes the bundle to standard output and what it
+found to standard error. Where you know an address the mnemonic gave,
+`--address` followed by it has the command search for the address's
+path. `seed_scan.bundle` documents the bundle, and
+`seed-scan identify --help` the bounds of what it writes and searches.
 
 ## What touches the secret
 

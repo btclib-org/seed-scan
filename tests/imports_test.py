@@ -10,23 +10,28 @@ test module reaches its subject through whatever the modules imported
 before it have already pulled in, so a cycle that only bites the caller
 who happens to arrive from the other side stays invisible.
 
-What a module may import is the standard library and this package,
-which is the whole of what `dependencies = []` in pyproject.toml
-promises: each module is asked in an interpreter of its own at run time,
-and each file's import statements are read statically, which is what a
-module the suite never imports is checked by.
+What a module may import is the standard library, this package and the
+packages `dependencies` in pyproject.toml declares: each module is asked
+in an interpreter of its own at run time, where what it loads may also
+be what those packages require, and each file's import statements are
+read statically, which is what a module the suite never imports is
+checked by.
 """
 
 from __future__ import annotations
 
 import ast
 import importlib
+import importlib.metadata
 import subprocess
 import sys
+from functools import cache
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
 import pytest
+from packaging.requirements import Requirement
+from packaging.utils import canonicalize_name
 
 import seed_scan
 
@@ -168,6 +173,63 @@ def _installed_by(module_name: str) -> list[str]:
     return sorted(name for name in added if not _is_ours(name))
 
 
+def _required(requirement: str, extras: set[str]) -> str | None:
+    """Return the distribution a requirement names, where it applies.
+
+    :param requirement: one line of a distribution's `Requires-Dist`.
+    :param extras: the extras the distribution was asked for.
+    :returns: the canonical name, or `None` where the marker excludes it.
+    """
+    parsed = Requirement(requirement)
+    marker = parsed.marker
+    if marker is None or any(marker.evaluate({"extra": e}) for e in {"", *extras}):
+        return canonicalize_name(parsed.name)
+    return None
+
+
+@cache
+def _declared() -> frozenset[str]:
+    """Return the distributions `dependencies` declares, canonical names."""
+    names = (
+        _required(r, set()) for r in importlib.metadata.requires("seed-scan") or []
+    )
+    return frozenset(name for name in names if name is not None)
+
+
+@cache
+def _closure() -> frozenset[str]:
+    """Return the declared distributions and what they require, installed.
+
+    The extras a requirement asks for are followed, so that what
+    `btclib[secp256k1]` brings is in it.
+    """
+    found: set[str] = set()
+    todo = [(r, set[str]()) for r in importlib.metadata.requires("seed-scan") or []]
+    while todo:
+        requirement, extras = todo.pop()
+        name = _required(requirement, extras)
+        if name is None or name in found:
+            continue
+        requires = importlib.metadata.requires(name) or []
+        found.add(name)
+        asked = set(Requirement(requirement).extras)
+        todo += [(r, asked) for r in requires]
+    return frozenset(found)
+
+
+def _distributions(module: str) -> set[str]:
+    """Return the canonical names of the distributions a module comes from.
+
+    :param module: a dotted module name.
+    :returns: the names `packages_distributions` gives its top level.
+    """
+    top = module.split(".", maxsplit=1)[0]
+    return {
+        canonicalize_name(d)
+        for d in importlib.metadata.packages_distributions().get(top, [])
+    }
+
+
 def _outside(names: set[str]) -> list[str]:
     """Return the names that are neither the standard library's nor ours.
 
@@ -181,25 +243,54 @@ def _outside(names: set[str]) -> list[str]:
     )
 
 
-@pytest.mark.parametrize("module_name", module_names())
-def test_the_package_stays_stdlib_light(module_name: str) -> None:
-    """Each module, imported alone, loads nothing an installer put there.
+def _undeclared(names: set[str], allowed: frozenset[str]) -> list[str]:
+    """Return the names outside the standard library, ours and `allowed`.
 
-    `dependencies = []` is what this package declares, and a runtime
-    import of anything else -- a package the test group installs included
-    -- would break that promise in every environment but this one, where
-    the import happens to resolve.
+    :param names: module names.
+    :param allowed: the distributions whose modules are allowed.
+    :returns: each name from no distribution `allowed` holds.
     """
-    assert _installed_by(module_name) == []
+    return [name for name in _outside(names) if not _distributions(name) & allowed]
+
+
+@pytest.mark.parametrize("module_name", module_names())
+def test_the_package_loads_only_what_it_declares(module_name: str) -> None:
+    """Each module, imported alone, loads only what `dependencies` brings.
+
+    What it loads from an installer is a module of a declared
+    distribution or of one they require: anything else -- a package the
+    test group installs included -- would resolve here and fail in an
+    environment that installs the package alone.
+    """
+    assert _undeclared(set(_installed_by(module_name)), _closure()) == []
+
+
+def test_the_bundle_loads_nothing_installed() -> None:
+    """`seed_scan.bundle` imports the standard library alone.
+
+    A command that reads a bundle needs no dependency of `identify`.
+    """
+    assert _installed_by("seed_scan.bundle") == []
 
 
 def test_the_runtime_check_sees_a_third_party_import() -> None:
-    """The check names what an import outside the standard library adds.
+    """The check names what an import outside the declared closure adds.
 
     `typing_extensions` is installed by the test group, so importing it
-    here is what a module of the package importing it would add.
+    here is what a module of the package importing it would add; it is
+    allowed only where a declared package requires it.
     """
     assert "typing_extensions" in _installed_by("typing_extensions")
+    assert _undeclared({"typing_extensions"}, frozenset()) == ["typing_extensions"]
+    assert _undeclared({"pytest"}, _closure()) == ["pytest"]
+
+
+def test_the_closure_follows_requirements_and_extras() -> None:
+    """The closure holds what the declared packages require, not the suite's."""
+    assert {"bip39-slip39", "btclib", "ecc"} <= _closure()
+    assert "pytest" not in _closure()
+    assert _required('x>=1; extra == "y"', set()) is None
+    assert _required('x>=1; extra == "y"', {"y"}) == "x"
 
 
 def _top_level_imports(source: str) -> set[str]:
@@ -217,7 +308,7 @@ def _top_level_imports(source: str) -> set[str]:
 
 
 def test_the_import_scan_finds_a_planted_import() -> None:
-    """The scan names each form, and the check refuses what is outside."""
+    """The scan names each form, and the check refuses what is undeclared."""
     source = (
         "import hashlib\nimport btclib.utils\nfrom btclib_wallet import bip32\n"
         "from . import exceptions\nfrom typing_extensions import override\n"
@@ -231,21 +322,23 @@ def test_the_import_scan_finds_a_planted_import() -> None:
         "typing_extensions",
     }
     assert _outside(names) == ["btclib", "btclib_wallet", "typing_extensions"]
+    assert _undeclared(names, _declared()) == ["typing_extensions"]
 
 
-def test_no_module_imports_outside_the_stdlib() -> None:
+def test_no_module_imports_what_it_does_not_declare() -> None:
     """Every file of the package, read rather than imported.
 
-    The static half of `test_the_package_stays_stdlib_light`: an import
-    inside a function or behind `TYPE_CHECKING` is one no interpreter
-    runs at import, and it would still fail the day it ran.
+    The static half of `test_the_package_loads_only_what_it_declares`,
+    held to the declared distributions alone: an import inside a function
+    or behind `TYPE_CHECKING` is one no interpreter runs at import, and
+    it would still fail the day it ran.
     """
     root = Path(seed_scan.__path__[0])
     found = {
-        path.relative_to(root).as_posix(): _outside(
-            _top_level_imports(path.read_text(encoding="utf-8"))
+        path.relative_to(root).as_posix(): _undeclared(
+            _top_level_imports(path.read_text(encoding="utf-8")), _declared()
         )
         for path in sorted(root.rglob("*.py"))
     }
-    assert "exceptions.py" in found
+    assert "identify.py" in found
     assert not {file: names for file, names in found.items() if names}

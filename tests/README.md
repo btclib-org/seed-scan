@@ -44,8 +44,7 @@ is true.
 Not tested here: the build system; the calling convention; input
 validation; the suite opens no socket.
 
-The calling convention and input validation have no subject yet: the
-package declares no public function. Each arrives with the pull request
-that adds the first function it reads.
+The calling convention and input validation are not tested yet:
+btclib-org/seed-scan#3 tracks their tests.
 
 [std]: https://github.com/btclib-org/.github/blob/main/README.md

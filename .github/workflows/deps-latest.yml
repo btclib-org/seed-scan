@@ -2,8 +2,8 @@
 name: deps-latest
 
 # what a Dependabot pull request would bring, asked before it arrives:
-# every dependency the resolver touches upgraded, which is the tooling
-# while the package declares no runtime dependency -- then the suite, the
+# every dependency the resolver touches upgraded, the package's own and
+# the tooling's -- then the suite, the
 # lint gate and the packaging checks against the result, and nothing
 # committed. The pull request that follows on Thursday is then a diff
 # whose result is already known.
