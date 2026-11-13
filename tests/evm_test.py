@@ -503,17 +503,29 @@ def test_an_answer_past_the_bound_is_refused(
 def test_the_timeout_bounds_the_whole_exchange(
     server: Callable[..., HttpServer],
 ) -> None:
-    """A node slower than the timeout is a failure caused by the timeout."""
+    """A node slower than the timeout is a failure caused by the timeout.
+
+    The node answers once the client has given up, and the test waits for
+    that answer, so that the handler ends before the test does.
+    """
+    gave_up = threading.Event()
+    answered = threading.Event()
 
     def slow(_: str, body: bytes) -> Exchange:
-        time.sleep(0.6)
-        return 200, Ethereum().answer(body), {}
+        gave_up.wait(5)
+        try:
+            return 200, Ethereum().answer(body), {}
+        finally:
+            answered.set()
 
     served = server(slow)
     started = time.monotonic()
     with pytest.raises(FetchError) as caught:
         Node(served.url(), timeout=0.1).chain_id()
-    assert time.monotonic() - started < 0.5
+    elapsed = time.monotonic() - started
+    gave_up.set()
+    assert answered.wait(5)
+    assert elapsed < 0.5
     assert isinstance(cause(caught.value, TimeoutError), TimeoutError)
 
 
