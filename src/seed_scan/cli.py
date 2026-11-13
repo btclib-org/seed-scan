@@ -96,6 +96,7 @@ _PROBE = "seed_scan.guard"
 class _InPlace(Exception):  # noqa: N818 -- a signal, never a failure raised out
     """The hook's answer to the guard's own event, carrying its token back."""
 
+
 _MAX_PORT = 65535
 
 # what a backend raises where its tip moved during a read, which
