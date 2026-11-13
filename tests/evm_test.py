@@ -460,7 +460,7 @@ def test_a_node_over_http_on_loopback_is_asked(
     """A JSON POST to the URL as given, path included."""
     address = "0x" + "11" * 20
     served = server(serving(Ethereum({address: 7})))
-    node = Node(served.url() + "rpc/path")
+    node = Node(f"{served.url()}rpc/path")
     assert node.balance(address) == 7
     assert served.requests == ["/rpc/path"]
 
@@ -680,4 +680,4 @@ def test_a_failed_exchange_leaves_no_socket_to_the_collector(
             gc.collect()
     finally:
         gc.enable()
-    assert [str(w.message) for w in seen] == []
+    assert not [str(w.message) for w in seen]

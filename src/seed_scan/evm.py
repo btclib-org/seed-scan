@@ -191,10 +191,10 @@ def _chain(error: BaseException) -> Iterator[BaseException]:
 def _stand_in(error: BaseException) -> OSError | None:
     """Return a fresh error of the class `_CAUSES` finds in a chain, or None."""
     chain = list(_chain(error))
-    for kind in _CAUSES:
-        if any(isinstance(found, kind) for found in chain):
-            return kind()
-    return None
+    return next(
+        (kind() for kind in _CAUSES if any(isinstance(link, kind) for link in chain)),
+        None,
+    )
 
 
 def _release(error: BaseException) -> None:
