@@ -150,6 +150,51 @@ def test_a_command_is_required(capsys: pytest.CaptureFixture[str]) -> None:
     assert "required" in capsys.readouterr().err
 
 
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ["identify", "--accounts", ABANDON],
+        ["identify", f"--indexes={ABANDON}"],
+        ["identify", *ABANDON.split()],
+        ABANDON.split(),
+    ],
+)
+def test_an_argument_refused_is_not_repeated(
+    capsys: pytest.CaptureFixture[str], argv: list[str]
+) -> None:
+    """A mnemonic typed as arguments is refused, and not written back.
+
+    argparse would quote the value of a count, list the words it does not
+    take, and name a command it does not know.
+
+    :param capsys: pytest's capture of the standard streams.
+    :param argv: the arguments, a mnemonic among them.
+    """
+    with pytest.raises(SystemExit) as caught:
+        cli.main(argv, prompt=Prompt(), forbid_network=no_guard)
+    assert caught.value.code == 2
+    err = capsys.readouterr().err
+    assert "an argument is refused, and not repeated" in err
+    assert all(word not in err for word in ABANDON.split())
+
+
+def test_a_guard_not_in_place_is_a_refusal_before_any_prompt(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Where the guard refuses, nothing is asked and one line is written."""
+
+    def refusing() -> None:
+        raise SeedScanValueError("the refusal of sockets and processes is not in place")
+
+    status = cli.main(["identify"], prompt=Prompt(), forbid_network=refusing)
+    out, err = capsys.readouterr()
+    assert status == 1
+    assert not out
+    assert err == (
+        "seed-scan identify: the refusal of sockets and processes is not in place\n"
+    )
+
+
 def test_the_prompts_ask_passphrases_until_an_empty_one() -> None:
     """Each passphrase prompt is numbered, and an empty answer ends them."""
     prompt = Prompt("one", "two", "")
@@ -221,6 +266,8 @@ def test_an_answer_that_is_no_utf8_is_refused_without_its_bytes(
         "os.fork",
         "os.forkpty",
         "os.spawn",
+        "os.startfile",
+        "os.startfile/2",
     ],
 )
 def test_a_socket_or_process_event_is_refused(event: str) -> None:
@@ -242,11 +289,45 @@ def test_other_events_pass(event: str) -> None:
 
 
 def test_the_guard_installs_the_hook(monkeypatch: pytest.MonkeyPatch) -> None:
-    """`_forbid_network` installs `_refuse_network`, and nothing else."""
+    """`_forbid_network` adds `_refuse_network`, and nothing else.
+
+    `sys.addaudithook` replaced by a list's `append` puts no hook in
+    place, as an earlier hook's veto does, so the guard refuses.
+    """
     installed: list[object] = []
     monkeypatch.setattr(sys, "addaudithook", installed.append)
-    cli._forbid_network()
+    with pytest.raises(SeedScanValueError, match="not in place"):
+        cli._forbid_network()
     assert installed == [cli._refuse_network]
+
+
+def test_an_earlier_hook_vetoing_the_guard_stops_the_command() -> None:
+    """In a process of its own, a vetoed guard refuses before the prompt.
+
+    An audit hook raising a `RuntimeError` on `sys.addaudithook` makes
+    every later addition return without adding the hook.
+    """
+    probe = (
+        "import sys\n"
+        "def veto(event, args):\n"
+        "    if event == 'sys.addaudithook':\n"
+        "        raise RuntimeError\n"
+        "sys.addaudithook(veto)\n"
+        "from seed_scan import cli\n"
+        "def prompt(text):\n"
+        "    raise AssertionError('prompted')\n"
+        "sys.exit(cli.main(['identify'], prompt=prompt))\n"
+    )
+    done = subprocess.run(  # noqa: S603
+        [sys.executable, "-c", probe],
+        capture_output=True,
+        encoding="utf-8",
+        check=False,
+    )
+    assert done.returncode == 1
+    assert done.stderr == (
+        "seed-scan identify: the refusal of sockets and processes is not in place\n"
+    )
 
 
 def test_a_socket_is_refused_once_the_guard_is_on() -> None:

@@ -33,13 +33,15 @@ never passed over: the costly failure is a wrong "nothing found".
 ## Identifying a mnemonic
 
 ```shell
-seed-scan identify --address <an address it gave, if you know one> > bundle.json
+seed-scan identify > bundle.json
 ```
 
 It asks for the mnemonic, then for passphrases until an empty one, at
 hidden prompts, and for further shares where the words are one
 SLIP-0039 share. It writes the bundle to standard output and what it
-found to standard error. `seed_scan.bundle` documents the bundle, and
+found to standard error. Where you know an address the mnemonic gave,
+`--address` followed by it has the command search for the address's
+path. `seed_scan.bundle` documents the bundle, and
 `seed-scan identify --help` the bounds of what it writes and searches.
 
 ## Scanning a bundle

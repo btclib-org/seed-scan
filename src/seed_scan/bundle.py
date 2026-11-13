@@ -159,7 +159,15 @@ _BECH32 = "qpzry9x8gf2tvdw0s3jn54khce6mua7l"
 _BECH32_CONSTANT = 1
 _BECH32M_CONSTANT = 0x2BC830A3
 # a descriptor's checksum, eight characters of its own alphabet
-_CHECKSUM = "#[" + _BECH32 + "]{8}"
+_CHECKSUM = f"#[{_BECH32}]{{8}}"
+# BIP380's checksum of a descriptor: the characters a descriptor may hold,
+# in the order whose index is their value, and its code's generator
+_DESCRIPTOR_CHARS = (
+    "0123456789()[],'/*abcdefgh@:$%{}"
+    "IJKLMNOPQRSTUVWXYZ&+-.;<=>?!^_|~"
+    'ijklmnopqrstuvwxyzABCDEFGH`#"\\ '
+)
+_GENERATOR = (0xF5DEE51989, 0xA9FDCA3312, 0x1BAB10E32D, 0x3706B1677A, 0x644D626FFD)
 
 
 def slip39_passphrase(number: int) -> str:
@@ -400,12 +408,40 @@ def _reason(document: dict[str, Any]) -> str:
     return value
 
 
+def _checksum_holds(descriptor: str) -> bool:
+    """Return whether a descriptor ends with its BIP380 checksum.
+
+    `descsum_check` of BIP380, on a descriptor whose characters are all
+    in its set: the shape `_descriptors` asks for puts them there.
+    """
+    symbols: list[int] = []
+    group = count = 0
+    for char in descriptor[:-9]:
+        value = _DESCRIPTOR_CHARS.index(char)
+        symbols.append(value & 31)
+        group, count = group * 3 + (value >> 5), count + 1
+        if count == 3:
+            symbols.append(group)
+            group = count = 0
+    if count:
+        symbols.append(group)
+    symbols += [_BECH32.index(char) for char in descriptor[-8:]]
+    check = 1
+    for symbol in symbols:
+        top = check >> 35
+        check = (check & 0x7FFFFFFFF) << 5 ^ symbol
+        for i, generator in enumerate(_GENERATOR):
+            if (top >> i) & 1:
+                check ^= generator
+    return check == 1
+
+
 def _descriptors(document: dict[str, Any], coin: str, xpub: str) -> tuple[str, ...]:
     """Return an account's descriptors, refusing any not of the account's key.
 
     A Bitcoin account holds its receive and change descriptors over its
     own `xpub`, with a key origin and a checksum, and no other coin holds
-    any.
+    any. A descriptor's checksum is checked, not only its shape.
     """
     values = _strings(document, "descriptors")
     key = r"\[[0-9a-f]{8}(?:/(?:0|[1-9][0-9]{0,9})h?)*\]" + re.escape(xpub)
@@ -416,7 +452,8 @@ def _descriptors(document: dict[str, Any], coin: str, xpub: str) -> tuple[str, .
 
     expected = 2 if coin == "bitcoin" else 0
     fits = len(values) == expected and all(
-        re.fullmatch(shape(branch), value) for branch, value in enumerate(values)
+        re.fullmatch(shape(branch), value) and _checksum_holds(value)
+        for branch, value in enumerate(values)
     )
     if not fits:
         err_msg = "bundle: member 'descriptors' is not the account's two descriptors"
