@@ -2,7 +2,7 @@
 # Distributed under the MIT software license, see the accompanying
 # LICENSE file or https://opensource.org/license/mit for the full text.
 
-"""An Ethereum node's JSON-RPC, for the four reads `seed_scan.scan` makes.
+"""An Ethereum node's JSON-RPC, for the reads `seed_scan.scan` makes.
 
 `Node` asks an execution client the user names: its chain id, its latest
 block number, and the balance and the nonce of an address at the block

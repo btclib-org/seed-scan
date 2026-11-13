@@ -64,13 +64,11 @@ against the system's CA certificates, or against those of the file
 is reached.
 
 The node is an execution client's JSON-RPC, at an `https` URL, or an
-`http` one on a loopback address such as `http://127.0.0.1:8545`: over
-plain HTTP to another host the addresses asked would cross the network
-in the clear. Its certificate is verified against the system's CA
-certificates, which OpenSSL's `SSL_CERT_FILE` chooses; `--cafile` is the
-Electrum server's alone. An Ethereum address is used where it holds
-ether or has a nonce: token balances are not asked, so an address that
-only ever received tokens reads as unused.
+`http` one on a loopback address such as `http://127.0.0.1:8545`.
+`--cafile` is the Electrum server's alone: `seed_scan.evm` says what the
+node's certificate is verified against. An Ethereum address is used
+where it holds ether or has a nonce: token balances are not asked, so an
+address that only ever received tokens reads as unused.
 
 A coin with no server or node named, and every coin but Bitcoin and
 Ethereum, is listed as not checked. `seed_scan.scan` documents the

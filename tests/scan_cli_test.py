@@ -962,6 +962,7 @@ def node_context(tls: Path) -> ssl.SSLContext:
     :returns: the context.
     """
     context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    context.minimum_version = ssl.TLSVersion.TLSv1_2
     context.load_cert_chain(tls / "server.pem")
     return context
 
