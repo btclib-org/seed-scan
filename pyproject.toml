@@ -89,6 +89,7 @@ seed-scan = "seed_scan.cli:main"
 
 [project.urls]
 homepage = "https://btclib.org/seed-scan/"
+documentation = "https://seed-scan.readthedocs.io/"
 download = "https://github.com/btclib-org/seed-scan/releases"
 changelog = "https://github.com/btclib-org/seed-scan/blob/main/RELEASE_NOTES.md"
 repository = "https://github.com/btclib-org/seed-scan"
