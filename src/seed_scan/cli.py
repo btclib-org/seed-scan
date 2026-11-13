@@ -410,14 +410,16 @@ def _identify_command(
             address=args.address,
             indexes=args.indexes,
         )
+    except (KeyboardInterrupt, EOFError):
+        # first: an interrupt that is also a refusal says "interrupted",
+        # never its own text
+        err_msg = "interrupted"
     except SeedScanException as e:
         err_msg = str(e)
     except (ValueError, TypeError) as e:
         # a dependency's refusal: those packages print no secret either,
         # but the class alone is said, and no traceback
         err_msg = f"refused by a dependency: {type(e).__name__}"
-    except (KeyboardInterrupt, EOFError):
-        err_msg = "interrupted"
     else:
         sys.stdout.write(dumps(bundle))
         sys.stderr.write(_summary(bundle))
