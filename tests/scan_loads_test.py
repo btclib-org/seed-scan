@@ -250,6 +250,25 @@ def no_address(document: dict[str, Any]) -> None:
     used["balance"] = "0"
 
 
+def both_spend_more(confirmed: int, unconfirmed: int) -> Callable[..., None]:
+    """Return the edit giving the used account and its address one balance.
+
+    The sums agree, so what refuses it is the balance itself.
+
+    :param confirmed: the confirmed balance of both.
+    :param unconfirmed: the mempool's change to both.
+    :returns: the edit.
+    """
+
+    def apply(document: dict[str, Any]) -> None:
+        used = document["used"][0]
+        (address,) = used["addresses"]
+        for item in (used, address):
+            item["confirmed"], item["unconfirmed"] = confirmed, unconfirmed
+
+    return apply
+
+
 def in_used(edit: Callable[[dict[str, Any]], None]) -> Callable[..., None]:
     """Return an edit of the first used account.
 
@@ -317,6 +336,11 @@ VALUE_ERRORS = [
     # with a gap of 1, purpose 44 stops after account 0, and 84 is not
     # cut short
     (setter("account_gap", 1), DISAGREE),
+    (in_address("confirmed", 4), "the addresses' balances are not the account's"),
+    (in_address("unconfirmed", 3), "the addresses' balances are not the account's"),
+    (in_address("confirmed", -1), "member 'confirmed' is below 0"),
+    (both_spend_more(9, -10), "a balance outside 0 to 21 million bitcoin"),
+    (both_spend_more(21 * 10**14 + 1, 0), "a balance outside 0 to 21 million"),
     (first("used", setter("path", PLANTED)), "member 'path' is not the account's"),
     (in_address("address", PLANTED), "an address is not the bundle's"),
     (in_address("branch", 2), "an address is not the bundle's"),
@@ -447,6 +471,31 @@ def test_an_ethereum_result_the_format_does_not_define_is_refused(
     assert caught.value.__context__ is None
 
 
+def test_offsetting_mempool_changes_need_a_mempool_transaction(bundle: str) -> None:
+    """A transfer in the mempool between two owned addresses nets to 0.
+
+    The account's unconfirmed change is 0, but each address's is not:
+    without the mempool's transaction, nothing listed gives them.
+    """
+    receive = script(bundle, "m/84h/0h/0h", 0, 0)
+    change = script(bundle, "m/84h/0h/0h", 1, 0)
+    paid = pay(1, (receive, 9))
+    chain = Chain(
+        HistoryTx(paid, BLOCK), HistoryTx(pay(2, (change, 9), spends=paid), None)
+    )
+    text = scan_dumps(scan(bundle, chain, server="s:1"))
+    document = json.loads(text)
+    (used,) = document["used"]
+    assert (used["confirmed"], used["unconfirmed"]) == (9, 0)
+    balances = [(a["confirmed"], a["unconfirmed"]) for a in used["addresses"]]
+    assert balances == [(9, -9), (0, 9)]
+    assert loads(text, bundle).used[0].unconfirmed == 0
+    used["transactions"] = [t for t in used["transactions"] if t["height"] is not None]
+    err_msg = "a balance or a use no transaction listed gives"
+    with pytest.raises(SeedScanValueError, match=err_msg):
+        loads(json.dumps(document), bundle)
+
+
 def test_a_bitcoin_address_past_the_gap_limit_is_refused(
     bundle: str, result: str
 ) -> None:
@@ -507,6 +556,7 @@ TYPE_ERRORS = [
     (first("used", setter("unconfirmed", "1")), "member 'unconfirmed' of type str"),
     (setter("server", 1), "member 'server' of type int"),
     (setter("evm", []), "member 'evm' of type list"),
+    (in_address("unconfirmed", 1.0), "member 'unconfirmed' of type float"),
 ]
 
 

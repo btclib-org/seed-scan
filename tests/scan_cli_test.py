@@ -256,7 +256,15 @@ def test_scan_writes_the_result_and_a_summary(
     document = json.loads(out)
     (used,) = document["used"]
     assert used["path"] == "m/84h/0h/0h"
-    assert used["addresses"] == [{"branch": 0, "index": 0, "address": paid.address}]
+    assert used["addresses"] == [
+        {
+            "branch": 0,
+            "index": 0,
+            "address": paid.address,
+            "confirmed": 0,
+            "unconfirmed": 2_500,
+        }
+    ]
     assert (used["confirmed"], used["unconfirmed"]) == (0, 2_500)
     assert document["server"] == "node.local:50002"
     assert (document["gap_limit"], document["account_gap"]) == (20, 3)

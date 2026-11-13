@@ -48,21 +48,19 @@ every other character is literal.
   Four spaces in, per used Bitcoin account, ``account <n>, <path>: <n>
   sat confirmed, <n> sat unconfirmed, <n> transactions, read up to
   height <n>``; and six spaces in, per used address, ``<receive or
-  change> <path> <address>``, the path being the address's own. Per
-  used Ethereum account, ``account <n>, <path>: <n> wei at latest``;
-  and per used address, ``receive <path> <address>: <n> wei, nonce
-  <n>``. Each Ethereum balance and nonce is the node's answer at the
-  block tag ``latest`` when that address was read, which may be a later
-  block than the node's line names: that number marks when the Ethereum
-  scan began, and no state the balances share.
+  change> <path> <address>: <n> sat confirmed, <n> sat unconfirmed``,
+  the path being the address's own. Per used Ethereum account,
+  ``account <n>, <path>: <n> wei at latest``; and per used address,
+  ``receive <path> <address>: <n> wei, nonce <n>``. Each Ethereum
+  balance and nonce is the node's answer at the block tag ``latest``
+  when that address was read, which may be a later block than the
+  node's line names: that number marks when the Ethereum scan began,
+  and no state the balances share.
 - ``total: bitcoin, <n> sat confirmed, <n> sat unconfirmed, <n> used
   accounts``, where a server is named, and ``total: ethereum, <n> wei,
   <n> used accounts``, where a node is.
 - ``digest: sha256 <hex>``: the SHA-256 of every line above it, so that
   ``sed '$d' report.txt | shasum -a 256`` gives it back.
-
-A Bitcoin balance is the scan result's, per account: the result holds
-none per address.
 """
 
 from __future__ import annotations
@@ -141,7 +139,9 @@ def _used(used: UsedAccount) -> list[str]:
         )
     ]
     lines += [
-        f"      {_BRANCHES[a.branch]} {used.path}/{a.branch}/{a.index} {a.address}"
+        f"      {_BRANCHES[a.branch]} {used.path}/{a.branch}/{a.index}"
+        f" {a.address}: {a.confirmed} sat confirmed,"
+        f" {a.unconfirmed} sat unconfirmed"
         for a in used.addresses
     ]
     return lines

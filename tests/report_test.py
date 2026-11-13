@@ -130,8 +130,14 @@ def test_the_report_of_a_scanned_bundle(abandon: str, result: str) -> None:
             "    account 0, m/84h/0h/0h: 4000 sat confirmed, 2000 sat unconfirmed,"
             " 3 transactions, read up to height 2"
         ),
-        f"      receive m/84h/0h/0h/0/3 {receive}",
-        f"      change m/84h/0h/0h/1/0 {BIP84_CHANGE}",
+        (
+            f"      receive m/84h/0h/0h/0/3 {receive}: 0 sat confirmed,"
+            " 2000 sat unconfirmed"
+        ),
+        (
+            f"      change m/84h/0h/0h/1/0 {BIP84_CHANGE}: 4000 sat confirmed,"
+            " 0 sat unconfirmed"
+        ),
         "  bitcoin, purpose 86: accounts 0 to 2 read, 0 used",
         f"  ethereum, purpose 44: not checked: {NO_NODE}",
         *other,

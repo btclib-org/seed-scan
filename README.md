@@ -83,11 +83,12 @@ seed-scan report bundle.json --scan scan.json > report.txt
 
 It reads the bundle and the scan result made from it, offline, and
 writes what they say to standard output: for each reading, coin and
-purpose, the used accounts with their balance, their used addresses and
-the paths, and what was not checked and why. Without `--scan`, as after
-a server or a node failed, every account is listed as not checked. A
-result made from another bundle is refused. The last line is the SHA-256
-of the lines above it. `seed_scan.report` documents the layout.
+purpose, the used accounts and each of their used addresses, with its
+balance and path, and what was not checked and why. Without `--scan`,
+as after a server or a node failed, every account is listed as not
+checked. A result made from another bundle is refused. The last line is
+the SHA-256 of the lines above it. `seed_scan.report` documents the
+layout.
 
 ## What touches the secret
 

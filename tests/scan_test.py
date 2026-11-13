@@ -183,8 +183,8 @@ def test_used_addresses_transactions_and_balance(abandon: str) -> None:
     assert (used.reading, used.purpose, used.account) == (0, 84, 0)
     assert used.path == "m/84h/0h/0h"
     assert used.addresses == (
-        Address(0, 3, receive.address),
-        Address(1, 0, BIP84_CHANGE),
+        Address(0, 3, receive.address, 0, 2_000),
+        Address(1, 0, BIP84_CHANGE, 4_000, -4_000),
     )
     assert [t.height for t in used.transactions] == [1, 1, None, None]
     assert used.transactions[0].tx_id == paid.id.hex()
@@ -397,7 +397,10 @@ def test_an_electrum_reading_has_one_account() -> None:
     result = scan(text, chain, server="s:1", account_gap=5)
     assert result.searched == (Searched(0, None, 1, cut_short=False),)
     (used,) = result.used
-    assert (used.purpose, used.addresses) == (None, (Address(1, 0, SEGWIT_CHANGE),))
+    assert (used.purpose, used.addresses) == (
+        None,
+        (Address(1, 0, SEGWIT_CHANGE, 5, 0),),
+    )
 
 
 def test_the_other_coins_are_not_checked(abandon: str) -> None:

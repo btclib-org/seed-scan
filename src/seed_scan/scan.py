@@ -38,16 +38,18 @@ The balance of an account is read off the history discovery returns: an
 output paying one of its used scripts counts until a transaction of that
 history spends it. ``confirmed`` is what the confirmed transactions leave
 unspent; ``unconfirmed`` is the change the mempool's transactions make to
-it, negative where they spend a confirmed output. The history is what the
-reader answers, so the balance is only as complete as the server's list.
-Two transactions of a history that spend one output, as a replacement and
-the transaction it replaces do, would both count, where at most one can
-confirm: the mempool part of an answer is no snapshot, so the account is
-read again once, and refused where that read lists two such transactions
-too. So is an account whose used positions are not each within
-``gap_limit`` of the one before: discovery reads in windows, and a
-payment a window found, which the last read no longer lists, leaves the
-positions it led to past the gap.
+it, negative where they spend a confirmed output. The balance of a used
+address is read the same way off its own script, so the addresses' add
+up to the account's. The history is what the reader answers, so the
+balance is only as complete as the server's list. Two transactions of a
+history that spend one output, as a replacement and the transaction it
+replaces do, would both count, where at most one can confirm: the
+mempool part of an answer is no snapshot, so the account is read again
+once, and refused where that read lists two such transactions too. So
+is an account whose used positions are not each within ``gap_limit`` of
+the one before: discovery reads in windows, and a payment a window
+found, which the last read no longer lists, leaves the positions it led
+to past the gap.
 
 The result is one JSON object, which `dumps` writes. It holds public data
 only. Its members:
@@ -68,8 +70,9 @@ only. Its members:
 - ``used``: one object per Bitcoin account with history, in the order
   read:
   ``reading``, ``purpose``, ``account`` and ``path``, as the bundle has
-  them; ``addresses``, each used position as ``branch``, ``index`` and
-  ``address``; ``transactions``, each as ``tx_id``, in display order,
+  them; ``addresses``, each used position as ``branch``, ``index``,
+  ``address``, and its ``confirmed`` and ``unconfirmed`` balance in
+  satoshis; ``transactions``, each as ``tx_id``, in display order,
   and ``height``, ``null`` for the mempool's; ``confirmed`` and
   ``unconfirmed``, in satoshis; and ``tip``, the height and block id the
   history was read up to.
@@ -190,11 +193,13 @@ _U = TypeVar("_U")
 
 @dataclass(frozen=True)
 class Address:
-    """A used position of an account: its branch, its index, its address."""
+    """A used position of an account: where it is, its address, its balance."""
 
     branch: int
     index: int
     address: str
+    confirmed: int
+    unconfirmed: int
 
 
 @dataclass(frozen=True)
@@ -472,14 +477,18 @@ def _read_account(
 
 def _used_account(reading: int, account: Account, use: AccountUse) -> UsedAccount:
     """Return what an account's discovery found, as public data."""
+    history = use.history
     addresses: list[Address] = []
     scripts: set[bytes] = set()
     for branch, indexes in enumerate(use.used):
         for index in indexes:
             for script_pub_key in use.descriptors[branch].script_pub_keys(index):
-                scripts.add(script_pub_key.script)
-                addresses.append(Address(branch, index, script_pub_key.address))
-    history = use.history
+                script = script_pub_key.script
+                scripts.add(script)
+                balance = _balance(history, frozenset({script}))
+                addresses.append(
+                    Address(branch, index, script_pub_key.address, *balance)
+                )
     confirmed, unconfirmed = _balance(history, frozenset(scripts))
     return UsedAccount(
         reading=reading,
@@ -844,7 +853,7 @@ def _addresses(
         ):
             err_msg = "scan result: an address is not the bundle's at its position"
             raise SeedScanValueError(err_msg)
-        addresses.append(Address(branch, index, address))
+        addresses.append(Address(branch, index, address, *_sats(position)))
     if not addresses:
         raise SeedScanValueError("scan result: a used account lists no address")
     branches: dict[int, list[int]] = {}
@@ -864,7 +873,8 @@ def _used(
 
     Its history holds what its use and its balance need: a transaction
     at least, a confirmed one where a confirmed balance is, and one of
-    the mempool's where the mempool changes it.
+    the mempool's where the mempool changes the balance of an address,
+    even where the changes of its addresses cancel out.
     """
     reading, purpose, account = _account(document, accounts, searched)
     tip: dict[str, Any] = _member(document, "tip", dict)
@@ -879,9 +889,13 @@ def _used(
     if (
         not transactions
         or (confirmed and not in_blocks)
-        or (unconfirmed and not in_mempool)
+        or (any(a.unconfirmed for a in addresses) and not in_mempool)
     ):
         err_msg = "scan result: a balance or a use no transaction listed gives"
+        raise SeedScanValueError(err_msg)
+    sums = (sum(a.confirmed for a in addresses), sum(a.unconfirmed for a in addresses))
+    if sums != (confirmed, unconfirmed):
+        err_msg = "scan result: the addresses' balances are not the account's"
         raise SeedScanValueError(err_msg)
     return UsedAccount(
         reading=reading,
@@ -1081,7 +1095,7 @@ def loads(text: str, bundle: str) -> ScanResult:
     used account names accounts of the bundle of its coin, a used account
     one its search read, its ``path`` the bundle's, each address the one
     the account's keys give at that position, an Ethereum address with a
-    balance or a nonce, and an Ethereum account's balance the sum of its
+    balance or a nonce, and each account's balance the sum of its
     addresses'. Each search's ``accounts`` and ``cut_short`` are the ones
     `scan` gives for the used accounts listed, the bundle's accounts and
     ``account_gap``.
@@ -1090,8 +1104,8 @@ def loads(text: str, bundle: str) -> ScanResult:
     address at least, each branch's used positions within ``gap_limit``
     of the one before, from index 0; for Bitcoin, a transaction at least,
     a confirmed one where ``confirmed`` is not 0 and one of the mempool's
-    where ``unconfirmed`` is not 0, and balances that leave from 0 to 21
-    million bitcoin unspent.
+    where an address's ``unconfirmed`` is not 0, and balances that leave
+    from 0 to 21 million bitcoin unspent.
     """
     read = bundle_loads(bundle)
     # refused as `scan` refuses it: a descriptor or a key that does not
