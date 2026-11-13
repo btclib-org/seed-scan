@@ -505,10 +505,11 @@ def test_the_timeout_bounds_the_whole_exchange(
 ) -> None:
     """A node slower than the timeout is a failure caused by the timeout.
 
-    The node answers once the client has given up, released however the
-    client ends, and the test joins the thread that handles the request,
-    so that the handler and the writing of its answer end before the test
-    does.
+    The node answers once the client has given up. However the client
+    ends, the test then releases the node, and waits up to 5 seconds for
+    the handler to start and up to 5 more for the thread that handles the
+    request to end, before it passes or fails: within those bounds, the
+    handler and the writing of its answer end before the test does.
     """
     entered = threading.Event()
     gave_up = threading.Event()
@@ -527,10 +528,12 @@ def test_the_timeout_bounds_the_whole_exchange(
             Node(served.url(), timeout=0.1).chain_id()
         elapsed = time.monotonic() - started
     finally:
+        # no assertion here, which would replace the client's exception
         gave_up.set()
-    assert entered.wait(5)
+        entered.wait(5)
+        for request_thread in handling:
+            request_thread.join(5)
     (thread,) = handling
-    thread.join(5)
     assert not thread.is_alive()
     assert elapsed < 0.5
     assert isinstance(cause(caught.value, TimeoutError), TimeoutError)
