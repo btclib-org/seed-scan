@@ -53,7 +53,7 @@ KEYWORD_ONLY: dict[str, list[str]] = {
     "seed_scan.evm:Node.__init__": ["transport", "timeout"],
     "seed_scan.forks:forks": ["chain", "server", "gap_limit", "account_gap"],
     "seed_scan.identify:identify": ["accounts", "address", "indexes"],
-    "seed_scan.scan:scan": ["server", "node", "gap_limit", "account_gap"],
+    "seed_scan.scan:scan": ["server", "node", "evm_chain", "gap_limit", "account_gap"],
 }
 
 # what each prefix promises the return annotation is. `verify` is matched

@@ -88,7 +88,7 @@ from seed_scan.exceptions import SeedScanException, SeedScanTypeError
 from seed_scan.identify import identify
 
 from . import published
-from .evm_test import MIXED, Ethereum
+from .evm_test import CONTRACT, MIXED, Ethereum
 from .identify_test import ABANDON, no_share
 from .scan_test import Chain
 
@@ -106,6 +106,7 @@ _WRONG_TYPE: dict[str, tuple[Any, ...]] = {
     # None is the declared absence of each `| None`
     "str | None": (1.5, b"text"),
     "int": (None, 1.5, "0", True),
+    "int | None": (1.5, "0", True),
     "float": (None, "30"),
     # every value is an object
     "object": (),
@@ -129,6 +130,8 @@ _WRONG_VALUE: dict[str, tuple[Any, ...]] = {
     # below the first passphrase number, past what a reason reads back, and
     # past what `str` converts
     "int": (-1, 10**9, 10**5000),
+    # below the first block
+    "int | None": (-1,),
     # no time a request waits
     "float": (-1.0, math.nan),
     # a quantity is 0x and hex digits with no leading zero
@@ -227,9 +230,9 @@ _CALLABLES: dict[str, Any] = {
 # what no round drives, by dotted name, with the reason. A function
 # whose parameters all carry a default is the shape that lands here
 _NOT_DRIVEN = {
-    # the command line, whose one parameter stands for sys.argv: argparse
-    # answers a wrong argument with a usage line and exit status 2, and an
-    # argv that is no sequence is btclib-org/seed-scan#46
+    # the command line, whose argv stands for sys.argv: argparse answers a
+    # wrong argument with a usage line and exit status 2, and an argv that
+    # is no list or tuple of strings is refused as cli_test.py drives it
     "seed_scan.cli.main",
 }
 
@@ -348,6 +351,10 @@ _VALID: dict[str, Callable[[_Texts], dict[str, Any]]] = {
     "seed_scan.evm.Node": lambda _: {"url": "https://node.example/rpc"},
     "seed_scan.evm.Node.balance": lambda _: {"address": MIXED},
     "seed_scan.evm.Node.nonce": lambda _: {"address": MIXED},
+    "seed_scan.evm.Node.token_balance": lambda _: {
+        "contract": CONTRACT,
+        "address": MIXED,
+    },
     "seed_scan.evm.quantity": lambda _: {"value": "0x1"},
     "seed_scan.forks.dumps": lambda t: {
         "result": forks_module.loads(t.forked, t.bundle)
