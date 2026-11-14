@@ -178,6 +178,31 @@ def set_match_reading(d: dict[str, Any], reading: int) -> None:
             SeedScanValueError,
             "a match names no reading",
         ),
+        (
+            lambda d: d["readings"][1]["accounts"][0].pop("index"),
+            SeedScanValueError,
+            "missing member 'index'",
+        ),
+        (
+            lambda d: d["readings"][1]["accounts"][0].update(index=KEY_TEXT),
+            SeedScanTypeError,
+            "'index' of type str",
+        ),
+        (
+            lambda d: d["readings"][1]["accounts"][0].update(index=-KEY_NUMBER),
+            SeedScanValueError,
+            "'index' is negative",
+        ),
+        (
+            lambda d: d["readings"][1]["accounts"][0].update(index=5),
+            SeedScanValueError,
+            "'index' is not an address's index alone",
+        ),
+        (
+            lambda d: d["readings"][0]["accounts"][0].update(index=5),
+            SeedScanValueError,
+            "'index' is not an address's index alone",
+        ),
     ],
 )
 def test_a_document_that_is_no_bundle_is_refused(
@@ -520,3 +545,24 @@ def test_the_checksum_is_bip380s(body: str) -> None:
     descriptor = add_checksum(body)
     assert _checksum_holds(descriptor)
     assert not _checksum_holds(descriptor.replace("raw(", "raw(0", 1))
+
+
+@pytest.mark.parametrize("index", [0, 9999, 2**31 - 1])
+def test_an_address_alone_reads_back(index: int) -> None:
+    """An EVM account of no purpose may name the one index read below it.
+
+    :param index: the index, unhardened.
+    """
+    alone = Account("bnb", 714, None, 0, "m/44h/60h/9172h/3604", BIP86_XPUB, (), index)
+    bundle = Bundle((), (Reading("bip39", ("en",), 0, "0a1b2c3d", (alone,)),), (), None)
+    assert loads(dumps(bundle)) == bundle
+    assert json.loads(dumps(bundle))["readings"][0]["accounts"][0]["index"] == index
+
+
+def test_an_address_alone_at_a_hardened_index_is_refused() -> None:
+    """2^31 and above is hardened: no xpub derives it, so none is read there."""
+    changed = document()
+    account = changed["readings"][1]["accounts"][0]
+    account.update(purpose=None, account=0, index=2**31)
+    with pytest.raises(SeedScanValueError, match="not an address's index alone"):
+        loads(json.dumps(changed))
