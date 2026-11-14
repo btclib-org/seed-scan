@@ -185,7 +185,13 @@ one machine and everything after it reads public data:
 
 The bundle holds no secret, but it is not harmless: an account public
 key gives every address of that account, so whoever holds the bundle can
-follow its history and balance, though not spend from it. The same holds
+follow its history and balance, though not spend from it. Nor is it
+harmless beside one leaked key: by BIP32, an extended public key and the
+private key of one of its unhardened children give the extended private
+key, so the bundle and the key of a single address give its account's
+keys. For MyEtherWallet's layout the bundle holds the key at
+`m/44h/60h`, so the key of one `m/44h/60h/<n>` address gives every
+Ethereum account's keys, and those under `m/44h/60h` too. The same holds
 of the report: it holds no secret, but it lets anyone follow the
 wallet's history.
 
