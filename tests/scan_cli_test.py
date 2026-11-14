@@ -933,9 +933,7 @@ def test_the_node_alone_is_scanned(
         [{"index": 0, "address": address, "balance": "5", "nonce": 0}],
         [{"index": 1, "address": legacy, "balance": "2", "nonce": 0}],
     ]
-    elsewhere = (
-        "scan reads Bitcoin, Ethereum and Ethereum Classic alone in this version"
-    )
+    elsewhere = "scan reads Bitcoin and the EVM chains' coins alone in this version"
     assert err.splitlines() == [
         f"node: {name}, Ethereum, chain id 1, block 16",
         "bounds: account gap 3, gap limit 20",
@@ -948,7 +946,8 @@ def test_the_node_alone_is_scanned(
         "used: reading 0, m/44h/60h/0h: 1 addresses, 5 wei of ETH",
         "used: reading 0, m/44h/60h/0h, legacy: 1 addresses, 2 wei of ETH",
         "not checked: reading 0, bitcoin: no Electrum server was named",
-        f"not checked: reading 0, ethereum-classic: {OTHER_CHAIN}",
+        f"not checked: reading 0, ethereum-classic: {OTHER_CHAIN['ethereum-classic']}",
+        f"not checked: reading 0, bnb: {OTHER_CHAIN['bnb']}",
         f"not checked: reading 0, bitcoin-cash: {elsewhere}",
         f"not checked: reading 0, bitcoin-sv: {elsewhere}",
         f"not checked: reading 0, litecoin: {elsewhere}",

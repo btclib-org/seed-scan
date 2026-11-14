@@ -686,7 +686,7 @@ def _parser() -> argparse.ArgumentParser:
         description=(
             "Read a public bundle, ask the Electrum server named which of its"
             " Bitcoin accounts were used and the EVM node named which of its"
-            " Ethereum and Ethereum Classic accounts were on the chain it"
+            " accounts of the coins that chain reads were on the chain it"
             " serves, and write the scan result to standard output. Each"
             " learns every address asked. The node is asked for the native"
             " asset and nonces: a token balance is not asked."

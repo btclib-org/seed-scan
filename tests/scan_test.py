@@ -470,10 +470,11 @@ def test_an_electrum_reading_has_one_account() -> None:
 def test_the_other_coins_are_not_checked(abandon: str) -> None:
     """Each coin not read is listed once per reading, with the reason."""
     result = scan(abandon, Chain(), server="s:1")
-    reason = "scan reads Bitcoin, Ethereum and Ethereum Classic alone in this version"
+    reason = "scan reads Bitcoin and the EVM chains' coins alone in this version"
     assert result.not_checked == (
         NotRead(0, "ethereum", "no EVM node was named"),
         NotRead(0, "ethereum-classic", "no EVM node was named"),
+        NotRead(0, "bnb", "no EVM node was named"),
         *(
             NotRead(0, coin, reason)
             for coin in ("bitcoin-cash", "bitcoin-sv", "litecoin", "dogecoin")
@@ -772,7 +773,7 @@ def test_a_server_and_a_node_are_both_read(abandon: str) -> None:
     assert result.evm is not None
     assert [u.path for u in result.evm.used] == ["m/44h/60h/0h"]
     assert {(n.coin, n.reason) for n in result.not_checked} == {
-        ("ethereum-classic", OTHER_CHAIN),
+        *((coin, OTHER_CHAIN[coin]) for coin in ("ethereum-classic", "bnb")),
         *(
             (coin, NOT_READ)
             for coin in ("bitcoin-cash", "bitcoin-sv", "litecoin", "dogecoin")
@@ -904,10 +905,11 @@ def test_a_node_of_another_chain_is_refused_before_any_address(abandon: str) -> 
 
 @pytest.mark.parametrize("name", sorted(EVM_CHAINS))
 def test_each_chain_reads_the_coins_it_lists(abandon: str, name: str) -> None:
-    """Ethereum's accounts on every chain, Ethereum Classic's on its own.
+    """Ethereum's accounts on every chain; two chains read their own coin too.
 
     Each coin's purpose 44 and its legacy layout, whose key's own
-    children are its addresses; the result names the chain.
+    children are its addresses; the result names the chain, and a coin
+    not read on it is listed with the chain that reads it.
 
     :param abandon: the bundle.
     :param name: the chain.
@@ -918,6 +920,7 @@ def test_each_chain_reads_the_coins_it_lists(abandon: str, name: str) -> None:
         ("ethereum", None): ("m/44h/60h/0h", 7, "6"),
         ("ethereum-classic", 44): ("m/44h/61h/1h", 2, "7"),
         ("ethereum-classic", None): ("m/44h/60h/160720h/0h", 3, "8"),
+        ("bnb", 44): ("m/44h/714h/1h", 4, "9"),
     }
     balances = {
         eth_address(abandon, path, index, legacy=purpose is None): int(balance)
@@ -934,9 +937,10 @@ def test_each_chain_reads_the_coins_it_lists(abandon: str, name: str) -> None:
         (u.coin, u.purpose, u.path, [a.index for a in u.addresses], u.balance)
         for u in evm.used
     ] == [(*key, paths[key][0], [paths[key][1]], paths[key][2]) for key in read]
-    off_chain = [n for n in result.not_checked if n.coin == "ethereum-classic"]
-    expected = [] if "ethereum-classic" in chain.coins else [OTHER_CHAIN]
-    assert [n.reason for n in off_chain] == expected
+    own = ("ethereum-classic", "bnb")
+    assert [(n.coin, n.reason) for n in result.not_checked if n.coin in own] == [
+        (coin, OTHER_CHAIN[coin]) for coin in own if coin not in chain.coins
+    ]
 
 
 def test_ethereum_classic_accounts_need_a_node(abandon: str) -> None:

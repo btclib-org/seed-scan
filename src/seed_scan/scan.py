@@ -6,14 +6,14 @@
 
 `scan` reads the text of a bundle, with `seed_scan.bundle` alone, and
 asks a `btclib_wallet.fetch.history.HistoryReader` which of its Bitcoin
-accounts have history, and a `seed_scan.evm.Node` which of its Ethereum
-and Ethereum Classic accounts were used on the EVM chain it serves. It
+accounts have history, and a `seed_scan.evm.Node` which of its accounts
+of the coins that chain reads were used on the EVM chain it serves. It
 reads no secret: a bundle holds none, and `seed_scan.bundle.loads`
 refuses a key that is not public. `seed_scan.cli` gives it an Electrum
 server, an EVM node or both, each named by the user. A coin whose
 backend is not given is listed as not checked.
 
-Bitcoin, Ethereum and Ethereum Classic are the coins read. For Bitcoin,
+Bitcoin and the EVM chains' coins are the coins read. For Bitcoin,
 for each reading, each BIP43 purpose is read from account 0 up, as
 BIP44's *Account discovery* reads it, until ``account_gap`` accounts in
 a row have no history; an Electrum reading has one account, which is
@@ -28,19 +28,20 @@ The caller names the EVM chain the node serves, a key of
 `seed_scan.evm.EVM_CHAINS`, and a node whose ``eth_chainId`` answers
 another chain id is refused before any address is asked. The accounts
 read are those of the coins its `seed_scan.evm.EvmChain` lists:
-Ethereum's on each chain, and Ethereum Classic's too on Ethereum
-Classic; an Ethereum Classic account is listed as not checked on any
-other. Each coin's accounts are read the same way as Bitcoin's, purpose
-by purpose and with the same two bounds, on the receive branch alone:
-the addresses of an account are those of the keys ``0/0``, ``0/1`` and
-on below its ``xpub``, as `coin_addresses.evm` writes them. A legacy
-layout, of purpose ``null``, is one account, read alone as an Electrum
-reading's is, and on no branch: its addresses are those of the keys
-``0``, ``1`` and on below its ``xpub``. An address is used where the
-node answers a balance or a nonce other than zero, each at the block
-tag ``latest``. That is the chain's native asset alone: an address that
-only ever received tokens has neither, and reads as unused, as no token
-balance is asked in this version.
+Ethereum's on each chain, Ethereum Classic's too on Ethereum Classic,
+and BNB's too on BNB Smart Chain; an account of a coin one chain alone
+reads is listed as not checked on any other. Each coin's accounts are
+read the same way as Bitcoin's, purpose by purpose and with the same two
+bounds, on the receive branch alone: the addresses of an account are
+those of the keys ``0/0``, ``0/1`` and on below its ``xpub``, as
+`coin_addresses.evm` writes them. A legacy layout, of purpose ``null``,
+is one account, read alone as an Electrum reading's is, and on no
+branch: its addresses are those of the keys ``0``, ``1`` and on below
+its ``xpub``. An address is used where the node answers a balance or a
+nonce other than zero, each at the block tag ``latest``. That is the
+chain's native asset alone: an address that only ever received tokens
+has neither, and reads as unused, as no token balance is asked in this
+version.
 
 The balance of an account is read off the history discovery returns: an
 output paying one of its used scripts counts until a transaction of that
@@ -86,9 +87,9 @@ only. Its members:
   history was read up to.
 - ``not_checked``: one object per reading and coin not read, with
   ``reading``, ``coin`` and ``reason``: `NO_SERVER` for Bitcoin,
-  `NO_NODE` for Ethereum and Ethereum Classic, `OTHER_CHAIN` for
-  Ethereum Classic on a node of another chain, and `NOT_READ` for every
-  other coin.
+  `NO_NODE` for a coin an EVM chain reads, the coin's `OTHER_CHAIN` for
+  a coin one chain alone reads on a node of another chain, and
+  `NOT_READ` for every other coin.
 - ``evm``: ``null`` where no EVM node was asked, or the EVM scan:
   ``node``, the node asked, as its scheme, host and port, with no path
   or query; ``chain``, the chain read, a key of
@@ -120,6 +121,7 @@ from collections.abc import Sequence
 from dataclasses import asdict, dataclass
 from functools import partial
 from hashlib import sha256
+from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, TypeVar
 
 from bip32_descriptors.bip32 import BIP32KeyData
@@ -191,12 +193,19 @@ NO_SERVER = "no Electrum server was named"
 #: The ``reason`` an EVM coin is not checked for, where no node is given.
 NO_NODE = "no EVM node was named"
 
-#: The ``reason`` Ethereum Classic is not checked for, where the node
-#: serves another chain.
-OTHER_CHAIN = "read on Ethereum Classic alone, and the node serves another chain"
+#: The ``reason`` a coin one EVM chain alone reads is not checked for,
+#: where the node serves another chain, by coin.
+OTHER_CHAIN = MappingProxyType(
+    {
+        coin: f"read on {chain.title} alone, and the node serves another chain"
+        for chain in EVM_CHAINS.values()
+        for coin in chain.coins
+        if sum(coin in other.coins for other in EVM_CHAINS.values()) == 1
+    }
+)
 
 #: The ``reason`` every other coin is not checked for.
-NOT_READ = "scan reads Bitcoin, Ethereum and Ethereum Classic alone in this version"
+NOT_READ = "scan reads Bitcoin and the EVM chains' coins alone in this version"
 
 # the last port, and the digits it takes, leading zeros aside
 _MAX_PORT = 65535
@@ -740,7 +749,7 @@ def scan(
         if reader is None and bitcoin:
             not_checked.append(NotRead(n, _BITCOIN, NO_SERVER))
         not_checked += [
-            NotRead(n, coin, NO_NODE if node is None else OTHER_CHAIN)
+            NotRead(n, coin, NO_NODE if node is None else OTHER_CHAIN[coin])
             for coin in evm_coins
             if node is None or coin not in chain.coins
         ]
@@ -1339,7 +1348,9 @@ def loads(text: str, bundle: str) -> ScanResult:
     for coin in _EVM_COINS:
         reasons[coin] = NO_NODE
         if evm is not None:
-            reasons[coin] = None if coin in EVM_CHAINS[evm.chain].coins else OTHER_CHAIN
+            reasons[coin] = (
+                None if coin in EVM_CHAINS[evm.chain].coins else OTHER_CHAIN[coin]
+            )
     return ScanResult(
         bundle=digest,
         server=server,

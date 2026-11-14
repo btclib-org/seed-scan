@@ -217,6 +217,7 @@ def test_the_report_of_a_scanned_bundle(abandon: str, result: str) -> None:
         f"  ethereum, legacy account: not checked: {NO_NODE}",
         f"  ethereum-classic, purpose 44: not checked: {NO_NODE}",
         f"  ethereum-classic, legacy account: not checked: {NO_NODE}",
+        f"  bnb, purpose 44: not checked: {NO_NODE}",
         *other,
         (
             "total: bitcoin, 4000 sat confirmed, 2000 sat unconfirmed,"
@@ -496,7 +497,8 @@ def test_the_report_of_an_ethereum_scan(abandon: str, evm_result: str) -> None:
         "bounds: account gap 3, gap limit 20",
     ]
     (opening,) = [n for n, line in enumerate(lines) if line.startswith("reading")]
-    assert lines[opening + 1 : opening + 15] == [
+    classic = OTHER_CHAIN["ethereum-classic"]
+    assert lines[opening + 1 : opening + 16] == [
         *(
             f"  bitcoin, purpose {purpose}: not checked: {NO_SERVER}"
             for purpose in (44, 49, 84, 86)
@@ -508,8 +510,9 @@ def test_the_report_of_an_ethereum_scan(abandon: str, evm_result: str) -> None:
         "  ethereum, legacy account, on Ethereum: accounts 0 to 0 read, 1 used",
         "    account 0, m/44h/60h/0h: 3 wei at latest",
         f"      address m/44h/60h/0h/2 {legacy}: 3 wei, nonce 0",
-        f"  ethereum-classic, purpose 44: not checked: {OTHER_CHAIN}",
-        f"  ethereum-classic, legacy account: not checked: {OTHER_CHAIN}",
+        f"  ethereum-classic, purpose 44: not checked: {classic}",
+        f"  ethereum-classic, legacy account: not checked: {classic}",
+        f"  bnb, purpose 44: not checked: {OTHER_CHAIN['bnb']}",
         f"  bitcoin-cash, purpose 44: not checked: {NOT_READ}",
     ]
     assert lines[-2] == (
@@ -712,8 +715,8 @@ def test_every_line_naming_a_defined_word_has_a_shape(
     ``forks``, that names a coin, a chain or a reason is of a shape
     `tests.no_secret_test.LINE_SHAPES` holds. The runs pay, spend before
     a block confirms it, cut a purpose short, read Ethereum's accounts on
-    other chains, find a legacy account used, read Bitcoin Cash, and
-    refuse a passphrase, an address and a scheme.
+    other chains and BNB's on BNB Smart Chain, find a legacy account used,
+    read Bitcoin Cash, and refuse a passphrase, an address and a scheme.
     """
     one = dumps(identify(ABANDON, [""], no_share, accounts=1))
     paid = pay(1, (script(one, "m/84h/0h/0h", 0, 0), 10_000))
@@ -722,6 +725,8 @@ def test_every_line_naming_a_defined_word_has_a_shape(
     short = Chain(HistoryTx(pay(1, (script(one, "m/86h/0h/0h", 0, 0), 5)), BLOCK))
     btc = Chain(HistoryTx(pay(1, (script(abandon, "m/49h/0h/0h", 0, 0), 5)), BLOCK))
     eth = eth_address(abandon, "m/44h/60h/0h", 0)
+    bnb = eth_address(abandon, "m/44h/714h/0h", 0)
+    classic = OTHER_CHAIN["ethereum-classic"]
     segwit = dumps(identify(SEGWIT, [""], no_share, accounts=1))
     refused = ["", "\N{LATIN SMALL LETTER E WITH ACUTE}"]
     runs = [
@@ -751,6 +756,15 @@ def test_every_line_naming_a_defined_word_has_a_shape(
                 None,
                 node=node(Ethereum({eth: 2}, chain_id=137)),
                 evm_chain="polygon-pos",
+            ),
+        ),
+        (
+            abandon,
+            scan_module.scan(
+                abandon,
+                None,
+                node=node(Ethereum({bnb: 2}, chain_id=56)),
+                evm_chain="bnb-smart-chain",
             ),
         ),
         (dumps(identify(OLD, [""], no_share, address="not an address")), None),
@@ -791,7 +805,7 @@ def test_every_line_naming_a_defined_word_has_a_shape(
     for line in (
         "\ntotal: bitcoin, 10000 sat confirmed, -10000 sat unconfirmed,",
         "\nnot derived: slip39: passphrase 1: not one SLIP-0039 accepts\n",
-        f"\n  ethereum-classic, purpose 44: not checked: {OTHER_CHAIN}\n",
+        f"\n  ethereum-classic, purpose 44: not checked: {classic}\n",
         "\nreading 0, purpose 86: accounts read: 1, cut short: ",
         ", of Bitcoin Cash's and Bitcoin SV's for a base58 address, ",
         "\nchain: Bitcoin Cash, forked from Bitcoin at height 478559\n",
@@ -806,6 +820,9 @@ def test_every_line_naming_a_defined_word_has_a_shape(
         "\n  ethereum, legacy account, on Ethereum: accounts 0 to 0 read, 1 used\n",
         "\nreading 0, ethereum legacy: accounts read: 1\n",
         "\n  ethereum-classic, legacy account, on Ethereum Classic: accounts 0 to ",
+        f"\n  bnb, purpose 44: not checked: {OTHER_CHAIN['bnb']}\n",
+        "\n  bnb, purpose 44, on BNB Smart Chain: accounts 0 to ",
+        "\nreading 0, bnb purpose 44: accounts read: ",
     ):
         assert line in written
     assert not unshaped(written)
