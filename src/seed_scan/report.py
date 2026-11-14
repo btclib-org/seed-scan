@@ -59,8 +59,11 @@ every other character is literal.
   node's line names: that number marks when the Ethereum scan began,
   and no state the balances share.
 - ``total: bitcoin, <n> sat confirmed, <n> sat unconfirmed, <n> used
-  accounts``, where a server is named, and ``total: ethereum, <n> wei,
-  <n> used accounts``, where a node is.
+  accounts, each account key once``, where a server is named, and
+  ``total: ethereum, <n> wei, <n> used accounts, each account key
+  once``, where a node is. Two readings can hold the same account keys,
+  as the same passphrase typed twice gives: each is listed with its
+  accounts, and a total counts the funds of a key once.
 - ``digest: sha256 <hex>``: the SHA-256 of every line above it, so that
   ``sed '$d' report.txt | shasum -a 256`` gives it back.
 """
@@ -68,6 +71,7 @@ every other character is literal.
 from __future__ import annotations
 
 from hashlib import sha256
+from typing import TypeVar
 
 from seed_scan.bundle import Bundle, Reading, Search
 from seed_scan.bundle import loads as bundle_loads
@@ -241,21 +245,41 @@ def _scanned(result: ScanResult) -> list[str]:
     return lines
 
 
-def _totals(result: ScanResult) -> list[str]:
-    """Return the total of each coin the result reads."""
+_Used = TypeVar("_Used", UsedAccount, EvmAccount)
+
+
+def _once(bundle: Bundle, coin: str, used: tuple[_Used, ...]) -> list[_Used]:
+    """Return the used accounts of a coin, the first of each account key.
+
+    The key is the bundle's xpub and descriptors of the account.
+    """
+    keys = {
+        (n, account.purpose, account.account): (account.xpub, account.descriptors)
+        for n, reading in enumerate(bundle.readings)
+        for account in reading.accounts
+        if account.coin == coin
+    }
+    first: dict[tuple[str, tuple[str, ...]], _Used] = {}
+    for one in used:
+        first.setdefault(keys[one.reading, one.purpose, one.account], one)
+    return list(first.values())
+
+
+def _totals(bundle: Bundle, result: ScanResult) -> list[str]:
+    """Return the total of each coin the result reads, each key once."""
     lines = []
     if result.server is not None:
-        used = result.used
+        used = _once(bundle, "bitcoin", result.used)
         lines.append(
             f"total: bitcoin, {sum(u.confirmed for u in used)} sat confirmed,"
             f" {sum(u.unconfirmed for u in used)} sat unconfirmed,"
-            f" {len(used)} used accounts"
+            f" {len(used)} used accounts, each account key once"
         )
     if result.evm is not None:
-        accounts = result.evm.used
+        accounts = _once(bundle, "ethereum", result.evm.used)
         lines.append(
             f"total: ethereum, {sum(int(u.balance) for u in accounts)} wei,"
-            f" {len(accounts)} used accounts"
+            f" {len(accounts)} used accounts, each account key once"
         )
     return lines
 
@@ -285,7 +309,7 @@ def report(bundle: str, result: str | None = None) -> str:
     lines += _search(read.search)
     lines += _readings(read, scanned)
     if scanned is not None:
-        lines += _totals(scanned)
+        lines += _totals(read, scanned)
     text = "".join(f"{line}\n" for line in lines)
     return f"{text}digest: sha256 {_digest(text)}\n"
 

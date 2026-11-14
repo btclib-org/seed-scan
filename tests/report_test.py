@@ -16,8 +16,11 @@ import re
 from hashlib import sha256
 
 import pytest
+from bip32_descriptors.bip32 import BIP32KeyData
 from bip39_slip39 import bip39
+from btclib_wallet.descriptors import parse
 from btclib_wallet.fetch.history import HistoryTx
+from coin_addresses.evm import address_from_pub_key
 
 from seed_scan import report as report_module
 from seed_scan import scan as scan_module
@@ -141,7 +144,10 @@ def test_the_report_of_a_scanned_bundle(abandon: str, result: str) -> None:
         "  bitcoin, purpose 86: accounts 0 to 2 read, 0 used",
         f"  ethereum, purpose 44: not checked: {NO_NODE}",
         *other,
-        "total: bitcoin, 4000 sat confirmed, 2000 sat unconfirmed, 1 used accounts",
+        (
+            "total: bitcoin, 4000 sat confirmed, 2000 sat unconfirmed,"
+            " 1 used accounts, each account key once"
+        ),
     ]
     text = "".join(f"{line}\n" for line in lines)
     assert report(abandon, result) == f"{text}digest: sha256 {digest(text)}\n"
@@ -173,7 +179,9 @@ def test_the_report_of_an_ethereum_scan(abandon: str, evm_result: str) -> None:
         f"      receive m/44h/60h/0h/0/5 {sixth}: 0 wei, nonce 4",
         f"  bitcoin-cash, purpose 44: not checked: {NOT_READ}",
     ]
-    assert lines[-2] == f"total: ethereum, {10**18} wei, 1 used accounts"
+    assert lines[-2] == (
+        f"total: ethereum, {10**18} wei, 1 used accounts, each account key once"
+    )
     assert not [line for line in lines if line.startswith("total: bitcoin")]
 
 
@@ -188,12 +196,40 @@ def test_a_report_of_both_coins_totals_each(abandon: str) -> None:
         ),
     )
     assert (
-        "\ntotal: bitcoin, 5 sat confirmed, 0 sat unconfirmed, 1 used accounts\n"
-        in text
-    )
-    assert "\ntotal: ethereum, 3 wei, 1 used accounts\ndigest: " in text
+        "\ntotal: bitcoin, 5 sat confirmed, 0 sat unconfirmed, 1 used accounts,"
+        " each account key once\n"
+    ) in text
+    assert (
+        "\ntotal: ethereum, 3 wei, 1 used accounts, each account key once\ndigest: "
+    ) in text
     assert NO_SERVER not in text
     assert NO_NODE not in text
+
+
+def test_a_passphrase_typed_twice_is_counted_once() -> None:
+    """Its two readings hold the same keys: both listed, the funds once."""
+    text = dumps(identify(ABANDON, ["", "x", "x"], no_share, accounts=1))
+    readings = loads(text).readings
+    assert readings[1].accounts == readings[2].accounts
+    (bitcoin,) = [a for a in readings[1].accounts if a.path == "m/84h/0h/0h"]
+    receive = parse(bitcoin.descriptors[0]).script_pub_keys(0)[0]
+    (ethereum,) = [a for a in readings[1].accounts if a.path == "m/44h/60h/0h"]
+    key = BIP32KeyData.b58decode(ethereum.xpub).derive("m/0/0")
+    chain = Chain(HistoryTx(pay(1, (receive, 9)), BLOCK))
+    fake = Ethereum({address_from_pub_key(key.sec): 5})
+    lines = report(
+        text,
+        scan_module.dumps(scan_module.scan(text, chain, server="s:1", node=node(fake))),
+    ).splitlines()
+    used = [line for line in lines if line.startswith("    account 0, ")]
+    assert len(used) == 4
+    assert lines[-3:-1] == [
+        (
+            "total: bitcoin, 9 sat confirmed, 0 sat unconfirmed, 1 used accounts,"
+            " each account key once"
+        ),
+        "total: ethereum, 5 wei, 1 used accounts, each account key once",
+    ]
 
 
 def test_without_a_scan_result_nothing_is_checked(abandon: str) -> None:
