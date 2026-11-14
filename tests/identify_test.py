@@ -26,7 +26,7 @@ from typing import Any
 
 import pytest
 from bip32_descriptors.bip32 import BIP32KeyData, fingerprint, xpub_from_xprv
-from bip39_slip39 import bip39, slip39
+from bip39_slip39 import bip39, dispatch, slip39
 from btclib import b58
 from btclib.hashes import hash160
 
@@ -365,15 +365,27 @@ MADE_UP_SECRET = bytes(range(16))
 
 
 def split(groups: list[tuple[int, int]], group_threshold: int) -> list[list[str]]:
-    """Return the shares of the made-up secret, by group.
+    """Return the shares of the made-up secret, by group, the same on every run.
+
+    The random bytes come from a generator with a fixed seed. Fresh
+    shares would make the tests that expect one reading flaky: a share
+    is sometimes an Electrum seed too, as `bip39_slip39.dispatch`
+    explains, and identify then reads both. The assertion keeps the
+    first share, which these tests type first, clear of that.
 
     :param groups: each group's member threshold and member count.
     :param group_threshold: how many groups recover the secret.
     :returns: the mnemonics of each group, member 0 first.
     """
-    return slip39.mnemonics_from_master_secret(
-        MADE_UP_SECRET, groups, group_threshold, iteration_exponent=0
+    shares = slip39.mnemonics_from_master_secret(
+        MADE_UP_SECRET,
+        groups,
+        group_threshold,
+        iteration_exponent=0,
+        entropy_source=random.Random(0).randbytes,
     )
+    assert dispatch.all_seed_types_from_mnemonic(shares[0][0]) == ["slip39"]
+    return shares
 
 
 @pytest.mark.parametrize(
@@ -445,6 +457,23 @@ def test_a_share_with_another_member_threshold_in_its_group_is_refused() -> None
     bundle = identify(first, [""], prompt, accounts=1)
     assert prompt.shown[1].startswith("A share of another set")
     assert len(bundle.readings) == 1
+
+
+#: The share of a 1-of-1 set of the made-up secret, iteration exponent 0,
+#: whose words Electrum also reads as a "standard" seed.
+ELECTRUM_SHARE = (
+    "election dramatic academic academic armed dress review premium imply "
+    "typical dominant daisy voting random agency bike dive deadline finance survive"
+)
+
+
+def test_a_share_that_is_also_an_electrum_seed_is_read_as_both() -> None:
+    """Both schemes claim the words, and each gives its reading."""
+    bundle = identify(ELECTRUM_SHARE, [""], no_share, accounts=1)
+    assert bundle.claims == ("slip39", "electrum_standard")
+    assert [r.scheme for r in bundle.readings] == ["slip39", "electrum_standard"]
+    root = BIP32KeyData.from_seed(MADE_UP_SECRET)
+    assert bundle.readings[0].master_fingerprint == fingerprint(root).hex()
 
 
 def test_an_incomplete_set_is_not_checked() -> None:
