@@ -265,7 +265,7 @@ jobs:
           .venv/bin/python -c "
           from importlib.metadata import requires, version
           import seed_scan
-          from seed_scan import bundle, cli, exceptions, identify, report, scan
+          from seed_scan import bundle, cli, evm, exceptions, identify, report, scan
 
           print(version('seed-scan'), requires('seed-scan'))
           assert seed_scan.__version__ == version('seed-scan')
