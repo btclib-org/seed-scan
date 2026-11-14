@@ -20,7 +20,7 @@ from bip32_descriptors.bip32 import BIP32KeyData
 from bip39_slip39 import bip39
 from btclib.script import ScriptPubKey
 from btclib_wallet.descriptors import parse
-from btclib_wallet.fetch.history import BlockRef, HistoryTx
+from btclib_wallet.fetch.history import BlockRef, HistoryTx, ScriptHistory
 
 from seed_scan import forks as forks_module
 from seed_scan.bundle import dumps, loads
@@ -42,7 +42,9 @@ from .no_secret_test import Secrets, assert_text_secret_free
 from .scan_test import ELSEWHERE, Chain, edited, pay
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
+    from collections.abc import Iterable, Iterator
+
+    from btclib.alias import Octets
 
 #: The last block Bitcoin and Bitcoin Cash share, and the first that is
 #: Bitcoin Cash's alone.
@@ -57,6 +59,37 @@ NO_WITNESS = (
 
 #: A reader no refusal may reach.
 NEVER = Chain()
+
+#: A CashTokens token prefix, one fungible token of category aa..aa: the
+#: first valid prefix of the specification's vectors,
+#: https://github.com/cashtokens/cashtokens/blob/41d2444c17bbfb456d4061953a3ed0e32161571b/test-vectors/token-prefix-valid.json
+TOKEN_PREFIX = bytes.fromhex("ef" + "aa" * 32 + "1001")
+
+
+class Listing:
+    """A reader that lists the same transactions whatever it is asked.
+
+    As a server indexing an output carrying tokens under its script alone
+    would list it.
+    """
+
+    def __init__(self, *entries: HistoryTx) -> None:
+        """Keep the transactions.
+
+        :param entries: the transactions and their blocks.
+        """
+        self.entries = entries
+
+    def get_history(
+        self, scripts: Iterable[Octets | ScriptPubKey], start_height: int = 0
+    ) -> ScriptHistory:
+        """Answer every transaction kept.
+
+        :param scripts: unread.
+        :param start_height: the height the read starts from.
+        :returns: the transactions, up to a tip past them.
+        """
+        return ScriptHistory(BlockRef(start_height, bytes(32)), OWN, self.entries)
 
 
 @pytest.fixture(autouse=True)
@@ -136,6 +169,29 @@ def test_a_spend_before_the_fork_is_not_held_at_it(abandon: str) -> None:
     )
     (used,) = forks(abandon, chain, chain="bitcoin-cash", server="h:1").used
     assert (used.at_fork, used.confirmed) == (0, 0)
+
+
+def test_an_output_carrying_tokens_is_not_counted(abandon: str) -> None:
+    """Its prefix is part of the script it pays, which is not the account's.
+
+    The account is used through the plain payment beside it, and neither
+    its balance now nor at the fork holds the token output's satoshis.
+    """
+    plain = p2pkh("m/44h/145h/0h/0/0")
+    token = ScriptPubKey(TOKEN_PREFIX + plain.script)
+    chain = Chain(HistoryTx(pay(1, (plain, 1_000), (token, 800)), SHARED))
+    (used,) = forks(abandon, chain, chain="bitcoin-cash", server="h:1").used
+    assert (used.confirmed, used.at_fork) == (1_000, 1_000)
+    assert used.addresses == (
+        Address(0, 0, legacy_address("m/44h/145h/0h/0/0"), 1_000, 0),
+    )
+
+
+def test_an_account_paid_only_through_tokens_reads_as_unused(abandon: str) -> None:
+    """Listed under the account's script, the payment still pays another."""
+    token = ScriptPubKey(TOKEN_PREFIX + p2pkh("m/44h/145h/0h/0/0").script)
+    chain = Listing(HistoryTx(pay(1, (token, 800)), SHARED))
+    assert not forks(abandon, chain, chain="bitcoin-cash", server="h:1").used
 
 
 def test_nothing_used_reads_each_p2pkh_purpose_and_lists_the_segwit_ones(

@@ -35,7 +35,8 @@ held when the chains parted. An output carrying CashTokens holds the
 token prefix before its script, in the same length field, as the
 CashTokens specification's *Token Encoding* says
 (https://github.com/cashtokens/cashtokens/blob/41d2444c17bbfb456d4061953a3ed0e32161571b/readme.md#token-encoding):
-it is not read as paying the script, so its satoshis are not counted.
+it is not read as paying the script, so its satoshis are not counted,
+and an account paid only through such outputs reads as unused.
 
 The result is one JSON object, which `dumps` writes. It holds public data
 only. Its members:
