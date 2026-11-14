@@ -4,7 +4,7 @@
 
 """Tests for `seed_scan.evm`: the URL, the framing, the quantities, the policy.
 
-The node is `Ethereum`, a fake kept in memory that answers the five
+The node is `Ethereum`, a fake kept in memory that answers the
 methods `Node` asks. Some tests hand it to `Node` as its transport; the
 others serve it over HTTP on the loopback interface, with `HttpServer`,
 so that the network policy under test is the one the request meets.
@@ -512,7 +512,8 @@ def test_an_address_that_is_not_one_is_refused_unasked(address: str) -> None:
     transport = refusing()
     node = Node("https://node.example", transport=transport)
     token_balance = functools.partial(node.token_balance, CONTRACT)
-    for method in (node.balance, node.nonce, token_balance):
+    contract = functools.partial(node.token_balance, address=ADDRESS)
+    for method in (node.balance, node.nonce, token_balance, contract):
         with pytest.raises(SeedScanValueError) as caught:
             method(address)
         said = "not an address: 0x and 40 hex digits, in one case or EIP-55's"
@@ -542,6 +543,8 @@ def test_any_letter_of_a_checksum_in_the_other_case_is_refused(address: str) -> 
             node.nonce(other)
         with pytest.raises(SeedScanValueError):
             node.token_balance(CONTRACT, other)
+        with pytest.raises(SeedScanValueError):
+            node.token_balance(other, ADDRESS)
     assert node.requests == 0
     transport.assert_not_called()
 
@@ -557,10 +560,47 @@ def test_an_address_that_is_no_string_is_a_type_error(address: object) -> None:
     transport = refusing()
     node = Node("https://node.example", transport=transport)
     token_balance = functools.partial(node.token_balance, CONTRACT)
-    for method in (node.balance, node.nonce, token_balance):
+    contract = functools.partial(node.token_balance, address=ADDRESS)
+    for method in (node.balance, node.nonce, token_balance, contract):
         with pytest.raises(SeedScanTypeError) as caught:
             method(address)  # type: ignore[arg-type]
         assert str(caught.value) == f"not an address: a {type(address).__name__}"
+    assert node.requests == 0
+    transport.assert_not_called()
+
+
+@pytest.mark.parametrize("block", [True, False, 16.0, "0x10", [16]])
+def test_a_block_that_is_no_int_is_a_type_error(block: object) -> None:
+    """A bool among them: refused before the node is asked, its type named.
+
+    :param block: the value refused.
+    """
+    transport = refusing()
+    node = Node("https://node.example", transport=transport)
+    for method in (
+        functools.partial(node.balance, ADDRESS),
+        functools.partial(node.nonce, ADDRESS),
+        functools.partial(node.token_balance, CONTRACT, ADDRESS),
+    ):
+        with pytest.raises(SeedScanTypeError) as caught:
+            method(block)
+        assert str(caught.value) == f"not a block: a {type(block).__name__}"
+    assert node.requests == 0
+    transport.assert_not_called()
+
+
+def test_a_block_below_0_is_refused_unasked() -> None:
+    """Block -1 would be sent as ``-0x1``, which is no JSON-RPC quantity."""
+    transport = refusing()
+    node = Node("https://node.example", transport=transport)
+    for method in (
+        functools.partial(node.balance, ADDRESS),
+        functools.partial(node.nonce, ADDRESS),
+        functools.partial(node.token_balance, CONTRACT, ADDRESS),
+    ):
+        with pytest.raises(SeedScanValueError) as caught:
+            method(-1)
+        assert str(caught.value) == "not a block: below 0"
     assert node.requests == 0
     transport.assert_not_called()
 
@@ -1016,6 +1056,7 @@ def test_each_chain_reads_the_tokens_its_sources_give() -> None:
             ("USDC.e", 6),
             ("DAI", 18),
             ("WETH", 18),
+            ("WBTC", 8),
         ],
         "base": [
             ("USDT", 6),

@@ -45,8 +45,9 @@ An address is ``0x`` and 40 hex digits, in one case, lower or upper, or
 in mixed case where the case is its `EIP-55`_ checksum, as
 `coin_addresses.evm.assert_valid_address` reads it. `Node.balance`,
 `Node.nonce` and `Node.token_balance` refuse any other address before
-the node is asked, a string as a `SeedScanValueError` and any other type
-as a `SeedScanTypeError`; none quotes it.
+the node is asked, `Node.token_balance` its contract as well as its
+holder, a string as a `SeedScanValueError` and any other type as a
+`SeedScanTypeError`; none quotes it.
 
 The request goes through `btclib_wallet.fetch.transport.http_request`,
 whose network policy is the one `btclib_wallet.fetch.transport`'s
@@ -230,6 +231,10 @@ class EvmChain:
 # Base's cbBTC, which that registry does not list, is Uniswap's default
 # token list's:
 #   https://github.com/Uniswap/default-token-list/blob/0ae664438dd43d428c5cbef2726af1ba6378a17c/src/tokens/base.json#L91-L97
+# OP Mainnet's WBTC, which neither lists, is the one Uniswap's
+# smart-order-router declares for chain id 10, OP Mainnet's:
+#   https://github.com/Uniswap/smart-order-router/blob/04c7c0b4d85ac2a19a3ff53987d21f9c8f1fe647/src/providers/token-provider.ts#L199-L205
+#   https://github.com/Uniswap/sdks/blob/8ae0425c57e1699b0ae48ebb3077a2f526ae3818/sdks/sdk-core/src/chains.ts#L6
 # The registry lists no USDT, USDC, DAI or wrapped ETC on Ethereum
 # Classic, whose list is empty:
 #   https://github.com/trustwallet/assets/tree/50d6fd574843da19cdd5fded102b5d6b951c72d2/blockchains/classic/assets
@@ -270,6 +275,7 @@ _OP_MAINNET_TOKENS = (
     EvmToken("0x7F5c764cBc14f9669B88837ca1490cCa17c31607", "USDC.e", 6),
     EvmToken("0xDA10009cBd5D07dd0CeCc66161FC93D7c9000da1", "DAI", 18),
     EvmToken("0x4200000000000000000000000000000000000006", "WETH", 18),
+    EvmToken("0x68f180fcCe6836688e9084f035309E29Bf0A2095", "WBTC", 8),
 )
 _BASE_TOKENS = (
     EvmToken("0xfde4C96c8593536E31F229EA8f37b2ADa2699bb2", "USDT", 6),
@@ -488,7 +494,9 @@ class Node:
     not one 32-byte word, is a `FetchError` too.
 
     `balance`, `nonce` and `token_balance` read the state at the block
-    numbered `block`, or at ``latest`` where it is None.
+    numbered `block`, or at ``latest`` where it is None. They refuse a
+    block that is no int, a bool among them, as a `SeedScanTypeError`,
+    and one below 0 as a `SeedScanValueError`, without asking anything.
     """
 
     def __init__(
@@ -607,16 +615,25 @@ class Node:
         says, in the token's units.
         """
         word = _address(address)[2:].lower().zfill(64)
-        call = {"to": contract, "input": _BALANCE_OF + word}
+        call = {"to": _address(contract), "input": _BALANCE_OF + word}
         result = self._call("eth_call", [call, _block(block)])
         if not isinstance(result, str) or _WORD.fullmatch(result) is None:
             raise FetchError(f"{self._name}: eth_call answered no 32-byte word")
         return int(result, 16)
 
 
-def _block(block: int | None) -> str:
-    """Return a block parameter: the number as a quantity, or ``latest``."""
-    return "latest" if block is None else hex(block)
+def _block(block: object) -> str:
+    """Return a block parameter, refusing it as `Node` says.
+
+    The number as a quantity, or ``latest`` where it is None.
+    """
+    if block is None:
+        return "latest"
+    if not isinstance(block, int) or isinstance(block, bool):
+        raise SeedScanTypeError(f"not a block: a {type(block).__name__}")
+    if block < 0:
+        raise SeedScanValueError("not a block: below 0")
+    return hex(block)
 
 
 def _is_response(answer: dict[str, object], request_id: int) -> bool:
