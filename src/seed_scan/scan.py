@@ -1216,8 +1216,8 @@ def loads(text: str, bundle: str) -> ScanResult:
     )
 
 
-def _document(text: str) -> dict[str, Any]:
-    """Return the JSON object of a scan result, of its format and version."""
+def _document(text: str, form: str = FORMAT, version: int = VERSION) -> dict[str, Any]:
+    """Return the JSON object of a result, of format `form` and `version`."""
     if not isinstance(text, str):
         raise SeedScanTypeError(f"scan result: text of type {type(text).__name__}")
     document: object = None
@@ -1235,8 +1235,8 @@ def _document(text: str) -> dict[str, Any]:
         raise SeedScanValueError(f"scan result: {where}")
     if not isinstance(document, dict):
         raise SeedScanTypeError(f"scan result: a JSON {type(document).__name__}")
-    if _member(document, "format", str) != FORMAT:
-        raise SeedScanValueError(f"scan result: format is not {FORMAT!r}")
-    if _member(document, "version", int) != VERSION:
-        raise SeedScanValueError(f"scan result: version is not {VERSION}")
+    if _member(document, "format", str) != form:
+        raise SeedScanValueError(f"scan result: format is not {form!r}")
+    if _member(document, "version", int) != version:
+        raise SeedScanValueError(f"scan result: version is not {version}")
     return document

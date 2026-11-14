@@ -59,6 +59,9 @@ only. Its members:
   same script on Bitcoin Cash; and ``at_fork``, in satoshis.
 - ``not_checked``: one object per reading, coin and purpose not read,
   with ``reading``, ``coin``, ``purpose`` and ``reason``.
+
+`loads` reads a result back, against the text of the bundle it was made
+from.
 """
 
 from __future__ import annotations
@@ -69,29 +72,43 @@ from dataclasses import asdict, dataclass, fields, replace
 from functools import partial
 from hashlib import sha256
 from types import MappingProxyType
+from typing import Any
 
 from btclib_wallet.bip44 import AccountUse
 from btclib_wallet.descriptors import Descriptor, parse
 from btclib_wallet.fetch.history import HistoryReader
 
-from seed_scan.bundle import Account, Reading, loads
+from seed_scan.bundle import Account, Bundle, Reading
+from seed_scan.bundle import loads as bundle_loads
 from seed_scan.exceptions import SeedScanTypeError, SeedScanValueError
 from seed_scan.scan import (
     _OUTSIDE,
     ACCOUNT_GAP,
     GAP_LIMIT,
     Address,
+    Searched,
     Tip,
     Transaction,
+    UsedAccount,
     _balances,
     _bounded,
+    _check_searches,
+    _count,
     _descriptors,
     _discover,
+    _document,
+    _Held,
+    _keyed,
     _limit,
+    _member,
     _numbered,
+    _objects,
     _Purposes,
     _read_account,
+    _searched,
+    _used,
     _used_account,
+    _where,
     parse_server,
 )
 
@@ -107,6 +124,7 @@ __all__ = [
     "Skipped",
     "dumps",
     "forks",
+    "loads",
 ]
 
 #: The value of the ``format`` member.
@@ -224,21 +242,26 @@ def dumps(result: ForksResult) -> str:
     return json.dumps(document, indent=2) + "\n"
 
 
+def _own_texts(reading: Reading, account: Account) -> tuple[str, ...]:
+    """Return the receive and change descriptors of an account of the chain.
+
+    P2PKH over the account's xpub, with its key origin, as text.
+    """
+    origin = f"[{reading.master_fingerprint}{account.path[1:]}]"
+    return tuple(f"pkh({origin}{account.xpub}/{branch}/*)" for branch in (0, 1))
+
+
 def _own_descriptors(
     reading: Reading, account: Account, where: str
 ) -> tuple[Descriptor, ...]:
-    """Return the receive and change descriptors of an account of the chain.
+    """Return `_own_texts`, parsed.
 
-    P2PKH over the account's xpub, with its key origin. `parse` checks that
-    the key is a point of the curve; its refusal may quote the key, so it
-    is not kept, as `seed_scan.scan` does not keep it.
+    `parse` checks that the key is a point of the curve; its refusal may
+    quote the key, so it is not kept, as `seed_scan.scan` does not keep it.
     """
-    origin = f"[{reading.master_fingerprint}{account.path[1:]}]"
     descriptors: tuple[Descriptor, ...] = ()
     with contextlib.suppress(TypeError, ValueError):
-        descriptors = tuple(
-            parse(f"pkh({origin}{account.xpub}/{branch}/*)") for branch in (0, 1)
-        )
+        descriptors = tuple(parse(text) for text in _own_texts(reading, account))
     if not descriptors:
         err_msg = f"bundle: {where}: a descriptor that does not parse"
         raise SeedScanValueError(err_msg)
@@ -326,6 +349,11 @@ def _fork_account(
     at_fork = _at_fork(use, fork_height)
     if not _bounded(at_fork, 0):
         raise SeedScanValueError(f"{where}: {_OUTSIDE}")
+    return _forked(coin, found, at_fork)
+
+
+def _forked(coin: str, found: UsedAccount, at_fork: int) -> ForkAccount:
+    """Return a used account of `coin`, with what it held at the fork."""
     members = {field.name: getattr(found, field.name) for field in fields(found)}
     return ForkAccount(coin=coin, at_fork=at_fork, **members)
 
@@ -354,7 +382,7 @@ def forks(
     `chain` not in `CHAINS` is refused too, without quoting it. A `chain`,
     a `server` or a bound of a wrong type is a `SeedScanTypeError`.
     """
-    bundle = loads(text)
+    bundle = bundle_loads(text)
     if not isinstance(chain, str):
         raise SeedScanTypeError(f"invalid chain type: {type(chain).__name__}")
     if chain not in CHAINS:
@@ -397,3 +425,181 @@ def forks(
         used=tuple(used),
         not_checked=tuple(not_checked),
     )
+
+
+#: How `seed_scan.scan`'s reader opens a refusal, and how `loads` opens it.
+_SCAN_RESULT = "scan result: "
+_FORKS_RESULT = "forks result: "
+
+
+def _coin(document: dict[str, Any], held: dict[str, _Held]) -> str:
+    """Return the ``coin`` member of an object: one whose accounts are read."""
+    coin: str = _member(document, "coin", str)
+    if coin not in held:
+        raise SeedScanValueError("forks result: member 'coin' is not one forks reads")
+    return coin
+
+
+#: A coin's searches, by reading and purpose.
+_Searches = dict[tuple[int, int | None], Searched]
+
+
+def _searches(
+    document: dict[str, Any], held: dict[str, _Held]
+) -> tuple[dict[str, _Searches], tuple[ForkSearched, ...]]:
+    """Read the ``searched`` member: each search once, of accounts read.
+
+    Returns the searches of each coin, and all of them in order.
+    """
+    searched: dict[str, _Searches] = {coin: {} for coin in held}
+    order: list[ForkSearched] = []
+    for item in _objects(document, "searched"):
+        coin = _coin(item, held)
+        if (*_where(item), 0) not in held[coin]:
+            raise SeedScanValueError("forks result: a search of accounts not read")
+        done = _searched(item, held[coin])
+        if (done.reading, done.purpose) in searched[coin]:
+            raise SeedScanValueError("forks result: a purpose searched twice")
+        searched[coin][done.reading, done.purpose] = done
+        order.append(
+            ForkSearched(
+                done.reading, coin, done.purpose, done.accounts, done.cut_short
+            )
+        )
+    return searched, tuple(order)
+
+
+def _held_at_fork(document: dict[str, Any], found: UsedAccount, height: int) -> int:
+    """Return the ``at_fork`` member of a used account.
+
+    What transactions confirmed below the fork `height` leave: a balance
+    `_bounded` takes, and one of them listed where it is not 0.
+    """
+    at_fork = _count(document, "at_fork")
+    if not _bounded(at_fork, 0):
+        raise SeedScanValueError(f"forks result: {_OUTSIDE}")
+    before = (t.height for t in found.transactions if t.height is not None)
+    if at_fork and all(h >= height for h in before):
+        err_msg = "forks result: a balance at the fork no transaction listed gives"
+        raise SeedScanValueError(err_msg)
+    return at_fork
+
+
+def _skip(document: dict[str, Any], skipped: list[Skipped]) -> Skipped:
+    """Read one ``not_checked`` object: one `forks` writes for the bundle."""
+    reading, purpose = _where(document)
+    coin: str = _member(document, "coin", str)
+    skip = Skipped(reading, coin, purpose, _member(document, "reason", str))
+    if skip not in skipped:
+        err_msg = "forks result: an item of 'not_checked' is not one forks writes"
+        raise SeedScanValueError(err_msg)
+    return skip
+
+
+def _held(bundle: Bundle, chain: Chain) -> tuple[dict[str, _Held], list[Skipped]]:
+    """Return the accounts `forks` reads, by coin, and those it does not.
+
+    The bundle is refused as `forks` refuses it. An account of the chain's
+    own coin holds no descriptor in the bundle, and is given here the ones
+    `forks` reads it with.
+    """
+    held: dict[str, _Held] = {_BITCOIN: {}, chain.name: {}}
+    skipped: list[Skipped] = []
+    for n, reading in enumerate(bundle.readings):
+        coins, skips = _plan(n, reading, chain)
+        skipped += skips
+        for coin, purposes in coins:
+            for purpose, accounts in purposes.items():
+                for account, _ in accounts:
+                    texts = account.descriptors
+                    if coin == chain.name:
+                        texts = _own_texts(reading, account)
+                    held[coin][n, purpose, account.account] = replace(
+                        account, descriptors=texts
+                    )
+    return held, skipped
+
+
+def _used_accounts(
+    document: dict[str, Any],
+    held: dict[str, _Held],
+    searched: dict[str, _Searches],
+    bounds: tuple[int, int],
+    fork_height: int,
+) -> tuple[ForkAccount, ...]:
+    """Read the ``used`` member, as `seed_scan.scan` reads its own, by coin.
+
+    `bounds` are the result's ``gap_limit`` and ``account_gap``.
+    """
+    gap_limit, account_gap = bounds
+    found: dict[str, list[UsedAccount]] = {coin: [] for coin in held}
+    used: list[ForkAccount] = []
+    for item in _objects(document, "used"):
+        coin = _coin(item, held)
+        account = _used(item, held[coin], searched[coin], gap_limit)
+        found[coin].append(account)
+        used.append(_forked(coin, account, _held_at_fork(item, account, fork_height)))
+    for coin, accounts in found.items():
+        _keyed(accounts)
+        _check_searches(searched[coin], accounts, held[coin], account_gap)
+    return tuple(used)
+
+
+def _result(text: str, bundle: str) -> ForksResult:
+    """Return `loads`'s answer, its refusals opening as `seed_scan.scan`'s."""
+    read = bundle_loads(bundle)
+    document = _document(text, FORMAT, VERSION)
+    digest = sha256(bundle.encode("utf-8")).hexdigest()
+    if _member(document, "bundle", str) != digest:
+        raise SeedScanValueError("forks result: made from another bundle")
+    chain: str = _member(document, "chain", str)
+    if chain not in CHAINS:
+        raise SeedScanValueError("forks result: member 'chain' is not one forks reads")
+    fork = CHAINS[chain]
+    if _count(document, "fork_height") != fork.fork_height:
+        err_msg = "forks result: member 'fork_height' is not the chain's"
+        raise SeedScanValueError(err_msg)
+    held, skipped = _held(read, fork)
+    server: str = _member(document, "server", str)
+    parse_server(server, "forks result: member 'server'")
+    gap_limit = _count(document, "gap_limit", 1)
+    account_gap = _count(document, "account_gap", 1)
+    searched, order = _searches(document, held)
+    bounds = (gap_limit, account_gap)
+    used = _used_accounts(document, held, searched, bounds, fork.fork_height)
+    return ForksResult(
+        bundle=digest,
+        chain=chain,
+        server=server,
+        fork_height=fork.fork_height,
+        gap_limit=gap_limit,
+        account_gap=account_gap,
+        searched=order,
+        used=used,
+        not_checked=tuple(
+            _skip(item, skipped) for item in _objects(document, "not_checked")
+        ),
+    )
+
+
+def loads(text: str, bundle: str) -> ForksResult:
+    """Read a forks result back from its JSON text, against its bundle.
+
+    Read as `seed_scan.scan.loads` reads a scan result, and refused as it
+    refuses one, each refusal opening with ``forks result:``. A used
+    account and a search name accounts of the bundle that `forks` reads,
+    by coin. Refused besides: a ``chain`` not in `CHAINS`, unquoted; a
+    ``fork_height`` that is not the chain's; an ``at_fork`` outside 0 to
+    21 million bitcoin, or not 0 where no transaction listed is confirmed
+    below the fork height; and an item of ``not_checked`` that is not one
+    `forks` writes for the bundle, its reason included.
+    """
+    try:
+        return _result(text, bundle)
+    except (SeedScanTypeError, SeedScanValueError) as e:
+        message = str(e)
+        if not message.startswith(_SCAN_RESULT):
+            raise
+        kind = type(e)
+    # raised outside the `except`, so that the refusal has no context
+    raise kind(_FORKS_RESULT + message.removeprefix(_SCAN_RESULT))

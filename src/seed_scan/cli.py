@@ -50,12 +50,12 @@ server's blocks are checked as ``scan`` checks them, at the chain's
 checkpoints in place of Bitcoin's.
 
 ``seed-scan report`` reads a bundle from the file named and, where
-``--scan`` names one, the scan result made from it, and writes
-`seed_scan.report.report`'s text to standard output. It reads no secret,
-and refuses every socket and every new process before it reads a file,
-as ``identify`` does. The report goes out as its UTF-8 bytes, with no
-newline translation, so that the file it is redirected to is what its
-last line hashes, on Windows too.
+``--scan`` names one, the scan result made from it, and the forks result
+each ``--forks`` names, and writes `seed_scan.report.report`'s text to
+standard output. It reads no secret, and refuses every socket and every
+new process before it reads a file, as ``identify`` does. The report
+goes out as its UTF-8 bytes, with no newline translation, so that the
+file it is redirected to is what its last line hashes, on Windows too.
 
 A file the user names is read as its UTF-8 bytes, with no newline
 translation either, so that a digest of its text, as the bundle's in
@@ -553,7 +553,8 @@ def _report_command(
         forbid_network()
         bundle = _read_text(args.bundle)
         result = None if args.scan is None else _read_text(args.scan, "scan result")
-        text = report(bundle, result)
+        forked = [_read_text(name, "forks result") for name in args.forks]
+        text = report(bundle, result, forked)
     except SeedScanException as e:
         err_msg = str(e)
     else:
@@ -715,19 +716,29 @@ def _parser() -> argparse.ArgumentParser:
     _add_bounds(forks_parser)
     report_parser = commands.add_parser(
         "report",
-        help="summarize a bundle and its scan result, offline",
+        help="summarize a bundle and its scan and forks results, offline",
         description=(
-            "Read a public bundle and the scan result made from it, offline,"
-            " and write what they say to standard output: per reading, coin"
-            " and purpose, the used accounts, their balance, addresses and"
-            " paths, and what was not checked and why. seed_scan.report"
-            " documents the layout."
+            "Read a public bundle and the scan and forks results made from it,"
+            " offline, and write what they say to standard output: per"
+            " reading, coin and purpose, the used accounts, their balance,"
+            " addresses and paths, with the balance at the fork on a chain a"
+            " forks result reads, and what was not checked and why."
+            " seed_scan.report documents the layout."
         ),
     )
     report_parser.add_argument("bundle", help="the bundle file identify wrote")
     report_parser.add_argument(
         "--scan",
-        help="the result scan wrote for that bundle; without it, nothing is checked",
+        help=(
+            "the result scan wrote for that bundle; without it, the report"
+            " checks only what --forks names"
+        ),
+    )
+    report_parser.add_argument(
+        "--forks",
+        action="append",
+        default=[],
+        help="a result forks wrote for that bundle; once per chain",
     )
     return parser
 

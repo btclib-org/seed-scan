@@ -108,17 +108,19 @@ history against the chain is
 ## Reporting what was found
 
 ```shell
-seed-scan report bundle.json --scan scan.json > report.txt
+seed-scan report bundle.json --scan scan.json --forks forks.json > report.txt
 ```
 
 It reads the bundle and the scan result made from it, offline, and
 writes what they say to standard output: for each reading, coin and
 purpose, the used accounts and each of their used addresses, with its
 balance and path, and what was not checked and why. Without `--scan`,
-as after a server or a node failed, every account is listed as not
-checked. A result made from another bundle is refused. The last line is
-the SHA-256 of the lines above it. `seed_scan.report` documents the
-layout.
+as after a server or a node failed, scan's lines list every account as
+not checked. Each `--forks` names a forks result made from the bundle,
+one per chain, with or without `--scan`, and the report lists what it
+read the same way, each used account with its balance at the fork too.
+A result made from another bundle is refused. The last line is the
+SHA-256 of the lines above it. `seed_scan.report` documents the layout.
 
 ## What touches the secret
 
@@ -139,10 +141,9 @@ one machine and everything after it reads public data:
   which server and which node each asks. `forks` reads the bundle's
   accounts on a chain forked from Bitcoin, and takes what each held at
   the fork from the history the chain's server answers.
-- **`report` touches neither.** It assembles what `scan` found: what
-  was searched, what was found, the limits of the search, and the digest
-  of the report. It reads no result of `forks`, which is
-  [btclib-org/seed-scan#32](https://github.com/btclib-org/seed-scan/issues/32).
+- **`report` touches neither.** It assembles what `scan` and `forks`
+  found: what was searched, what was found, the limits of the search,
+  and the digest of the report.
 
 The bundle holds no secret, but it is not harmless: an account public
 key gives every address of that account, so whoever holds the bundle can
