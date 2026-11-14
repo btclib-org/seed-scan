@@ -136,3 +136,11 @@ person running `identify` holds the keys to funds:
     in the server's place, as one started while the server is down, is
     sent every request and answers each as it likes: TLS with `--cafile`
     is what tells the user's server from it.
+- **The EVM node is trusted for what it answers.** `scan` takes each
+    balance and nonce as the node the user names answers it, and checks
+    no proof of either. It compares the chain id the node answers with
+    that of the chain the user names: that refuses an honest node of a
+    chain whose chain id differs, as an Ethereum node named for Ethereum
+    Classic, and not one of a chain that answers the same chain id. It
+    does not prove that the balances answered are that chain's, since a
+    node answers whatever chain id it is set to.

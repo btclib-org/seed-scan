@@ -33,7 +33,7 @@ from btclib_wallet.exceptions import FetchError, HttpError, RpcError
 from btclib_wallet.fetch.transport import SessionTransport
 from typing_extensions import override
 
-from seed_scan.evm import MAX_ANSWER, Node, quantity
+from seed_scan.evm import EVM_CHAINS, MAX_ANSWER, Node, quantity
 from seed_scan.exceptions import SeedScanTypeError, SeedScanValueError
 
 if TYPE_CHECKING:
@@ -820,3 +820,39 @@ def test_a_failed_exchange_leaves_no_socket_to_the_collector(
     finally:
         gc.enable()
     assert not [str(w.message) for w in seen]
+
+
+def test_each_chain_is_the_one_its_sources_give() -> None:
+    """The chain id and symbol of each, as the comment above the table cites.
+
+    A chain added or changed is a new reading of those sources, so this pin
+    moves with that comment.
+    """
+    assert {
+        name: (chain.chain_id, chain.symbol) for name, chain in EVM_CHAINS.items()
+    } == {
+        "ethereum": (1, "ETH"),
+        "ethereum-classic": (61, "ETC"),
+        "bnb-smart-chain": (56, "BNB"),
+        "polygon-pos": (137, "POL"),
+        "arbitrum-one": (42161, "ETH"),
+        "op-mainnet": (10, "ETH"),
+        "base": (8453, "ETH"),
+        "avalanche-c-chain": (43114, "AVAX"),
+    }
+    assert all(name == chain.name for name, chain in EVM_CHAINS.items())
+
+
+def test_ethereum_classic_alone_reads_its_coin() -> None:
+    """Every chain reads Ethereum's accounts; Ethereum Classic its own too.
+
+    `seed_scan.scan.OTHER_CHAIN` says so to a user whose node serves another.
+    """
+    assert {name: chain.coins for name, chain in EVM_CHAINS.items()} == {
+        name: (
+            ("ethereum", "ethereum-classic")
+            if name == "ethereum-classic"
+            else ("ethereum",)
+        )
+        for name in EVM_CHAINS
+    }
