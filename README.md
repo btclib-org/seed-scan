@@ -62,13 +62,11 @@ verified against the system's CA certificates, or against those of the
 file `--cafile` names, which is how a server with a self-signed
 certificate is reached.
 
-The connection is kept from one request to the next. A new one, with a
-new handshake, replaces it after a request on it fails, where data
-waits on it before a request is sent, as when the server closed it or
-pushed a notification, for a request whose id it already carried, and
-once it has carried as many request ids as btclib-wallet's
-`PersistentTlsLineTransport` allows. The command closes the one open
-when it ends.
+The connection is kept from one request to the next, and replaced by a
+new one, with a new handshake, where btclib-wallet's
+`PersistentTlsLineTransport` says it is: after a failed request, or a
+connection the server closed, among others. The command closes the one
+open when it ends.
 
 `--tcp` asks a server on your own machine over plain TCP instead. Its
 host must resolve to loopback addresses alone, `127.0.0.0/8` or `::1`,
