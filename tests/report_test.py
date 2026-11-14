@@ -2,11 +2,11 @@
 # Distributed under the MIT software license, see the accompanying
 # LICENSE file or https://opensource.org/license/mit for the full text.
 
-"""Tests for `seed_scan.report`, on bundles and scan results of the suite.
+"""Tests for `seed_scan.report`, on bundles and results of the suite.
 
 The bundles are `identify`'s, on the vectors `tests/identify_test.py`
-names, and the scan results `scan`'s, over the chain `tests/scan_test.py`
-keeps in memory.
+names, and the scan and forks results `scan`'s and `forks`'s, over the
+chain `tests/scan_test.py` keeps in memory.
 """
 
 from __future__ import annotations
@@ -18,20 +18,30 @@ from hashlib import sha256
 import pytest
 from bip32_descriptors.bip32 import BIP32KeyData
 from bip39_slip39 import bip39
-from btclib_wallet.descriptors import parse
+from btclib_wallet.descriptors import add_checksum, parse, strip_checksum
 from btclib_wallet.fetch.history import HistoryTx
 from coin_addresses.evm import address_from_pub_key
 
+from seed_scan import forks as forks_module
 from seed_scan import report as report_module
 from seed_scan import scan as scan_module
 from seed_scan.bundle import dumps, loads
-from seed_scan.exceptions import SeedScanTypeError
+from seed_scan.exceptions import SeedScanTypeError, SeedScanValueError
 from seed_scan.identify import identify
-from seed_scan.report import NO_SCAN, NO_TOKENS, NOT_IN_SCAN, VERSION, report
+from seed_scan.report import (
+    NO_CASHTOKENS,
+    NO_SCAN,
+    NO_TOKENS,
+    NOT_IN_FORKS,
+    NOT_IN_SCAN,
+    VERSION,
+    report,
+)
 from seed_scan.scan import NO_NODE, NO_SERVER, NOT_READ
 
 from .evm_test import Ethereum
-from .identify_test import ABANDON, BIP84_CHANGE, OLD, SEGWIT, no_share
+from .forks_test import NO_WITNESS, OWN, SHARED, p2pkh
+from .identify_test import ABANDON, BIP84_CHANGE, OLD, SEGWIT, STANDARD, no_share
 from .no_secret_test import Secrets, assert_text_secret_free
 from .scan_test import BLOCK, ELSEWHERE, Chain, eth_address, node, pay, script
 
@@ -99,6 +109,43 @@ def evm_result(abandon: str) -> str:
     return scan_module.dumps(scan_module.scan(abandon, None, node=node(fake)))
 
 
+def forked_of(text: str, *entries: HistoryTx) -> str:
+    """Return the forks result of a bundle on Bitcoin Cash.
+
+    :param text: the bundle.
+    :param entries: the chain's transactions and their blocks.
+    :returns: the result's text.
+    """
+    result = forks_module.forks(
+        text, Chain(*entries), chain="bitcoin-cash", server="h:1"
+    )
+    return forks_module.dumps(result)
+
+
+@pytest.fixture(scope="module")
+def forked(abandon: str) -> str:
+    """Return the forks result of coins held at the fork, and received since.
+
+    Bitcoin's account 0 of purpose 44 held 10000 sat at the fork, and
+    spent 6000 since; the chain's own account 0 received 7000 sat since,
+    on its change branch, and 5 sat in the mempool.
+
+    :param abandon: the bundle.
+    :returns: its text.
+    """
+    bitcoin = p2pkh("m/44h/0h/0h/0/0")
+    own = p2pkh("m/44h/145h/0h/1/2")
+    held = pay(1, (bitcoin, 10_000))
+    spent = pay(2, (bitcoin, 4_000), (ELSEWHERE, 5_000), spends=held)
+    return forked_of(
+        abandon,
+        HistoryTx(held, SHARED),
+        HistoryTx(spent, OWN),
+        HistoryTx(pay(3, (own, 7_000)), OWN),
+        HistoryTx(pay(4, (own, 5)), None),
+    )
+
+
 def test_the_report_of_a_scanned_bundle(abandon: str, result: str) -> None:
     """Each line, from the digests to the total, for one used account."""
     receive = script(abandon, "m/84h/0h/0h", 0, 3).address
@@ -120,6 +167,7 @@ def test_the_report_of_a_scanned_bundle(abandon: str, result: str) -> None:
         "server: node.local:1",
         "node: none",
         "bounds: account gap 3, gap limit 20",
+        "forks: none",
         "claims: bip39",
         (
             f"address search: {BIP84_CHANGE}, 800 positions, accounts 0 to 4,"
@@ -152,6 +200,185 @@ def test_the_report_of_a_scanned_bundle(abandon: str, result: str) -> None:
     ]
     text = "".join(f"{line}\n" for line in lines)
     assert report(abandon, result) == f"{text}digest: sha256 {digest(text)}\n"
+
+
+def test_the_report_of_a_forks_result(abandon: str, forked: str) -> None:
+    """Its digest and what it asked, its accounts by reading, its total."""
+    lines = report(abandon, None, [forked]).splitlines()
+    assert lines[2:9] == [
+        "scan: none",
+        f"forks: sha256 {digest(forked)}",
+        "chain: Bitcoin Cash, its own blocks from height 478559",
+        "server: h:1",
+        "bounds: account gap 3, gap limit 20",
+        f"cashtokens: not checked: {NO_CASHTOKENS}",
+        "claims: bip39",
+    ]
+    bitcoin = script(abandon, "m/44h/0h/0h", 0, 0).address
+    own = p2pkh("m/44h/145h/0h/1/2").address
+    opening = next(n for n, line in enumerate(lines) if "on Bitcoin Cash" in line)
+    assert lines[opening:-1] == [
+        "  bitcoin, purpose 44, on Bitcoin Cash: accounts 0 to 3 read, 1 used",
+        (
+            "    account 0, m/44h/0h/0h: 4000 sat confirmed, 0 sat unconfirmed,"
+            " 10000 sat at the fork, 2 transactions, read up to height 2"
+        ),
+        (
+            f"      receive m/44h/0h/0h/0/0 {bitcoin}: 4000 sat confirmed,"
+            " 0 sat unconfirmed"
+        ),
+        *(
+            f"  bitcoin, purpose {purpose}, on Bitcoin Cash: not checked: {NO_WITNESS}"
+            for purpose in (49, 84, 86)
+        ),
+        "  bitcoin-cash, purpose 44, on Bitcoin Cash: accounts 0 to 3 read, 1 used",
+        (
+            "    account 0, m/44h/145h/0h: 7000 sat confirmed, 5 sat unconfirmed,"
+            " 0 sat at the fork, 2 transactions, read up to height 2"
+        ),
+        (
+            f"      change m/44h/145h/0h/1/2 {own}: 7000 sat confirmed,"
+            " 5 sat unconfirmed"
+        ),
+        (
+            "total: bitcoin-cash, 11000 sat confirmed, 5 sat unconfirmed,"
+            " 10000 sat at the fork, 2 used accounts, each account key once"
+        ),
+    ]
+
+
+def test_a_forks_result_follows_the_scan_s_lines(
+    abandon: str, result: str, forked: str
+) -> None:
+    """Its block after scan's, its accounts after scan's, its total last."""
+    lines = report(abandon, result, [forked]).splitlines()
+    assert lines[5:7] == [
+        "bounds: account gap 3, gap limit 20",
+        f"forks: sha256 {digest(forked)}",
+    ]
+    last = lines.index(f"  dogecoin, purpose 44: not checked: {NOT_READ}")
+    assert lines[last + 1].startswith("  bitcoin, purpose 44, on Bitcoin Cash: ")
+    assert lines[-3].startswith("total: bitcoin, ")
+    assert lines[-2].startswith("total: bitcoin-cash, ")
+
+
+@pytest.mark.parametrize("forks", [None, {}, "text", 1.5])
+def test_forks_other_than_a_list_or_a_tuple_is_refused(
+    abandon: str, forks: object
+) -> None:
+    """A dictionary, a lone text, None: a type error before any text is read."""
+    with pytest.raises(SeedScanTypeError, match="^invalid forks type: "):
+        report(abandon, None, forks)  # type: ignore[arg-type]
+
+
+def test_two_forks_results_of_one_chain_are_refused(abandon: str, forked: str) -> None:
+    """One per chain: a second would list each account twice."""
+    with pytest.raises(SeedScanValueError, match="^forks results: two of one chain$"):
+        report(abandon, None, [forked, forked])
+
+
+def test_a_forks_result_of_another_bundle_is_refused(forked: str) -> None:
+    """Read by `seed_scan.forks.loads`, against the bundle given."""
+    other = dumps(identify(SEGWIT, [""], no_share, accounts=1))
+    with pytest.raises(SeedScanValueError, match="^forks result: made from another"):
+        report(other, None, [forked])
+
+
+def test_what_the_forks_result_leaves_out_is_not_checked(
+    abandon: str, forked: str
+) -> None:
+    """A purpose it did not search, and one it does not list as not checked."""
+    document = json.loads(forked)
+    document["searched"] = [s for s in document["searched"] if s["coin"] == "bitcoin"]
+    document["used"] = [u for u in document["used"] if u["coin"] == "bitcoin"]
+    document["not_checked"] = [n for n in document["not_checked"] if n["purpose"] != 86]
+    text = report(abandon, None, [json.dumps(document)])
+    assert (
+        f"  bitcoin-cash, purpose 44, on Bitcoin Cash: not checked: {NOT_IN_FORKS}\n"
+    ) in text
+    assert (
+        f"  bitcoin, purpose 86, on Bitcoin Cash: not checked: {NOT_IN_FORKS}\n"
+    ) in text
+    assert "\ntotal: bitcoin-cash, 4000 sat confirmed, 0 sat unconfirmed," in text
+
+
+def test_a_forks_purpose_cut_short_names_the_rerun() -> None:
+    """One account in the bundle, used on the chain: forks is to run again."""
+    text = dumps(identify(ABANDON, [""], no_share, accounts=1))
+    forked = forked_of(text, HistoryTx(pay(1, (p2pkh("m/44h/145h/0h/0/0"), 5)), OWN))
+    assert (
+        "  bitcoin-cash, purpose 44, on Bitcoin Cash: accounts 0 to 0 read, 1 used,"
+        " cut short: run identify with --accounts above 1, then forks\n"
+    ) in report(text, None, [forked])
+
+
+def shared(text: str, path: str, other: str, *, descriptors: bool) -> str:
+    """Return a bundle whose account at `other` holds the key at `path`.
+
+    :param text: the bundle's text.
+    :param path: the account whose key is shared.
+    :param other: the account given that key.
+    :param descriptors: whether `other` takes the descriptors too, with
+        its own path as their key origin.
+    :returns: the edited bundle's text.
+    """
+    document = json.loads(text)
+    accounts = {a["path"]: a for a in document["readings"][0]["accounts"]}
+    accounts[other]["xpub"] = accounts[path]["xpub"]
+    if descriptors:
+        origin = f"{path[1:]}]", f"{other[1:]}]"
+        accounts[other]["descriptors"] = [
+            add_checksum(strip_checksum(d).replace(*origin))
+            for d in accounts[path]["descriptors"]
+        ]
+    edited = json.dumps(document)
+    loads(edited)
+    return edited
+
+
+def test_a_forks_total_counts_an_output_once_across_coins() -> None:
+    """A Bitcoin and a Bitcoin Cash account of one key: one payment, once."""
+    one = dumps(identify(ABANDON, [""], no_share, accounts=1))
+    text = shared(one, "m/44h/0h/0h", "m/44h/145h/0h", descriptors=False)
+    paid = HistoryTx(pay(1, (p2pkh("m/44h/0h/0h/0/0"), 123)), SHARED)
+    lines = report(text, None, [forked_of(text, paid)]).splitlines()
+    assert len([line for line in lines if line.startswith("    account 0, ")]) == 2
+    assert lines[-2] == (
+        "total: bitcoin-cash, 123 sat confirmed, 0 sat unconfirmed, 123 sat at"
+        " the fork, 1 used accounts, each account key once"
+    )
+
+
+def test_a_scan_total_counts_an_output_once_whatever_the_origin() -> None:
+    """Two accounts of one key and script type, their origins apart: once.
+
+    Each lists the payment; the total counts it once.
+    """
+    two = dumps(identify(ABANDON, [""], no_share, accounts=2))
+    text = shared(two, "m/44h/0h/0h", "m/44h/0h/1h", descriptors=True)
+    chain = Chain(HistoryTx(pay(1, (p2pkh("m/44h/0h/0h/0/0"), 123)), BLOCK))
+    result = scan_module.dumps(scan_module.scan(text, chain, server="s:1"))
+    lines = report(text, result).splitlines()
+    assert len([line for line in lines if line.startswith("    account ")]) == 2
+    assert lines[-2] == (
+        "total: bitcoin, 123 sat confirmed, 0 sat unconfirmed, 1 used accounts,"
+        " each account key once"
+    )
+
+
+def test_a_forks_total_counts_a_key_once() -> None:
+    """A passphrase typed twice: its accounts listed twice, its funds once."""
+    text = dumps(identify(ABANDON, ["", "x", "x"], no_share, accounts=1))
+    (own,) = [a for a in loads(text).readings[1].accounts if a.path == "m/44h/145h/0h"]
+    receive = parse(f"pkh({own.xpub}/0/*)").script_pub_keys(0)[0]
+    forked = forked_of(text, HistoryTx(pay(1, (receive, 9)), SHARED))
+    lines = report(text, None, [forked]).splitlines()
+    used = [line for line in lines if line.startswith("    account 0, m/44h/145h")]
+    assert len(used) == 2
+    assert lines[-2] == (
+        "total: bitcoin-cash, 9 sat confirmed, 0 sat unconfirmed, 9 sat at the"
+        " fork, 1 used accounts, each account key once"
+    )
 
 
 def test_the_report_of_an_ethereum_scan(abandon: str, evm_result: str) -> None:
@@ -306,7 +533,7 @@ NOT_LINES = ("<...>", "...", "sed '$d' report.txt | shasum -a 256")
 
 
 def test_every_documented_line_is_one_a_report_writes(
-    abandon: str, result: str, evm_result: str
+    abandon: str, result: str, evm_result: str, forked: str
 ) -> None:
     """Each literal of the layout matches a line of the reports above.
 
@@ -319,8 +546,13 @@ def test_every_documented_line_is_one_a_report_writes(
     ]
     one = dumps(identify(ABANDON, [""], no_share, accounts=1))
     chain = Chain(HistoryTx(pay(1, (script(one, "m/86h/0h/0h", 0, 0), 5)), BLOCK))
+    own = HistoryTx(pay(1, (p2pkh("m/44h/145h/0h/0/0"), 5)), OWN)
+    standard = dumps(identify(STANDARD, [""], no_share, accounts=1))
     reports = "".join(
         [
+            report(abandon, result, [forked]),
+            report(one, None, [forked_of(one, own)]),
+            report(standard, None, [forked_of(standard)]),
             report(abandon, result),
             report(abandon, evm_result),
             report(abandon),
@@ -347,10 +579,10 @@ def test_every_documented_line_is_one_a_report_writes(
 
 
 def test_nothing_report_writes_holds_a_secret(
-    abandon: str, result: str, evm_result: str
+    abandon: str, result: str, evm_result: str, forked: str
 ) -> None:
     """No piece of the mnemonic's secrets is in the reports."""
-    text = report(abandon, result) + report(abandon, evm_result)
+    text = report(abandon, result, [forked]) + report(abandon, evm_result)
     secrets = Secrets()
     secrets.sentence(ABANDON)
     paths = sorted({a.path for r in loads(abandon).readings for a in r.accounts})
