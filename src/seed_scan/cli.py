@@ -40,6 +40,15 @@ kept for the whole scan: ``--cafile`` is the Electrum server's alone. A
 failure of the server, the node or the connection is one line of fixed
 text, which names neither the answer nor the addresses asked.
 
+``seed-scan forks`` reads a bundle from the file named, runs
+`seed_scan.forks.forks` on it against the Electrum server the user names
+for the chain named, and writes the forks result and a summary as
+``scan`` writes its own. It reads no secret, connects as ``scan``
+connects to its server, and says a failure as ``scan`` says one. A chain
+forked from Bitcoin keeps Bitcoin's genesis block, so the server is also
+asked for its block at each of the chain's checkpoints, and one
+answering another block at any of them is refused.
+
 ``seed-scan report`` reads a bundle from the file named and, where
 ``--scan`` names one, the scan result made from it, and writes
 `seed_scan.report.report`'s text to standard output. It reads no secret,
@@ -77,6 +86,8 @@ from btclib_wallet.fetch.transport import (
 from seed_scan.bundle import dumps
 from seed_scan.evm import Node
 from seed_scan.exceptions import SeedScanException, SeedScanValueError
+from seed_scan.forks import CHAINS, Chain, forks
+from seed_scan.forks import dumps as forks_dumps
 from seed_scan.report import report
 from seed_scan.scan import ACCOUNT_GAP, GAP_LIMIT, parse_server, scan
 from seed_scan.scan import dumps as scan_dumps
@@ -89,6 +100,7 @@ if TYPE_CHECKING:
     from btclib_wallet.fetch.history import ScriptHistory
 
     from seed_scan.bundle import Bundle
+    from seed_scan.forks import ForkSearched, ForksResult, Skipped
     from seed_scan.scan import ScanResult, Searched
 
 __all__ = [
@@ -234,9 +246,14 @@ def _summary(bundle: Bundle) -> str:
     return "\n".join(lines) + "\n"
 
 
-def _searched(done: Searched, coin: str) -> str:
+def _purpose(purpose: int | None) -> str:
+    """Return how a summary names a purpose, Electrum's layouts having none."""
+    return "Electrum" if purpose is None else f"purpose {purpose}"
+
+
+def _searched(done: Searched | ForkSearched, coin: str) -> str:
     """Return the line that says how many accounts of a purpose were read."""
-    purpose = "Electrum" if done.purpose is None else f"purpose {done.purpose}"
+    purpose = _purpose(done.purpose)
     line = f"reading {done.reading}, {coin}{purpose}: accounts read: {done.accounts}"
     if done.cut_short:
         line += ", cut short: the bundle's accounts end before the account gap"
@@ -303,26 +320,41 @@ class _Mainnet:
     """A reader that asks its server for Bitcoin's genesis block first.
 
     So that a server on another chain is refused before any address is
-    asked of it. A read during which the tip moved is read again, up to
-    `_READS` times in all, as `HistoryReader` asks of its caller.
+    asked of it. Where `chain` is given, a chain forked from Bitcoin, the
+    server is then asked for its block at each of the chain's checkpoints,
+    and refused where one is not the chain's. A read during which the tip
+    moved is read again, up to `_READS` times in all, as `HistoryReader`
+    asks of its caller.
     """
 
-    def __init__(self, fetcher: ElectrumFetcher) -> None:
+    def __init__(self, fetcher: ElectrumFetcher, chain: Chain | None = None) -> None:
         self._fetcher = fetcher
+        self._chain = chain
         self._checked = False
+
+    def _assert_chain(self) -> None:
+        """Refuse a server whose blocks are not those of the chain read."""
+        chain = self._chain
+        title = "Bitcoin's mainnet" if chain is None else chain.title
+        checkpoints = () if chain is None else chain.checkpoints
+        other_chain = False
+        try:
+            self._fetcher.assert_network()
+            other_chain = any(
+                self._fetcher.get_block_header(height).hash.hex() != block_id
+                for height, block_id in checkpoints
+            )
+        except BTClibValueError:
+            other_chain = True
+        if other_chain:
+            raise SeedScanValueError(f"the server does not serve {title}")
 
     def get_history(
         self, scripts: Iterable[Octets | ScriptPubKey], start_height: int = 0
     ) -> ScriptHistory:
         """Return the fetcher's answer, once the chain has been checked."""
         if not self._checked:
-            other_chain = False
-            try:
-                self._fetcher.assert_network()
-            except BTClibValueError:
-                other_chain = True
-            if other_chain:
-                raise SeedScanValueError("the server does not serve Bitcoin's mainnet")
+            self._assert_chain()
             self._checked = True
         for _ in range(_READS - 1):
             try:
@@ -374,8 +406,9 @@ def _read_text(name: str, what: str = "bundle") -> str:
 def _electrum(
     args: argparse.Namespace,
     connect: Callable[[str, int, ssl.SSLContext], LineTransport],
+    chain: Chain | None = None,
 ) -> _Mainnet:
-    """Return the reader of the Electrum server --server names."""
+    """Return the reader of the Electrum server --server names, on `chain`."""
     host, port = parse_server(args.server, "--server")
     context = _tls_context(args.cafile)
     transport = None
@@ -384,7 +417,34 @@ def _electrum(
         transport = connect(host, port, context)
     if transport is None:
         raise SeedScanValueError("--server names no host a connection can use")
-    return _Mainnet(ElectrumFetcher(transport=transport, verify_network=False))
+    return _Mainnet(ElectrumFetcher(transport=transport, verify_network=False), chain)
+
+
+def _online(
+    command: str, run: Callable[[], tuple[str, str]], who: Callable[[], str]
+) -> int:
+    """Run a command that asks a server; answer its exit status.
+
+    `run` returns what goes to standard output and the summary, both made
+    inside the `try`, so that what making them raises is one line too.
+    `who` names what a `FetchError` came from, ``"server"`` or ``"node"``.
+    """
+    try:
+        out, summary = run()
+    except SeedScanException as e:
+        err_msg = str(e)
+    except FetchError as e:
+        err_msg = _failure(e, who())
+    except (ValueError, TypeError) as e:
+        err_msg = f"refused by a dependency: {type(e).__name__}"
+    except KeyboardInterrupt:
+        err_msg = "interrupted"
+    else:
+        sys.stdout.write(out)
+        sys.stderr.write(summary)
+        return 0
+    sys.stderr.write(f"seed-scan {command}: {err_msg}\n")
+    return 1
 
 
 def _scan_command(
@@ -396,8 +456,9 @@ def _scan_command(
     The node is asked once the server is done, so a failure after the
     node's first request is the node's.
     """
-    node = None
-    try:
+    nodes: list[Node] = []
+
+    def run() -> tuple[str, str]:
         if args.server is None and args.node is None:
             err_msg = "name an Electrum --server, an Ethereum --node or both"
             raise SeedScanValueError(err_msg)
@@ -406,34 +467,73 @@ def _scan_command(
         text = _read_text(args.bundle)
         reader = None if args.server is None else _electrum(args, connect)
         with SessionTransport() as session:
-            node = None if args.node is None else Node(args.node, transport=session)
+            if args.node is not None:
+                nodes.append(Node(args.node, transport=session))
             result = scan(
                 text,
                 reader,
                 server=args.server,
-                node=node,
+                node=nodes[0] if nodes else None,
                 gap_limit=args.gap_limit,
                 account_gap=args.account_gap,
             )
-        # written inside the `try`, so that what writing them raises is
-        # one line too
-        out, summary = scan_dumps(result), _scan_summary(result)
-    except SeedScanException as e:
-        err_msg = str(e)
-    except FetchError as e:
-        err_msg = _failure(
-            e, "node" if node is not None and node.requests else "server"
+        return scan_dumps(result), _scan_summary(result)
+
+    def who() -> str:
+        return "node" if nodes and nodes[0].requests else "server"
+
+    return _online("scan", run, who)
+
+
+def _skipped(skipped: Skipped) -> str:
+    """Return the line that says which accounts forks did not read, and why."""
+    purpose = _purpose(skipped.purpose)
+    return (
+        f"not checked: reading {skipped.reading}, {skipped.coin} {purpose}:"
+        f" {skipped.reason}"
+    )
+
+
+def _forks_summary(result: ForksResult) -> str:
+    """Return what the forks result says, for the user."""
+    title = CHAINS[result.chain].title
+    lines = [
+        f"server: {result.server}",
+        f"chain: {title}, its own blocks from height {result.fork_height}",
+        f"bounds: account gap {result.account_gap}, gap limit {result.gap_limit}",
+    ]
+    lines += [_searched(done, f"{done.coin} ") for done in result.searched]
+    lines += [
+        f"used: reading {u.reading}, {u.coin}, {u.path}: {len(u.addresses)}"
+        f" addresses, {len(u.transactions)} transactions, {u.confirmed} sat"
+        f" confirmed, {u.unconfirmed} sat unconfirmed, {u.at_fork} sat at the fork"
+        for u in result.used
+    ]
+    if not result.used:
+        lines.append("no account used within that bound")
+    lines += [_skipped(skipped) for skipped in result.not_checked]
+    return "\n".join(lines) + "\n"
+
+
+def _forks_command(
+    args: argparse.Namespace,
+    connect: Callable[[str, int, ssl.SSLContext], LineTransport],
+) -> int:
+    """Run ``seed-scan forks``; answer its exit status."""
+
+    def run() -> tuple[str, str]:
+        text = _read_text(args.bundle)
+        result = forks(
+            text,
+            _electrum(args, connect, CHAINS[args.chain]),
+            chain=args.chain,
+            server=args.server,
+            gap_limit=args.gap_limit,
+            account_gap=args.account_gap,
         )
-    except (ValueError, TypeError) as e:
-        err_msg = f"refused by a dependency: {type(e).__name__}"
-    except KeyboardInterrupt:
-        err_msg = "interrupted"
-    else:
-        sys.stdout.write(out)
-        sys.stderr.write(summary)
-        return 0
-    sys.stderr.write(f"seed-scan scan: {err_msg}\n")
-    return 1
+        return forks_dumps(result), _forks_summary(result)
+
+    return _online("forks", run, lambda: "server")
 
 
 def _report_command(
@@ -576,18 +676,34 @@ def _parser() -> argparse.ArgumentParser:
             " loopback address such as http://127.0.0.1:8545"
         ),
     )
-    scan_parser.add_argument(
-        "--gap-limit",
-        type=int,
-        default=GAP_LIMIT,
-        help=f"unused indexes in a row that end a branch (default: {GAP_LIMIT})",
+    _add_bounds(scan_parser)
+    forks_parser = commands.add_parser(
+        "forks",
+        help="find what a bundle's keys hold on a chain forked from Bitcoin",
+        description=(
+            "Read a public bundle, ask the Electrum server named, which serves"
+            " the chain named, which of the bundle's accounts were used there,"
+            " and write the forks result to standard output. The server"
+            " learns every address asked."
+        ),
     )
-    scan_parser.add_argument(
-        "--account-gap",
-        type=int,
-        default=ACCOUNT_GAP,
-        help=f"unused accounts in a row that end a purpose (default: {ACCOUNT_GAP})",
+    forks_parser.add_argument("bundle", help="the bundle file identify wrote")
+    forks_parser.add_argument(
+        "--chain",
+        required=True,
+        choices=sorted(CHAINS),
+        help="the chain forked from Bitcoin that the server serves",
     )
+    forks_parser.add_argument(
+        "--server",
+        required=True,
+        help="the chain's Electrum server to ask, as host:port, over TLS",
+    )
+    forks_parser.add_argument(
+        "--cafile",
+        help="trust the certificates of this file alone for the server",
+    )
+    _add_bounds(forks_parser)
     report_parser = commands.add_parser(
         "report",
         help="summarize a bundle and its scan result, offline",
@@ -607,6 +723,22 @@ def _parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _add_bounds(parser: argparse.ArgumentParser) -> None:
+    """Add the bounds of the search a command asking a server takes."""
+    parser.add_argument(
+        "--gap-limit",
+        type=int,
+        default=GAP_LIMIT,
+        help=f"unused indexes in a row that end a branch (default: {GAP_LIMIT})",
+    )
+    parser.add_argument(
+        "--account-gap",
+        type=int,
+        default=ACCOUNT_GAP,
+        help=f"unused accounts in a row that end a purpose (default: {ACCOUNT_GAP})",
+    )
+
+
 def main(
     argv: Sequence[str] | None = None,
     *,
@@ -623,6 +755,8 @@ def main(
     args = _parser().parse_args(argv)
     if args.command == "scan":
         return _scan_command(args, connect)
+    if args.command == "forks":
+        return _forks_command(args, connect)
     if args.command == "report":
         return _report_command(args, forbid_network)
     return _identify_command(args, prompt, forbid_network)

@@ -17,9 +17,8 @@ user's own wallet moves them.
 
 ## What is here
 
-No release is out yet. `seed-scan identify`, `seed-scan scan` and
-`seed-scan report` are the first commands, and `forks` arrives in a pull
-request of its own.
+No release is out yet. `seed-scan identify`, `seed-scan scan`,
+`seed-scan forks` and `seed-scan report` are the first commands.
 [btclib-org/.github#2203](https://github.com/btclib-org/.github/issues/2203)
 records the design and tracks the first release. The command is to stay
 thin: what is general goes down to the packages it is to build on,
@@ -75,6 +74,34 @@ Ethereum, is listed as not checked. `seed_scan.scan` documents the
 result, `seed_scan.evm` the node's requests, and `seed-scan scan --help`
 the bounds of the search.
 
+## Reading a fork of Bitcoin
+
+```shell
+seed-scan forks bundle.json --chain bitcoin-cash \
+    --server bch.example.org:50002 > forks.json
+```
+
+Coins a key held on Bitcoin when a chain forked from it are on that
+chain too, at the same script, and the chain's own wallets may have used
+the key since. `forks` asks the Electrum server named, which serves the
+chain named, which of the bundle's accounts were used there, and writes
+the forks result to standard output and what it found to standard
+error. Bitcoin Cash is the chain it reads. How it reads an output that
+also carries CashTokens is in `seed_scan.forks`.
+
+The server is the user's own, and its certificate is verified as
+*Scanning a bundle* says. Before any address is asked, its blocks at
+the chain's checkpoints are compared with the chain's, so that a server
+of another chain, as one of Bitcoin's, is refused. That shows which
+chain the server says it serves, not that the histories it answers are
+that chain's: the server is trusted for what it answers, as SECURITY.md's
+*Limitations, not vulnerabilities* says, and proving each history
+against the chain is
+[btclib-org/seed-scan#34](https://github.com/btclib-org/seed-scan/issues/34).
+
+`seed_scan.forks` documents the result and which accounts are read, and
+`seed-scan forks --help` the bounds of the search.
+
 ## Reporting what was found
 
 ```shell
@@ -102,15 +129,17 @@ one machine and everything after it reads public data:
   *public bundle*: the fingerprint and the account public keys, or the
   addresses where a coin has no extended public key.
 - **`scan` and `forks` touch the network and no secret.** They read the
-  bundle and what the commands before them wrote, and `scan` the CA
-  certificates it verifies its server and its node against, the system's
-  or, for the server, those of the file the user names; nothing else.
-  *Scanning a bundle* says which server and which node `scan` asks.
-  `forks` takes the balance at the height of each fork from the history,
-  then checks the chains each fork created.
-- **`report` touches neither.** It assembles what `scan` and `forks`
-  found: what was searched, what was found, the limits of the search,
-  and the digest of the report.
+  bundle and what the commands before them wrote, and the CA
+  certificates they verify their server against, and `scan` its node:
+  the system's or, for a server, those of the file the user names;
+  nothing else. *Scanning a bundle* and *Reading a fork of Bitcoin* say
+  which server and which node each asks. `forks` reads the bundle's
+  accounts on a chain forked from Bitcoin, and takes what each held at
+  the fork from the history the chain's server answers.
+- **`report` touches neither.** It assembles what `scan` found: what
+  was searched, what was found, the limits of the search, and the digest
+  of the report. It reads no result of `forks`, which is
+  [btclib-org/seed-scan#32](https://github.com/btclib-org/seed-scan/issues/32).
 
 The bundle holds no secret, but it is not harmless: an account public
 key gives every address of that account, so whoever holds the bundle can

@@ -69,7 +69,6 @@ classifiers = [
     "Programming Language :: Python :: 3.14",
     "Programming Language :: Python :: 3.15",
     "Programming Language :: Python :: Implementation :: CPython",
-    "Programming Language :: Python :: Implementation :: PyPy",
     "Development Status :: 1 - Planning",
     # a command its users run, so an application in section 1's sense,
     # and none of the `Topic :: Software Development :: Libraries` pair a

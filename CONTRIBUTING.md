@@ -441,10 +441,10 @@ before committing — the `uv run pre-commit run --all-files` above.
 
 **Prefix any `--python <version>` command with
 `UV_PROJECT_ENVIRONMENT=.venv-<version>`, naming the interpreter that
-command selects — `.venv-3.11` for `--python 3.11`, `.venv-pypy3.11` for
-`--python pypy3.11`.** Without it, `uv run --python <version>` removes
-`.venv`, builds it again on that interpreter and with that command's own
-group set, and leaves it there. `uv sync` restores it.
+command selects — `.venv-3.11` for `--python 3.11`.** Without it,
+`uv run --python <version>` removes `.venv`, builds it again on that
+interpreter and with that command's own group set, and leaves it there.
+`uv sync` restores it.
 
 ### The editor
 
@@ -525,7 +525,7 @@ uv pip install "$1"
 .venv/bin/python -c "
 from importlib.metadata import requires, version
 import seed_scan
-from seed_scan import bundle, cli, evm, exceptions, identify, report, scan
+from seed_scan import bundle, cli, evm, exceptions, forks, identify, report, scan
 
 print(version('seed-scan'), requires('seed-scan'))
 assert seed_scan.__version__ == version('seed-scan')

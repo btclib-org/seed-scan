@@ -1140,7 +1140,7 @@ test_dist=seed-scan
 pkg=seed_scan
 rtd=seed-scan
 python=$(grep -Ev '^[[:space:]]*(#|$)' .python-version)
-smoke='from seed_scan import bundle, cli, evm, exceptions, identify, report, scan
+smoke='from seed_scan import bundle, cli, evm, exceptions, forks, identify, report, scan
 import seed_scan; print(seed_scan.__version__)'
 ```
 

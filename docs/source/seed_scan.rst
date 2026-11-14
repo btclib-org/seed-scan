@@ -32,6 +32,13 @@ seed_scan.exceptions module
    :members:
    :show-inheritance:
 
+seed_scan.forks module
+----------------------
+
+.. automodule:: seed_scan.forks
+   :members:
+   :show-inheritance:
+
 seed_scan.identify module
 -------------------------
 

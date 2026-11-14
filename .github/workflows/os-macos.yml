@@ -10,10 +10,10 @@ name: os-macos
 # before a review a cost to every review.
 #
 # What these cells ask is the standard library beneath this package on a
-# platform the gate does not sample -- the interpreters themselves, PyPy
-# and the free-threaded builds among them. A workflow of its own rather
-# than a row in deps-latest.yml: this one holds the dependencies at the
-# lock and moves the platform, deps-latest.yml moves both, so a red cell
+# platform the gate does not sample -- the interpreters themselves, the
+# free-threaded builds among them. A workflow of its own rather than a
+# row in deps-latest.yml: this one holds the dependencies at the lock
+# and moves the platform, deps-latest.yml moves both, so a red cell
 # there with this workflow green is an upgrade, and red in both is the
 # platform.
 #
@@ -59,7 +59,7 @@ jobs:
       # standard
       runners: '["macos-latest"]'
       # every interpreter the classifiers name, from the floor
-      # requires-python names to the pin, the free-threaded build of the
-      # two newest, and PyPy: what tests/interpreters_test.py holds the
+      # requires-python names to the pin, and the free-threaded build of
+      # the two newest: what tests/interpreters_test.py holds the
       # classifiers to
-      python-versions: '["3.11", "3.12", "3.13", "3.14", "3.14t", "3.15", "3.15t", "pypy3.11"]'
+      python-versions: '["3.11", "3.12", "3.13", "3.14", "3.14t", "3.15", "3.15t"]'
