@@ -26,7 +26,7 @@ So the accounts read, on whichever chain, are those whose script the
 chain spends with the key, P2PKH: each Bitcoin account whose descriptors
 are ``pkh``, as BIP44's purpose and Electrum's standard reading have
 them, and each account of a coin of `CHAINS` or of ``ecash-tokens``,
-the coin type eCash's Cashtab derives at, P2PKH over its xpub. Each is
+P2PKH over its xpub. Each is
 read as `seed_scan.scan` reads a Bitcoin account, with the same two
 bounds. A Bitcoin account of another script is listed as not checked,
 with the reason: the chain's transactions carry no witness, so a key
@@ -242,8 +242,7 @@ CHAINS = MappingProxyType(
 )
 
 #: The coins whose accounts each chain reads besides Bitcoin's, in the
-#: order read: each chain's own, and the coin type eCash's Cashtab
-#: derives at.
+#: order read: each chain's own, and ``ecash-tokens``.
 _FORK_COINS = (*CHAINS, "ecash-tokens")
 
 
