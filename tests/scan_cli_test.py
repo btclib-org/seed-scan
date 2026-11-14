@@ -5,13 +5,14 @@
 """Tests for ``seed-scan scan``: the server, the node, TLS, the refusals.
 
 The Electrum server is `Electrum`, a fake kept in memory that answers the
-methods `ElectrumFetcher` asks over a chain that is mainnet's genesis
-block alone, and lists each payment as a mempool transaction: no header
-past the genesis is needed, whose proof of work no test could produce.
-Most tests hand it to the command in place of the TLS transport. The
-others serve it over TLS on the loopback interface, with the certificates
-the `tls` fixture makes, so that the handshake the command makes is the
-one under test.
+methods `ElectrumFetcher` asks over mainnet's genesis block and Bitcoin's
+block at the command's checkpoint, and lists each payment as a mempool
+transaction: no other header is needed, whose proof of work no test could
+produce. The checkpoint's header is a real one, which a test checks
+hashes to the id the command compares. Most tests hand it to the command
+in place of the TLS transport. The others serve it over TLS on the
+loopback interface, with the certificates the `tls` fixture makes, so
+that the handshake the command makes is the one under test.
 
 The Ethereum node is `tests.evm_test`'s `Ethereum`, served over HTTP, or
 HTTPS with the same certificates, on the loopback interface, so that the
@@ -80,6 +81,24 @@ GENESIS = BlockHeader(
     nonce=2083236893,
 )
 
+#: Bitcoin's header at the height of `seed_scan.cli`'s checkpoint, as
+#: mempool.space and blockstream.info answer it for that block's id.
+HEADERS = {
+    965000: (
+        "00400220ebdea44198f5b353606b02ed21c5a5e6f75ae648ec6000000000000000000000"
+        "9df7486fca4bc7c3a52a83baf35137fa37a5e88b183157ec62ca35259e36189ee77196"
+        "6ac13c02177e7e50b2"
+    ),
+}
+
+#: Bitcoin Cash's header at that height, as Fulcrum servers of that chain
+#: answered `blockchain.block.header`.
+FORKED = (
+    "00006922c09c495552b27e68aa3667050ab145be4513c074918f06000000000000000000"
+    "482e3b88861c21eece6ad6843bc0cbea9d9f6729e71aac37f12f7eb37473c34231f6876a"
+    "64810218827d3529"
+)
+
 
 def scripthash(script: ScriptPubKey) -> str:
     """Return a script's hash as the Electrum protocol spells it.
@@ -91,15 +110,23 @@ def scripthash(script: ScriptPubKey) -> str:
 
 
 class Electrum:
-    """An Electrum server over the genesis block and a mempool."""
+    """An Electrum server over the genesis block, some headers and a mempool."""
 
-    def __init__(self, *payments: Tx, genesis: BlockHeader = GENESIS) -> None:
-        """Hold the payments, each in the mempool, and the genesis block.
+    def __init__(
+        self,
+        *payments: Tx,
+        genesis: BlockHeader = GENESIS,
+        headers: dict[int, str] = HEADERS,
+    ) -> None:
+        """Hold the payments, each in the mempool, and the headers.
 
         :param payments: the transactions the mempool holds.
-        :param genesis: the header the server answers at height 0.
+        :param genesis: the header the server answers at height 0, and at
+            every height `headers` does not name.
+        :param headers: the header answered at each height, as hex.
         """
         self.genesis = genesis.serialize().hex()
+        self.headers = headers
         self.txs = {tx.id.hex(): tx for tx in payments}
         self.history: dict[str, list[str]] = {}
         for tx in payments:
@@ -131,7 +158,7 @@ class Electrum:
         parsed = json.loads(request)
         method, params = parsed["method"], parsed["params"]
         self.asked.append(method)
-        result: object = self.genesis
+        result: object
         if method == "blockchain.headers.subscribe":
             # the second of the two a history read asks: a tip at another
             # height is a tip that moved, while `moves` lasts
@@ -145,6 +172,9 @@ class Electrum:
             result = [{"tx_hash": tx_id, "height": 0} for tx_id in ids]
         elif method == "blockchain.transaction.get":
             result = self.txs[params[0]].serialize(include_witness=True).hex()
+        else:
+            # blockchain.block.header, the one other method asked
+            result = self.headers.get(params[0], self.genesis)
         answer = {"jsonrpc": "2.0", "id": parsed["id"], "result": result}
         return json.dumps(answer).encode()
 
@@ -244,6 +274,14 @@ def test_the_genesis_header_is_mainnets() -> None:
     assert GENESIS.hash == NETWORKS["mainnet"].genesis_block
 
 
+def test_the_headers_are_bitcoin_s_checkpoints() -> None:
+    """Each header hashes to the block id the command's checkpoint names."""
+    assert dict(cli._BITCOIN_CHECKPOINTS) == {
+        height: BlockHeader.parse(bytes.fromhex(header)).hash.hex()
+        for height, header in HEADERS.items()
+    }
+
+
 def test_scan_writes_the_result_and_a_summary(
     capsys: pytest.CaptureFixture[str], bundle: str, bundle_text: str
 ) -> None:
@@ -277,19 +315,21 @@ def test_scan_writes_the_result_and_a_summary(
 
 
 #: A whole `scan` in an interpreter of its own, against a server that
-#: answers the genesis header and no history, then its exit status and
-#: whether `seed_scan.identify` was loaded. The bundle file and the
-#: header are its arguments
+#: answers Bitcoin's headers and no history, then its exit status and
+#: whether `seed_scan.identify` was loaded. The bundle file, the genesis
+#: header and the checkpoint's, as JSON, are its arguments
 _SCAN_ALONE = """
 import contextlib, io, json, sys
 from seed_scan import cli
-bundle, genesis = sys.argv[1:]
+bundle, genesis, headers = sys.argv[1], sys.argv[2], json.loads(sys.argv[3])
 def server(request, timeout):
     parsed = json.loads(request)
     result = {
         "blockchain.headers.subscribe": {"height": 0, "hex": genesis},
         "blockchain.scripthash.get_history": [],
     }.get(parsed["method"], genesis)
+    if parsed["method"] == "blockchain.block.header":
+        result = headers.get(str(parsed["params"][0]), genesis)
     return json.dumps({"jsonrpc": "2.0", "id": parsed["id"], "result": result}).encode()
 with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
     status = cli.main(["scan", bundle, "--server", "h:1"], connect=lambda *_: server)
@@ -305,7 +345,14 @@ def test_scan_loads_no_identify(bundle: str) -> None:
     write the bundle.
     """
     stdout = subprocess.run(  # noqa: S603
-        [sys.executable, "-c", _SCAN_ALONE, bundle, GENESIS.serialize().hex()],
+        [
+            sys.executable,
+            "-c",
+            _SCAN_ALONE,
+            bundle,
+            GENESIS.serialize().hex(),
+            json.dumps(HEADERS),
+        ],
         check=True,
         capture_output=True,
         encoding="utf-8",
@@ -376,6 +423,47 @@ def test_a_server_on_another_chain_is_asked_for_no_address(
     assert (status, out) == (1, "")
     assert err == "seed-scan scan: the server does not serve Bitcoin's mainnet\n"
     assert server.asked == ["blockchain.block.header"]
+
+
+@pytest.mark.parametrize("header", [FORKED, GENESIS.serialize().hex()])
+def test_a_server_of_a_fork_is_asked_for_no_address(
+    capsys: pytest.CaptureFixture[str], bundle: str, header: str
+) -> None:
+    """Bitcoin's genesis, and another block at the checkpoint: refused.
+
+    :param capsys: pytest's capture of the standard streams.
+    :param bundle: the bundle's file.
+    :param header: the header the server answers at the checkpoint:
+        Bitcoin Cash's, and one of Bitcoin's at another height.
+    """
+    ((height, _),) = cli._BITCOIN_CHECKPOINTS
+    server = Electrum(headers={height: header})
+    status, out, err = run(capsys, [bundle, "--server", "h:1"], Connections(server))
+    assert (status, out) == (1, "")
+    assert err == "seed-scan scan: the server does not serve Bitcoin's mainnet\n"
+    assert server.asked == ["blockchain.block.header"] * 2
+
+
+def test_a_balance_past_21_million_bitcoin_is_refused(
+    capsys: pytest.CaptureFixture[str], bundle: str, bundle_text: str
+) -> None:
+    """Two payments of 15 million bitcoin: refused, and nothing written.
+
+    The line names the account, from the bundle, and nothing the server
+    answered.
+    """
+    paid = receive_script(bundle_text, "m/84h/0h/0h")
+    payments = [
+        Tx(vin=[TxIn(OutPoint(bytes([n]) * 32, 0))], vout=[TxOut(15 * 10**14, paid)])
+        for n in (1, 2)
+    ]
+    server = Electrum(*payments)
+    status, out, err = run(capsys, [bundle, "--server", "h:1"], Connections(server))
+    assert (status, out) == (1, "")
+    assert err == (
+        "seed-scan scan: reading 0, account m/84h/0h/0h:"
+        " a balance outside 0 to 21 million bitcoin\n"
+    )
 
 
 class Failing:

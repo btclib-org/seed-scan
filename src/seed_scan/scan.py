@@ -187,6 +187,8 @@ _WORD = 2**256
 # what bounds a balance in satoshis: 21 million bitcoin, Bitcoin Core's
 # MAX_MONEY, which no amount of the chain passes
 _MAX_SATOSHI = 21_000_000 * 100_000_000
+# the refusal of a balance past it
+_OUTSIDE = "a balance outside 0 to 21 million bitcoin"
 
 _T = TypeVar("_T")
 _U = TypeVar("_U")
@@ -420,6 +422,17 @@ def _balances(
     }
 
 
+def _bounded(confirmed: int, unconfirmed: int) -> bool:
+    """Answer whether a balance is one unspent outputs can make.
+
+    What the confirmed transactions leave, and with the mempool's change,
+    is unspent outputs: from 0 to 21 million bitcoin.
+    """
+    return (
+        0 <= confirmed <= _MAX_SATOSHI and 0 <= confirmed + unconfirmed <= _MAX_SATOSHI
+    )
+
+
 def _spends_one_output_twice(history: ScriptHistory) -> bool:
     """Answer whether two transactions of `history` spend the same output.
 
@@ -483,8 +496,15 @@ def _read_account(
     raise SeedScanValueError(f"{where}: {err_msg}, in both reads of it")
 
 
-def _used_account(reading: int, account: Account, use: AccountUse) -> UsedAccount:
-    """Return what an account's discovery found, as public data."""
+def _used_account(
+    reading: int, account: Account, use: AccountUse, where: str
+) -> UsedAccount:
+    """Return what an account's discovery found, as public data.
+
+    Refused where the balance of the account or of a used address is not
+    `_bounded`, as `loads` refuses it; `where` names the account in the
+    refusal.
+    """
     history = use.history
     positions = [
         (branch, index, script_pub_key)
@@ -499,6 +519,8 @@ def _used_account(reading: int, account: Account, use: AccountUse) -> UsedAccoun
     ]
     confirmed = sum(c for c, _ in balances.values())
     unconfirmed = sum(u for _, u in balances.values())
+    if not all(_bounded(*b) for b in [*balances.values(), (confirmed, unconfirmed)]):
+        raise SeedScanValueError(f"{where}: {_OUTSIDE}")
     return UsedAccount(
         reading=reading,
         purpose=account.purpose,
@@ -537,7 +559,7 @@ def _bitcoin_account(
     """Return what a Bitcoin account used, or None where it used nothing."""
     where = f"reading {reading}, account {account.path}"
     use = _read_account(descriptors, reader, gap_limit, where)
-    return None if use is None else _used_account(reading, account, use)
+    return None if use is None else _used_account(reading, account, use, where)
 
 
 def _evm_account(
@@ -636,12 +658,14 @@ def scan(
     Refused as a `SeedScanValueError` too: a descriptor that does not
     parse, as one whose key is no point of the curve, an extended public
     key that does not decode, accounts not numbered from 0, and a
-    `server` that `parse_server` refuses. A bound
-    below 1 is refused, and one that is no integer is a
-    `SeedScanTypeError`, as is a `server` that is no string beside a
-    `reader`. Refused once `reader` is asked: an account whose history
-    lists two transactions spending one output, or whose used positions
-    a read under `gap_limit` does not reach, in two reads.
+    `server` that `parse_server` refuses. A bound below 1 is refused,
+    and one that is no integer is a `SeedScanTypeError`, as is a
+    `server` that is no string beside a `reader`. Refused once `reader`
+    is asked: an account whose history lists two transactions spending
+    one output, or whose used positions a read under `gap_limit` does
+    not reach, in two reads; and an account whose balance, or a used
+    address's, is outside 0 to 21 million bitcoin, which `loads` would
+    refuse.
     """
     bundle = bundle_loads(text)
     _backends(reader, server, node)
@@ -856,14 +880,12 @@ def _account(
 def _sats(document: dict[str, Any]) -> tuple[int, int]:
     """Return the ``confirmed`` and ``unconfirmed`` members of an object.
 
-    What the confirmed transactions leave, and with the mempool's change,
-    is unspent outputs: from 0 to 21 million bitcoin.
+    A balance `_bounded` takes.
     """
     confirmed = _count(document, "confirmed")
     unconfirmed: int = _member(document, "unconfirmed", int)
-    if confirmed > _MAX_SATOSHI or not 0 <= confirmed + unconfirmed <= _MAX_SATOSHI:
-        err_msg = "scan result: a balance outside 0 to 21 million bitcoin"
-        raise SeedScanValueError(err_msg)
+    if not _bounded(confirmed, unconfirmed):
+        raise SeedScanValueError(f"scan result: {_OUTSIDE}")
     return confirmed, unconfirmed
 
 

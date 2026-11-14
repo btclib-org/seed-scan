@@ -333,6 +333,43 @@ def test_a_double_spend_in_both_reads_is_refused(abandon: str) -> None:
         forks(abandon, chain, chain="bitcoin-cash", server="h:1")
 
 
+#: 15 million bitcoin, in satoshis: two of them pass 21 million.
+FIFTEEN_MILLION = 15 * 10**14
+
+
+def past_the_bound(abandon: str, case: str) -> tuple[Chain, str]:
+    """Return a history whose balance, or holding at the fork, passes the bound.
+
+    :param abandon: the bundle.
+    :param case: ``"balance"``, two payments in the chain's own blocks to
+        its own account; ``"at_fork"``, two in shared blocks to Bitcoin's,
+        one spent since, so that the balance is within the bound.
+    :returns: the history, and the path of the account refused.
+    """
+    path = "m/44h/145h/0h" if case == "balance" else "m/44h/0h/0h"
+    block = OWN if case == "balance" else SHARED
+    script = p2pkh(f"{path}/0/0")
+    first, second = (pay(n, (script, FIFTEEN_MILLION)) for n in (1, 2))
+    entries = [HistoryTx(first, block), HistoryTx(second, block)]
+    if case == "at_fork":
+        spend = pay(3, (ELSEWHERE, FIFTEEN_MILLION), spends=first)
+        entries.append(HistoryTx(spend, OWN))
+    return Chain(*entries), path
+
+
+@pytest.mark.parametrize("case", ["balance", "at_fork"])
+def test_a_balance_past_21_million_bitcoin_is_refused(abandon: str, case: str) -> None:
+    """Refused as `seed_scan.scan` refuses one, naming the account alone.
+
+    :param abandon: the bundle.
+    :param case: which of the two passes the bound.
+    """
+    chain, path = past_the_bound(abandon, case)
+    err_msg = f"^reading 0, account {path}: a balance outside 0 to 21 million bitcoin$"
+    with pytest.raises(SeedScanValueError, match=err_msg):
+        forks(abandon, chain, chain="bitcoin-cash", server="h:1")
+
+
 def test_a_chain_s_xpub_off_the_curve_is_refused(abandon: str) -> None:
     """Its descriptors are built here, and `parse` refuses its key, unquoted.
 

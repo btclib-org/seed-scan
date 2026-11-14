@@ -32,7 +32,8 @@ host as given, with TLS 1.2 at least. The context trusts the system's CA
 certificates, or, where ``--cafile`` names a file, the certificates of
 that file alone, which is how a server of one's own with a self-signed
 certificate is reached. The server is asked first for its genesis block,
-and one not serving Bitcoin's mainnet is refused. A read of a history
+then for its block at a height Bitcoin Core pins, and one answering
+another block than Bitcoin's at either is refused. A read of a history
 during which the server's tip moved is read again, a bounded number of
 times. The node is a `seed_scan.evm.Node`, whose docstring says which
 URLs it takes and how its certificate is verified, over one connection
@@ -44,10 +45,9 @@ text, which names neither the answer nor the addresses asked.
 `seed_scan.forks.forks` on it against the Electrum server the user names
 for the chain named, and writes the forks result and a summary as
 ``scan`` writes its own. It reads no secret, connects as ``scan``
-connects to its server, and says a failure as ``scan`` says one. A chain
-forked from Bitcoin keeps Bitcoin's genesis block, so the server is also
-asked for its block at each of the chain's checkpoints, and one
-answering another block at any of them is refused.
+connects to its server, and says a failure as ``scan`` says one. Its
+server's blocks are checked as ``scan`` checks them, at the chain's
+checkpoints in place of Bitcoin's.
 
 ``seed-scan report`` reads a bundle from the file named and, where
 ``--scan`` names one, the scan result made from it, and writes
@@ -146,6 +146,15 @@ _CAUSES: tuple[tuple[type[BaseException], str], ...] = (
     (ssl.SSLError, "the TLS handshake with the {} failed"),
     (TimeoutError, "the {} did not answer in time"),
     (OSError, "no connection to the {}"),
+)
+
+# Bitcoin's block at a height Bitcoin Core pins, its id as hex in display
+# order; SECURITY.md's "Limitations, not vulnerabilities" says which
+# servers the check refuses. Bitcoin Core's assumeutxo snapshot of that
+# height:
+# https://github.com/bitcoin/bitcoin/blob/a527a0077a0fcae913188410214efe98021c0cca/src/kernel/chainparams.cpp#L215-L220
+_BITCOIN_CHECKPOINTS = (
+    (965000, "00000000000000000001595977e6000ce56129f5c9b4073e31ccc30b90b97da9"),
 )
 
 
@@ -319,12 +328,12 @@ def _connect(host: str, port: int, context: ssl.SSLContext) -> LineTransport:
 class _Mainnet:
     """A reader that asks its server for Bitcoin's genesis block first.
 
-    So that a server on another chain is refused before any address is
-    asked of it. Where `chain` is given, a chain forked from Bitcoin, the
-    server is then asked for its block at each of the chain's checkpoints,
-    and refused where one is not the chain's. A read during which the tip
-    moved is read again, up to `_READS` times in all, as `HistoryReader`
-    asks of its caller.
+    The server is then asked for its block at each checkpoint of the chain
+    read, and refused where one is not that chain's, before any address is
+    asked of it: the chain is Bitcoin, at `_BITCOIN_CHECKPOINTS`, or
+    `chain` where it is given, a chain forked from Bitcoin. A read during
+    which the tip moved is read again, up to `_READS` times in all, as
+    `HistoryReader` asks of its caller.
     """
 
     def __init__(self, fetcher: ElectrumFetcher, chain: Chain | None = None) -> None:
@@ -336,7 +345,7 @@ class _Mainnet:
         """Refuse a server whose blocks are not those of the chain read."""
         chain = self._chain
         title = "Bitcoin's mainnet" if chain is None else chain.title
-        checkpoints = () if chain is None else chain.checkpoints
+        checkpoints = _BITCOIN_CHECKPOINTS if chain is None else chain.checkpoints
         other_chain = False
         try:
             self._fetcher.assert_network()

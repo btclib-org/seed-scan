@@ -333,6 +333,58 @@ def test_coinbases_spend_no_output(abandon: str) -> None:
     assert (used.confirmed, used.unconfirmed) == (100_000, 0)
 
 
+#: 21 million bitcoin, in satoshis: what no balance passes.
+MAX_MONEY = 21 * 10**14
+
+
+@pytest.mark.parametrize(
+    "indexes, blocks",
+    [
+        # one address paid twice, in blocks
+        ((0, 0), (BLOCK, BLOCK)),
+        # two addresses, each within the bound, the account past it
+        ((0, 1), (BLOCK, BLOCK)),
+        # a confirmed balance within the bound, and the mempool's past it
+        ((0, 0), (BLOCK, None)),
+    ],
+)
+def test_a_balance_past_21_million_bitcoin_is_refused(
+    abandon: str, indexes: tuple[int, int], blocks: tuple[BlockRef | None, ...]
+) -> None:
+    """Two payments of 15 million bitcoin: refused, as `loads` refuses them.
+
+    :param abandon: the bundle's text.
+    :param indexes: the receive index each payment pays.
+    :param blocks: the block each payment is in, or None for the mempool.
+    """
+    chain = Chain(
+        *(
+            HistoryTx(pay(n, (script(abandon, "m/84h/0h/0h", 0, i), 15 * 10**14)), b)
+            for n, (i, b) in enumerate(zip(indexes, blocks, strict=True))
+        )
+    )
+    err_msg = (
+        "^reading 0, account m/84h/0h/0h: a balance outside 0 to 21 million bitcoin$"
+    )
+    with pytest.raises(SeedScanValueError, match=err_msg):
+        scan(abandon, chain, server="s:1")
+
+
+def test_a_balance_of_21_million_bitcoin_is_written_and_read_back(
+    abandon: str,
+) -> None:
+    """The bound itself, half confirmed and half in the mempool, loads."""
+    half = MAX_MONEY // 2
+    chain = Chain(
+        HistoryTx(pay(1, (script(abandon, "m/84h/0h/0h", 0, 0), half)), BLOCK),
+        HistoryTx(pay(2, (script(abandon, "m/84h/0h/0h", 0, 1), half)), None),
+    )
+    result = scan(abandon, chain, server="s:1")
+    (used,) = result.used
+    assert (used.confirmed, used.unconfirmed) == (half, half)
+    assert scan_module.loads(scan_module.dumps(result), abandon) == result
+
+
 def test_nothing_used_reads_three_accounts_of_each_purpose(abandon: str) -> None:
     """With no history, each purpose stops at the default account gap."""
     result = scan(abandon, Chain(), server="s:1")

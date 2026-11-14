@@ -5,10 +5,11 @@
 """Tests for ``seed-scan forks``: the chain check, the result, the refusals.
 
 The Electrum server is `tests.scan_cli_test.Electrum`, which answers the
-genesis block at every height, and `Forked`, which answers Bitcoin
-Cash's blocks at its checkpoints. Those are real headers, so that the
-proof of work the fetcher checks holds: the first test checks that each
-hashes to the id `seed_scan.forks.BITCOIN_CASH` names.
+genesis block at every height but those of the headers it is given:
+Bitcoin's at the checkpoint of ``scan``, by default, and Bitcoin Cash's
+at its own checkpoints for `Forked`. Those are real headers, so that the
+proof of work the fetcher checks holds: the first test checks that
+Bitcoin Cash's hash to the ids `seed_scan.forks.BITCOIN_CASH` names.
 """
 
 from __future__ import annotations
@@ -21,7 +22,6 @@ from typing import TYPE_CHECKING
 import pytest
 from btclib.block.block_header import BlockHeader
 from btclib.script import ScriptPubKey
-from typing_extensions import override
 
 from seed_scan import cli
 from seed_scan.bundle import dumps
@@ -53,7 +53,7 @@ HEADERS = {
 
 
 class Forked(Electrum):
-    """An Electrum server that answers some heights with headers of its own."""
+    """An Electrum server of Bitcoin Cash, by default."""
 
     def __init__(self, *payments: Tx, headers: dict[int, str] = HEADERS) -> None:
         """Hold the payments, in the mempool, and the headers by height.
@@ -61,23 +61,7 @@ class Forked(Electrum):
         :param payments: the transactions the mempool holds.
         :param headers: the header answered at each height, as hex.
         """
-        super().__init__(*payments)
-        self.headers = headers
-
-    @override
-    def answer(self, request: bytes) -> bytes:
-        """Answer one request line, a header at one of the heights included.
-
-        :param request: the JSON-RPC request.
-        :returns: the answering line, without its newline.
-        """
-        parsed = json.loads(request)
-        height = parsed["params"][0] if parsed["params"] else None
-        if parsed["method"] != "blockchain.block.header" or height not in self.headers:
-            return super().answer(request)
-        self.asked.append(parsed["method"])
-        answer = {"jsonrpc": "2.0", "id": parsed["id"], "result": self.headers[height]}
-        return json.dumps(answer).encode()
+        super().__init__(*payments, headers=headers)
 
 
 def write(tmp_path: Path, mnemonic: str) -> str:
