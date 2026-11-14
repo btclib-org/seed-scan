@@ -17,11 +17,11 @@ user's own wallet moves them.
 
 ## What is here
 
-No release is out yet. `seed-scan identify`, `seed-scan scan`,
-`seed-scan forks` and `seed-scan report` are the first commands.
+`seed-scan identify`, `seed-scan scan`, `seed-scan forks` and
+`seed-scan report` are the first commands.
 [btclib-org/.github#2203](https://github.com/btclib-org/.github/issues/2203)
-records the design and tracks the first release. The command is to stay
-thin: what is general goes down to the packages it is to build on,
+records the design. The command is to stay thin: what is general goes
+down to the packages it is to build on,
 [bip39-slip39](https://github.com/btclib-org/bip39-slip39),
 [bip32-descriptors](https://github.com/btclib-org/bip32-descriptors),
 [btclib-wallet](https://github.com/btclib-org/btclib-wallet) and

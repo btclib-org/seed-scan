@@ -17,7 +17,7 @@ name = "seed-scan"
 # from this file. A cycle in progress is the month alone; the release's
 # own pull request replaces it by hand with the date the release is cut,
 # YYYY.M.D, whose month need not be the cycle's
-version = "2026.11"
+version = "2026.11.15"
 description = "What a mnemonic of unknown scheme holds: its scheme, addresses, coins and forks"
 readme = "README.md"
 # PEP 639: a SPDX expression and the files it refers to. COPYRIGHT is not
