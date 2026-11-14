@@ -39,9 +39,9 @@ describes. Anything that breaks it is a vulnerability to report here:
   and the shell's history would show it;
 - `identify` or `report` opening a connection, or `scan`, `forks` or
   `report` asking for a secret or reading a file other than the bundle,
-  what the commands before it wrote and, for `scan`, the CA certificates
-  it verifies its server and its node against: the system's, or, for the
-  server, those of the file the user names;
+  what the commands before it wrote and, for `scan` and `forks`, the CA
+  certificates they verify their server against, and `scan` its node:
+  the system's, or, for a server, those of the file the user names;
 - a query sent to a server, a node or an explorer the user did not name.
 
 So is a report that calls a scheme or a coin checked when it was not,
@@ -117,3 +117,13 @@ person running `identify` holds the keys to funds:
     memory until garbage collection, and may have been copied by the
     interpreter meanwhile.
 - **Nothing here is constant-time.** The package is pure Python.
+- **The Electrum server is trusted for what it answers.** `scan` and
+    `forks` take each history as the server the user names answers it.
+    Each confirmed transaction's merkle branch is checked against a
+    header the same server answers, so a server that lies can answer a
+    history of its own making. `scan` compares the server's genesis
+    block with Bitcoin's, and `forks` also its blocks at the chain's
+    checkpoints: that refuses an honest server of another chain, and
+    does not prove that a history answered is that chain's. Proving each
+    history against the chain is
+    [btclib-org/seed-scan#34](https://github.com/btclib-org/seed-scan/issues/34).
