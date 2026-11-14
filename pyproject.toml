@@ -225,9 +225,10 @@ package = ["src/seed_scan"]
 # tracked files the sdist is meant not to carry, beyond what
 # [tool.uv.build-backend] source-exclude takes out, which check-sdist
 # reads for the uv backend: the workspaces of an editor and of an agent,
-# the file prettier reads its ignores from, and COPYRIGHT, which
-# `project.license-files` does not name
+# the file prettier reads its ignores from, the bestpractices.dev
+# answers, and COPYRIGHT, which `project.license-files` does not name
 git-only = [
+    ".bestpractices.json",
     ".claude/",
     ".prettierignore",
     ".vscode/",
@@ -279,8 +280,12 @@ ignore-regex = '`[^`]*`'
 # keeps a hyphenated token whole
 [tool.typos.files]
 # the hashes [tool.codespell] skips above, written again rather than
-# shared because the two take different glob syntaxes
-extend-exclude = [".secrets.baseline", "uv.lock"]
+# shared because the two take different glob syntaxes, and
+# .bestpractices.json, the bestpractices.dev answers of record, not text
+# to correct: typos flags `CPY` of the rule id CPY001 there, which it
+# leaves unflagged here only because it skips any file named
+# pyproject.toml
+extend-exclude = [".secrets.baseline", "uv.lock", ".bestpractices.json"]
 
 [tool.typos.default]
 # keys and addresses written inline in the test sources, as btclib-wallet

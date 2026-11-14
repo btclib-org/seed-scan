@@ -210,18 +210,19 @@ JSON
 
 `main-self-merge` requires a pull request, so a direct push to `main` is
 refused, and a merge needs an approval from somebody other than its
-author, except through its bypass. This tree's `README.md` carries no
-OpenSSF Best Practices badge, so the bypass is the maintainer's, in
-**`pull_request` mode** (section 11 of
-[the organization's standard](https://github.com/btclib-org/.github#branch-protection-and-rulesets)):
-actor `3296421`, `fametrano`'s account id
-(`gh api users/fametrano --jq .id`). The ruleset is created only after
-`main` is pushed, since that mode refuses a direct push, and the root
-commit is one. The badge, once the README carries it, removes the bypass,
-and btclib-org/.github's
+author, except through its bypass. Its one bypass actor is the
+maintainer, in **`pull_request` mode**: actor `3296421`, `fametrano`'s
+account id (`gh api users/fametrano --jq .id`). The ruleset is created
+only after `main` is pushed, since that mode refuses a direct push, and
+the root commit is one. This tree's `README.md` carries the OpenSSF Best
+Practices badge, and section 11 of
+[the organization's standard](https://github.com/btclib-org/.github#branch-protection-and-rulesets)
+asks such a tree for no bypass actor. The bypass stays as the
+organization-wide one, which the maintainer keeps until the backlog
+settles (btclib-org/.github#2021), and btclib-org/.github's
 [`GOVERNANCE.md`](https://github.com/btclib-org/.github/blob/main/GOVERNANCE.md#how-a-decision-is-made),
-*How a decision is made*, says what a tree with no bypass does in an
-emergency.
+*How a decision is made*, says when it is removed and when it is added
+back.
 
 ```shell
 gh api -X POST repos/btclib-org/seed-scan/rulesets --input - <<'JSON'
