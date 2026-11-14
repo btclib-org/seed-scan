@@ -39,8 +39,9 @@ every other character is literal.
   fingerprint <hex>``, with ``, languages <code> ...`` after the scheme
   of a BIP39 reading. Then, two spaces in, per coin and purpose of its
   accounts, in the bundle's order, ``<coin>, purpose <n>`` or, for
-  Electrum's layout, ``<coin>, Electrum account``, with ``, on <chain>``
-  after a coin the node's chain reads, followed by:
+  Electrum's layout, ``<coin>, Electrum account``, or, for an EVM coin's
+  legacy layout, ``<coin>, legacy account``, with ``, on <chain>`` after
+  a coin the node's chain reads, followed by:
 
   - ``: not checked: <reason>``, where the scan result does not read
     it, or no result is given;
@@ -54,11 +55,12 @@ every other character is literal.
   change> <path> <address>: <n> sat confirmed, <n> sat unconfirmed``,
   the path being the address's own. Per used account the node read,
   ``account <n>, <path>: <n> wei at latest``; and per used address,
-  ``receive <path> <address>: <n> wei, nonce <n>``. Each such balance
-  and nonce is the node's answer at the block tag ``latest`` when that
-  address was read, which may be a later block than the node's line
-  names: that number marks when the EVM scan began, and no state the
-  balances share.
+  ``receive <path> <address>: <n> wei, nonce <n>``, with ``address`` for
+  ``receive`` in a legacy account, whose addresses are on no branch.
+  Each such balance and nonce is the node's answer at the block tag
+  ``latest`` when that address was read, which may be a later block
+  than the node's line names: that number marks when the EVM scan
+  began, and no state the balances share.
 - ``total: bitcoin, <n> sat confirmed, <n> sat unconfirmed, <n> used
   accounts, each account key once``, where a server is named, and
   ``total: <chain name>, <n> wei of <symbol>, <n> used accounts, each
@@ -161,10 +163,14 @@ def _used(used: UsedAccount) -> list[str]:
 
 
 def _evm_used(used: EvmAccount) -> list[str]:
-    """Return the lines of a used EVM account and of its used addresses."""
+    """Return the lines of a used EVM account and of its used addresses.
+
+    A legacy account's addresses are its key's own children.
+    """
     lines = [f"    account {used.account}, {used.path}: {used.balance} wei at latest"]
+    kind, branch = ("address", "") if used.purpose is None else ("receive", "/0")
     lines += [
-        f"      receive {used.path}/0/{a.index} {a.address}: {a.balance} wei,"
+        f"      {kind} {used.path}{branch}/{a.index} {a.address}: {a.balance} wei,"
         f" nonce {a.nonce}"
         for a in used.addresses
     ]
@@ -223,7 +229,9 @@ def _readings(bundle: Bundle, result: ScanResult | None) -> list[str]:
             key = (account.coin, account.purpose)
             groups[key] = groups.get(key, 0) + 1
         for (coin, purpose), held in groups.items():
-            kind = "Electrum account" if purpose is None else f"purpose {purpose}"
+            kind = f"purpose {purpose}"
+            if purpose is None:
+                kind = "Electrum account" if coin == "bitcoin" else "legacy account"
             line = f"  {coin}, {kind}"
             done = searched.get((coin, n, purpose))
             if done is None:
@@ -268,10 +276,14 @@ _Used = TypeVar("_Used", UsedAccount, EvmAccount)
 def _scripts(account: Account) -> tuple[str, ...]:
     """Return what gives an account's scripts or addresses.
 
-    Its xpub and its descriptors: an EVM account has none, and its
-    addresses are those of its xpub's receive branch, whatever its coin.
+    Its xpub and its descriptors. An EVM account has none, and its
+    addresses are those of its xpub's receive branch, whatever its coin,
+    or of its xpub itself for a legacy layout, of purpose None, so the
+    layout is part of what gives them.
     """
-    return (account.xpub, *account.descriptors)
+    if account.descriptors:
+        return (account.xpub, *account.descriptors)
+    return (account.xpub, "legacy" if account.purpose is None else "receive")
 
 
 def _once(

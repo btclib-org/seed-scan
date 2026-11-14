@@ -154,22 +154,28 @@ def test_bip39_account_keys_are_bip84s_and_bip86s() -> None:
 
 
 def test_the_coins_declared_are_written_in_order() -> None:
-    """Each coin, purpose and account of `COINS`, Bitcoin's with descriptors."""
+    """Each coin, purpose and account of `COINS`, Bitcoin's with descriptors.
+
+    Each coin's legacy layouts follow its purposes, one account each.
+    """
     bundle = identify(ABANDON, [""], no_share, accounts=2)
     (reading,) = bundle.readings
     expected = [
-        (coin.name, coin.coin_type, purpose, account)
+        (coin.name, coin.coin_type, purpose, account, path)
         for coin in COINS
-        for purpose in coin.purposes
-        for account in range(2)
+        for purpose, account, path in [
+            *(
+                (p, n, f"m/{p}h/{coin.coin_type}h/{n}h")
+                for p in coin.purposes
+                for n in range(2)
+            ),
+            *((None, 0, path) for path in coin.legacy),
+        ]
     ]
     assert [
-        (a.coin, a.coin_type, a.purpose, a.account) for a in reading.accounts
+        (a.coin, a.coin_type, a.purpose, a.account, a.path) for a in reading.accounts
     ] == expected
     for account in reading.accounts:
-        assert account.path == (
-            f"m/{account.purpose}h/{account.coin_type}h/{account.account}h"
-        )
         assert len(account.descriptors) == (2 if account.coin == "bitcoin" else 0)
     assert reading.master_fingerprint == fingerprint(xpub_of(BIP84_ROOT)).hex()
     master = BIP32KeyData.from_seed(bip39.seed_from_mnemonic(ABANDON, ""))
@@ -177,6 +183,11 @@ def test_the_coins_declared_are_written_in_order() -> None:
     assert ethereum.xpub == master.derive("m/44h/60h/0h").xpub.b58encode()
     classic = next(a for a in reading.accounts if a.coin == "ethereum-classic")
     assert classic.xpub == master.derive("m/44h/61h/0h").xpub.b58encode()
+    legacy = [a for a in reading.accounts if a.purpose is None]
+    assert [(a.coin, a.xpub) for a in legacy] == [
+        ("ethereum", ethereum.xpub),
+        ("ethereum-classic", master.derive("m/44h/60h/160720h/0h").xpub.b58encode()),
+    ]
 
 
 def test_each_coin_takes_the_purposes_its_wallets_derive_at() -> None:
@@ -192,6 +203,18 @@ def test_each_coin_takes_the_purposes_its_wallets_derive_at() -> None:
         "bitcoin-cash": (44,),
         "litecoin": (44, 49, 84),
         "dogecoin": (44,),
+    }
+
+
+def test_each_legacy_layout_is_one_its_wallets_derive_at() -> None:
+    """The legacy layouts the comment above `COINS` cites, and no other.
+
+    A layout added or dropped is a new reading of those wallets, so this
+    pin moves with that comment.
+    """
+    assert {coin.name: coin.legacy for coin in COINS if coin.legacy} == {
+        "ethereum": ("m/44h/60h/0h",),
+        "ethereum-classic": ("m/44h/60h/160720h/0h",),
     }
 
 

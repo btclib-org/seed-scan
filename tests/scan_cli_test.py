@@ -908,9 +908,14 @@ def test_another_failure_of_a_read_is_not_read_again(
 def test_the_node_alone_is_scanned(
     capsys: pytest.CaptureFixture[str], bundle: str, bundle_text: str
 ) -> None:
-    """The result's ``evm``, and a summary naming the node and the bound."""
+    """The result's ``evm``, and a summary naming the node and the bound.
+
+    The legacy layout's account, below the key of account 0, is named
+    apart from it.
+    """
     address = eth_address(bundle_text, "m/44h/60h/0h", 0)
-    with serve(serving(Ethereum({address: 5}))) as node:
+    legacy = eth_address(bundle_text, "m/44h/60h/0h", 1, legacy=True)
+    with serve(serving(Ethereum({address: 5, legacy: 2}))) as node:
         argv = [bundle, "--node", node.url()]
         status, out, err = run(capsys, argv, Connections(Electrum()))
     assert status == 0
@@ -924,9 +929,9 @@ def test_the_node_alone_is_scanned(
         1,
         16,
     )
-    (used,) = evm["used"]
-    assert used["addresses"] == [
-        {"index": 0, "address": address, "balance": "5", "nonce": 0}
+    assert [u["addresses"] for u in evm["used"]] == [
+        [{"index": 0, "address": address, "balance": "5", "nonce": 0}],
+        [{"index": 1, "address": legacy, "balance": "2", "nonce": 0}],
     ]
     elsewhere = (
         "scan reads Bitcoin, Ethereum and Ethereum Classic alone in this version"
@@ -939,7 +944,9 @@ def test_the_node_alone_is_scanned(
             "reading 0, ethereum purpose 44: accounts read: 1, cut short:"
             " the bundle's accounts end before the account gap"
         ),
+        "reading 0, ethereum legacy: accounts read: 1",
         "used: reading 0, m/44h/60h/0h: 1 addresses, 5 wei of ETH",
+        "used: reading 0, m/44h/60h/0h, legacy: 1 addresses, 2 wei of ETH",
         "not checked: reading 0, bitcoin: no Electrum server was named",
         f"not checked: reading 0, ethereum-classic: {OTHER_CHAIN}",
         f"not checked: reading 0, bitcoin-cash: {elsewhere}",
@@ -961,7 +968,9 @@ def test_the_chain_named_is_read_and_named(
     assert (evm["chain"], evm["chain_id"]) == ("ethereum-classic", 61)
     assert [(s["coin"], s["purpose"]) for s in evm["searched"]] == [
         ("ethereum", 44),
+        ("ethereum", None),
         ("ethereum-classic", 44),
+        ("ethereum-classic", None),
     ]
     lines = err.splitlines()
     assert (

@@ -65,11 +65,17 @@ __all__ = [
 
 @dataclass(frozen=True)
 class Coin:
-    """A coin whose account keys a bundle declares, and their purposes."""
+    """A coin whose account keys a bundle declares, and their purposes.
+
+    `legacy` holds the paths of the keys of its legacy layouts, of no
+    BIP43 purpose: each key's own children are the addresses, and the
+    bundle writes it as one account of purpose None.
+    """
 
     name: str
     coin_type: int
     purposes: tuple[int, ...]
+    legacy: tuple[str, ...] = ()
 
 
 # Each other coin's purposes are the union of those these wallets derive
@@ -117,15 +123,33 @@ class Coin:
 #   https://github.com/trezor/trezor-firmware/blob/433075c0a0e643d3a07364226fed40a7bbc717a8/common/defs/bitcoin/litecoin.json#L25-L26
 #   https://github.com/trezor/trezor-firmware/blob/433075c0a0e643d3a07364226fed40a7bbc717a8/common/defs/bitcoin/bcash.json#L25-L26
 #   https://github.com/trezor/trezor-firmware/blob/433075c0a0e643d3a07364226fed40a7bbc717a8/common/defs/bitcoin/dogecoin.json#L25-L26
+# The legacy layouts are Ledger Live's, which derives the addresses of
+# Ethereum's at m/44h/60h/0h/<n>, and those of Ethereum Classic's at
+# that path and at m/44h/60h/160720h/0h/<n>:
+#   https://github.com/LedgerHQ/ledger-live/blob/91056c17c325bf042f6449c3ed74412adcb84899/libs/ledger-wallet-framework/src/derivation.ts#L46-L64
+#   https://github.com/LedgerHQ/ledger-live/blob/91056c17c325bf042f6449c3ed74412adcb84899/libs/ledger-wallet-framework/src/derivation.ts#L256-L257
+# and MyEtherWallet's, which offers both paths for a Ledger, the first
+# also for a mnemonic typed in, and derives the n-th address of each as
+# the path's child n:
+#   https://github.com/MyEtherWallet/MyEtherWallet/blob/3ea79d775b2dc3b530c19753192e1061e50f16e8/src/modules/access-wallet/hardware/handlers/configs/configPaths.js#L94-L105
+#   https://github.com/MyEtherWallet/MyEtherWallet/blob/3ea79d775b2dc3b530c19753192e1061e50f16e8/src/modules/access-wallet/hardware/handlers/bip44/ledgerPaths.js#L14-L18
+#   https://github.com/MyEtherWallet/MyEtherWallet/blob/3ea79d775b2dc3b530c19753192e1061e50f16e8/src/modules/access-wallet/hardware/handlers/hardwares/ledger/index.js#L100-L115
+#   https://github.com/MyEtherWallet/MyEtherWallet/blob/3ea79d775b2dc3b530c19753192e1061e50f16e8/src/modules/access-wallet/hardware/handlers/bip44/mnemonicPaths.js#L36-L43
+#   https://github.com/MyEtherWallet/MyEtherWallet/blob/3ea79d775b2dc3b530c19753192e1061e50f16e8/src/modules/access-wallet/software/handlers/mnemonic/index.js#L46-L47
+# m/44h/60h/0h is declared under Ethereum alone: an Ethereum account is
+# read on Ethereum Classic too, as `seed_scan.evm` says. Its key is
+# Ethereum's account 0 as well, whose addresses are on its receive
+# branch instead.
 
 #: The coins and purposes a bundle declares, the order they are written
 #: in. Bitcoin's are the four `btclib_wallet.bip44` maps to an address
 #: encoding; each other coin's are those its wallets derive accounts at,
-#: the comment above citing them.
+#: and its legacy layouts those they derive addresses at, the comments
+#: above citing them.
 COINS = (
     Coin("bitcoin", 0, (44, 49, 84, 86)),
-    Coin("ethereum", 60, (44,)),
-    Coin("ethereum-classic", 61, (44,)),
+    Coin("ethereum", 60, (44,), ("m/44h/60h/0h",)),
+    Coin("ethereum-classic", 61, (44,), ("m/44h/60h/160720h/0h",)),
     Coin("bitcoin-cash", 145, (44,)),
     Coin("litecoin", 2, (44, 49, 84)),
     Coin("dogecoin", 3, (44,)),
@@ -182,7 +206,10 @@ def _searched(
 def _accounts(
     root: BIP32KeyData, accounts: int
 ) -> list[tuple[Account, tuple[Descriptor, ...]]]:
-    """Return the account keys `COINS` declares, Bitcoin's with descriptors."""
+    """Return the account keys `COINS` declares, Bitcoin's with descriptors.
+
+    Each coin's purposes come first, then its legacy layouts.
+    """
     master_fingerprint = fingerprint(root)
     found: list[tuple[Account, tuple[Descriptor, ...]]] = []
     for coin in COINS:
@@ -209,6 +236,10 @@ def _accounts(
                         descriptors,
                     )
                 )
+        for path in coin.legacy:
+            xpub = root.derive(path).xpub.b58encode()
+            legacy = Account(coin.name, coin.coin_type, None, 0, path, xpub, ())
+            found.append((legacy, ()))
     return found
 
 
@@ -445,10 +476,10 @@ def identify(
     given and answers what the user typed, hidden.
 
     `accounts` is how many accounts of each coin and purpose are written,
-    from account 0. Where `address` is given, the receive and change
-    branches of each Bitcoin account written, and of each Bitcoin Cash
-    one where it is a base58 address, are searched for it, from index 0
-    to `indexes` - 1.
+    from account 0; a legacy layout's one key is written once. Where
+    `address` is given, the receive and change branches of each Bitcoin
+    account written, and of each Bitcoin Cash one where it is a base58
+    address, are searched for it, from index 0 to `indexes` - 1.
 
     A refusal names no secret: the words and the passphrases are never
     quoted.

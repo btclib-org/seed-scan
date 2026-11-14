@@ -50,12 +50,13 @@ login is refused, and so is one that is not printable ASCII.
 `EVM_CHAINS` holds the chains a node may serve, each with the chain id
 its ``eth_chainId`` answers and the coins of a bundle whose accounts are
 read on it; the comment above it cites each chain. A key gives the same
-address on each, so the bundle's accounts at m/44h/60h are read on every
-one: what such an account held on Ethereum when Ethereum Classic parted
-from it is on that chain too. The accounts at m/44h/61h, Ethereum
-Classic's SLIP-0044 coin type, are read on Ethereum Classic alone, where
-its own wallets derive them, as `seed_scan.identify`'s comment on its
-``COINS`` cites.
+address on each, so the bundle's Ethereum accounts, at m/44h/60h and
+its legacy layout, are read on every one: what such an account held on
+Ethereum when Ethereum Classic parted from it is on that chain too.
+Ethereum Classic's, at m/44h/61h, its SLIP-0044 coin type, and at its
+legacy layout, are read on Ethereum Classic alone, where its own
+wallets derive them, as `seed_scan.identify`'s comments on its
+``COINS`` cite.
 
 .. _src/eth/client.yaml: https://github.com/ethereum/execution-apis/blob/981aa66d79364be8322a9c358aaf0a571cca0873/src/eth/client.yaml
 .. _src/eth/state.yaml: https://github.com/ethereum/execution-apis/blob/981aa66d79364be8322a9c358aaf0a571cca0873/src/eth/state.yaml

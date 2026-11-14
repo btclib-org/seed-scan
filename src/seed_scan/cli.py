@@ -265,9 +265,15 @@ def _purpose(purpose: int | None) -> str:
     return "Electrum" if purpose is None else f"purpose {purpose}"
 
 
-def _searched(done: Searched | ForkSearched | EvmSearched, coin: str) -> str:
-    """Return the line that says how many accounts of a purpose were read."""
-    purpose = _purpose(done.purpose)
+def _searched(
+    done: Searched | ForkSearched | EvmSearched, coin: str, layout: str = "Electrum"
+) -> str:
+    """Return the line that says how many accounts of a purpose were read.
+
+    `layout` names the layout of no purpose: Electrum's for Bitcoin, the
+    legacy one for an EVM coin.
+    """
+    purpose = layout if done.purpose is None else _purpose(done.purpose)
     line = f"reading {done.reading}, {coin}{purpose}: accounts read: {done.accounts}"
     if done.cut_short:
         line += ", cut short: the bundle's accounts end before the account gap"
@@ -296,10 +302,12 @@ def _scan_summary(result: ScanResult) -> str:
     ]
     if evm is not None and chain is not None:
         lines.append(f"{chain.title}: {chain.symbol} and nonces read, no token balance")
-        lines += [_searched(done, f"{done.coin} ") for done in evm.searched]
+        lines += [_searched(done, f"{done.coin} ", "legacy") for done in evm.searched]
+        # a legacy layout's key can be an account's of a purpose too
         lines += [
-            f"used: reading {u.reading}, {u.path}: {len(u.addresses)} addresses,"
-            f" {u.balance} wei of {chain.symbol}"
+            f"used: reading {u.reading}, {u.path}"
+            f"{', legacy' if u.purpose is None else ''}: {len(u.addresses)}"
+            f" addresses, {u.balance} wei of {chain.symbol}"
             for u in evm.used
         ]
     if not result.used and (evm is None or not evm.used):
