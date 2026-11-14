@@ -162,9 +162,9 @@ def test_every_name_keeps_its_prefix_promise() -> None:
 def test_the_promise_check_reads_every_shape() -> None:
     """What the check above is worth, measured on functions with known answers.
 
-    No public name of this package carries a prefix today, so the check is
-    measured here, on source compiled from a string, whose functions are
-    never called.
+    The check is measured on source compiled from a string, whose
+    functions are never called, so that its worth does not depend on what
+    the package publishes.
     """
     namespace: dict[str, Any] = {}
     exec(  # noqa: S102 -- a literal, compiled for its signatures

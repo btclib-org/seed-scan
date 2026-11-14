@@ -647,9 +647,8 @@ def test_an_inherited_method_is_walked_as_the_class_has_it() -> None:
 def test_the_walk_descends_into_a_published_subpackage() -> None:
     """A function published at any depth is reached, as the lists publish it.
 
-    Measured on modules built here: the package publishes no subpackage
-    yet, and one added later is the case this guards. A module no list
-    names is not reached.
+    Measured on modules built here, so that it holds whatever the package
+    publishes. A module no list names is not reached.
     """
     root, child, grand, hidden = (
         ModuleType(name)
