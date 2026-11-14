@@ -10,6 +10,7 @@ the message names the member and quotes no value.
 
 from __future__ import annotations
 
+import dataclasses
 import json
 from hashlib import sha256
 from typing import TYPE_CHECKING, Any
@@ -18,8 +19,10 @@ import pytest
 from btclib_wallet.fetch.history import HistoryTx
 
 from seed_scan.bundle import dumps
+from seed_scan.evm import EVM_CHAINS
 from seed_scan.exceptions import SeedScanTypeError, SeedScanValueError
 from seed_scan.identify import identify
+from seed_scan.report import report
 from seed_scan.scan import NO_NODE, NO_SERVER, NOT_READ, OTHER_CHAIN, loads, scan
 from seed_scan.scan import dumps as scan_dumps
 
@@ -57,18 +60,28 @@ def result(bundle: str) -> str:
     return scan_dumps(scan(bundle, chain, server="[::1]:50002"))
 
 
+#: Polygon PoS's USDT and DAI, as `seed_scan.evm.EVM_CHAINS` lists them.
+USDT, DAI = EVM_CHAINS["polygon-pos"].tokens[0], EVM_CHAINS["polygon-pos"].tokens[3]
+
+
 @pytest.fixture(scope="module")
 def evm_result(bundle: str) -> str:
     """Return the result of a node alone: one used account, two addresses.
 
     The node serves Polygon PoS, which reads Ethereum's accounts alone.
+    The first address holds two of its tokens.
 
     :param bundle: the bundle.
     :returns: its text.
     """
     first = eth_address(bundle, "m/44h/60h/0h", 0)
     sixth = eth_address(bundle, "m/44h/60h/0h", 5)
-    fake = Ethereum({first: 10**18}, {sixth: 4}, chain_id=137)
+    fake = Ethereum(
+        {first: 10**18},
+        {sixth: 4},
+        chain_id=137,
+        tokens={(USDT.contract, first): 9, (DAI.contract, first): 2},
+    )
     return scan_dumps(scan(bundle, None, node=node(fake), evm_chain="polygon-pos"))
 
 
@@ -97,6 +110,8 @@ def test_an_ethereum_result_reads_back(bundle: str, evm_result: str) -> None:
         (0, str(10**18), 0),
         (5, "0", 4),
     ]
+    assert [(t.symbol, t.balance) for t in used.tokens] == [("USDT", "9"), ("DAI", "2")]
+    assert read.evm.tokens == EVM_CHAINS["polygon-pos"].tokens
 
 
 def test_a_result_of_both_reads_back(bundle: str) -> None:
@@ -126,6 +141,9 @@ def test_an_ethereum_classic_result_reads_back(bundle: str) -> None:
     ]
     document = json.loads(text)
     document["evm"]["chain"], document["evm"]["chain_id"] = "ethereum", 1
+    document["evm"]["tokens"] = [
+        dataclasses.asdict(token) for token in EVM_CHAINS["ethereum"].tokens
+    ]
     with pytest.raises(SeedScanValueError, match="a coin the chain does not read"):
         loads(json.dumps(document), bundle)
     document = json.loads(text)
@@ -241,6 +259,35 @@ def in_evm_address(key: str, value: object) -> Callable[[dict[str, Any]], None]:
     :returns: the edit.
     """
     return in_evm(first("used", lambda u: u["addresses"][0].__setitem__(key, value)))
+
+
+def in_evm_token(key: str, value: object) -> Callable[[dict[str, Any]], None]:
+    """Return the edit of a member of the first token of the first address.
+
+    :param key: the member.
+    :param value: its new value.
+    :returns: the edit.
+    """
+    return in_evm(
+        first("used", lambda u: u["addresses"][0]["tokens"][0].__setitem__(key, value))
+    )
+
+
+def tokens_reversed(document: dict[str, Any]) -> None:
+    """List the first address's tokens in the order the chain does not.
+
+    :param document: the result.
+    """
+    document["evm"]["used"][0]["addresses"][0]["tokens"].reverse()
+
+
+def token_twice(document: dict[str, Any]) -> None:
+    """List the first address's first token twice.
+
+    :param document: the result.
+    """
+    tokens = document["evm"]["used"][0]["addresses"][0]["tokens"]
+    tokens.insert(0, tokens[0])
 
 
 def evm_address_twice(document: dict[str, Any]) -> None:
@@ -488,6 +535,30 @@ EVM_VALUE_ERRORS = [
     (in_evm_address("balance", "01"), "member 'balance' is not a wei balance"),
     (in_evm_address("balance", str(2**256)), "member 'balance' is not a wei"),
     (in_evm_address("nonce", -1), "member 'nonce' is below 0"),
+    (in_evm_address("block", 15), "an address read before the scan"),
+    (in_evm_address("block", -1), "member 'block' is below 0"),
+    (in_evm(setter("tokens", [])), "member 'tokens' is not the chain's"),
+    (
+        in_evm(first("tokens", setter("symbol", PLANTED))),
+        "member 'tokens' is not the chain's",
+    ),
+    (in_evm(first("tokens", setter("decimals", -1))), "member 'decimals' is below 0"),
+    (in_evm_token("contract", PLANTED), "a token the chain does not read"),
+    (in_evm_token("symbol", PLANTED), "a token the chain does not read"),
+    (in_evm_token("decimals", 18), "a token the chain does not read"),
+    (in_evm_token("balance", "0"), "a token balance of zero"),
+    (in_evm_token("balance", PLANTED), "member 'balance' is not a token balance"),
+    (in_evm_token("balance", str(2**256)), "member 'balance' is not a token"),
+    (tokens_reversed, "tokens not in the chain's order"),
+    (token_twice, "tokens not in the chain's order"),
+    (
+        in_evm(first("used", lambda u: u["tokens"][0].__setitem__("balance", "8"))),
+        "the addresses' balances are not the account's",
+    ),
+    (
+        in_evm(first("used", setter("tokens", []))),
+        "the addresses' balances are not the account's",
+    ),
     # the used addresses are at indexes 0 and 5
     (setter("gap_limit", 4), "an address past the gap limit"),
     (unused_address, "an unused address listed as used"),
@@ -644,6 +715,33 @@ def test_a_member_of_a_wrong_type_is_refused(
 
 
 @pytest.mark.parametrize(
+    "edit, said",
+    [
+        (in_evm(setter("tokens", {})), "member 'tokens' of type dict"),
+        (in_evm_address("tokens", None), "member 'tokens' of type NoneType"),
+        (in_evm_address("block", "16"), "member 'block' of type str"),
+        (in_evm_token("decimals", 6.0), "member 'decimals' of type float"),
+        (in_evm_token("balance", 9), "member 'balance' of type int"),
+    ],
+)
+def test_an_evm_member_of_a_wrong_type_is_refused(
+    bundle: str, evm_result: str, edit: Callable[[dict[str, Any]], None], said: str
+) -> None:
+    """A token, a token list or a block of the wrong type, named with it.
+
+    :param bundle: the bundle.
+    :param evm_result: the result edited.
+    :param edit: the edit.
+    :param said: the message, after its prefix.
+    """
+    document = json.loads(evm_result)
+    edit(document)
+    with pytest.raises(SeedScanTypeError) as caught:
+        loads(json.dumps(document), bundle)
+    assert str(caught.value) == f"scan result: {said}"
+
+
+@pytest.mark.parametrize(
     "text, error, said",
     [
         (f"{{{PLANTED}", SeedScanValueError, "not JSON, at line 1 column 2"),
@@ -701,3 +799,27 @@ def test_the_reason_a_coin_is_not_checked_is_the_one_scan_gives(
     assert ("bitcoin", NO_SERVER) in reasons
     assert ("ethereum-classic", OTHER_CHAIN) in reasons
     assert "ethereum" not in {c for c, _ in reasons}
+
+
+def test_token_sums_past_one_word_read_back(bundle: str) -> None:
+    """Two answers of 2**255, each a word: their sum is written and read.
+
+    Each answer is bounded as a uint256; an account's sum is checked
+    against its addresses' and bounded by nothing else, as wei sums are.
+    """
+    first = eth_address(bundle, "m/44h/60h/0h", 0)
+    second = eth_address(bundle, "m/44h/60h/0h", 1)
+    fake = Ethereum(
+        chain_id=137,
+        tokens={(USDT.contract, first): 2**255, (USDT.contract, second): 2**255},
+    )
+    fake.step = 1
+    text = scan_dumps(scan(bundle, None, node=node(fake), evm_chain="polygon-pos"))
+    read = loads(text, bundle)
+    assert read.evm is not None
+    (used,) = read.evm.used
+    assert [a.block for a in used.addresses] == [17, 18]
+    assert [t.balance for t in used.tokens] == [str(2**256)]
+    assert scan_dumps(read) == text
+    total = f"total: polygon-pos, USDT {USDT.contract}: {2**256}, 6 decimals,"
+    assert f"\n{total} each account key once\n" in report(bundle, text)
