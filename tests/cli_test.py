@@ -11,19 +11,22 @@ import importlib.metadata
 import subprocess
 import sys
 import warnings
+from array import array
+from collections import deque
 from typing import TYPE_CHECKING
 
 import pytest
+from typing_extensions import override
 
 from seed_scan import cli
 from seed_scan.bundle import loads
-from seed_scan.exceptions import SeedScanValueError
+from seed_scan.exceptions import SeedScanTypeError, SeedScanValueError
 
 from .identify_test import ABANDON, BIP84_CHANGE, SHARES, Prompt
 from .secret_free import assert_secret_free
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Iterator
 
 
 def no_guard() -> None:
@@ -155,6 +158,74 @@ def test_a_command_is_required(capsys: pytest.CaptureFixture[str]) -> None:
         cli.main([], prompt=Prompt(), forbid_network=no_guard)
     assert caught.value.code == 2
     assert "required" in capsys.readouterr().err
+
+
+def test_with_no_argv_the_process_arguments_are_read(
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`main` with nothing takes the process's own argv to parse."""
+    monkeypatch.setattr(sys, "argv", ["seed-scan"])
+    with pytest.raises(SystemExit) as caught:
+        cli.main()
+    assert caught.value.code == 2
+    assert "required" in capsys.readouterr().err
+
+
+class _Fickle(list[str]):
+    """A list iterating as ``--help`` once, and as a number after."""
+
+    def __init__(self) -> None:
+        super().__init__(["--help"])
+        self.answers: list[list[object]] = [["--help"], [1]]
+        self.calls = 0
+
+    @override
+    def __iter__(self) -> Iterator[str]:
+        self.calls += 1
+        return iter(self.answers.pop(0))  # type: ignore[arg-type]
+
+
+def test_argv_is_read_once(capsys: pytest.CaptureFixture[str]) -> None:
+    """What is checked is what is parsed: a list is iterated once."""
+    fickle = _Fickle()
+    with pytest.raises(SystemExit) as caught:
+        cli.main(fickle)
+    assert caught.value.code == 0
+    assert fickle.calls == 1
+    assert "usage:" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        1.5,
+        "identify",
+        ["identify", None],
+        b"",
+        b"identify",
+        bytearray(),
+        memoryview(b""),
+        array("B"),
+        range(0),
+        deque(["identify"]),
+    ],
+    ids=[
+        "float",
+        "str",
+        "non-str element",
+        "empty bytes",
+        "bytes",
+        "bytearray",
+        "memoryview",
+        "array",
+        "range",
+        "deque",
+    ],
+)
+def test_an_argv_that_is_no_sequence_of_strings_is_refused(argv: object) -> None:
+    """An argv that is no sequence of strings is refused before parsing."""
+    with pytest.raises(SeedScanTypeError, match="invalid argv type"):
+        cli.main(argv)  # type: ignore[arg-type]
 
 
 @pytest.mark.parametrize(
