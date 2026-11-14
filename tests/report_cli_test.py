@@ -11,7 +11,7 @@ import json
 import pathlib
 import sys
 from hashlib import sha256
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import pytest
 from btclib_wallet.fetch.history import HistoryTx
@@ -26,6 +26,7 @@ from seed_scan.scan import scan
 
 from .cli_test import no_guard
 from .identify_test import ABANDON, SEGWIT, Prompt, no_share
+from .scan_cli_test import Connections, Electrum
 from .scan_test import BLOCK, Chain, pay, script
 
 if TYPE_CHECKING:
@@ -46,7 +47,10 @@ def texts() -> tuple[str, str]:
 
 @pytest.fixture
 def files(texts: tuple[str, str], tmp_path: Path) -> tuple[str, str]:
-    """Write the bundle and the result to files.
+    """Write the bundle and the result to files, as their UTF-8 bytes.
+
+    As bytes, and not with `pathlib.Path.write_text`, which on Windows
+    writes each LF as CRLF, so that each file is the text its digest is of.
 
     :param texts: the bundle and the result.
     :param tmp_path: pytest's directory for the test.
@@ -55,7 +59,7 @@ def files(texts: tuple[str, str], tmp_path: Path) -> tuple[str, str]:
     names = []
     for name, text in zip(("bundle.json", "scan.json"), texts, strict=True):
         path = tmp_path / name
-        path.write_text(text, encoding="utf-8")
+        path.write_bytes(text.encode("utf-8"))
         names.append(str(path))
     return names[0], names[1]
 
@@ -150,6 +154,42 @@ def test_a_crlf_file_is_hashed_as_its_bytes(
     assert out.splitlines()[1] == f"bundle: sha256 {digest}"
 
 
+def test_what_windows_writes_reports_as_its_bytes(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """identify, scan and report, each writing through a CRLF standard output.
+
+    As on Windows: the bundle and the result are written with CRLF, and
+    the report names the SHA-256 of each file as it is, and is LF itself.
+    """
+
+    def written(argv: list[str], **replaced: Any) -> bytes:
+        out = io.TextIOWrapper(io.BytesIO(), encoding="utf-8", newline="\r\n")
+        monkeypatch.setattr(sys, "stdout", out)
+        assert cli.main(argv, **replaced) == 0
+        out.flush()
+        return out.buffer.getvalue()
+
+    bundle = tmp_path / "bundle.json"
+    prompt = Prompt(ABANDON, "")
+    bundle.write_bytes(
+        written(["identify", "--accounts", "1"], prompt=prompt, forbid_network=no_guard)
+    )
+    assert b"\r\n" in bundle.read_bytes()
+    result = tmp_path / "scan.json"
+    connect = Connections(Electrum())
+    result.write_bytes(
+        written(["scan", str(bundle), "--server", "h:1"], connect=connect)
+    )
+    assert b"\r\n" in result.read_bytes()
+    argv = ["report", str(bundle), "--scan", str(result)]
+    out = written(argv, prompt=Prompt(), forbid_network=no_guard)
+    assert b"\r" not in out
+    lines = out.decode("utf-8").split("\n")
+    assert lines[1] == f"bundle: sha256 {sha256(bundle.read_bytes()).hexdigest()}"
+    assert lines[2] == f"scan: sha256 {sha256(result.read_bytes()).hexdigest()}"
+
+
 def test_a_guard_not_in_place_is_one_line_and_reads_nothing(
     capsys: pytest.CaptureFixture[str], tmp_path: Path
 ) -> None:
@@ -237,9 +277,9 @@ def test_balances_too_large_to_sum_are_one_line(
     for used in document["used"]:
         used["confirmed"] = 9 * 10**4299
     result = tmp_path / "large.json"
-    result.write_text(json.dumps(document), encoding="utf-8")
+    result.write_bytes(json.dumps(document).encode("utf-8"))
     path = tmp_path / "bundle.json"
-    path.write_text(bundle, encoding="utf-8")
+    path.write_bytes(bundle.encode("utf-8"))
     status, out, err = run(capsys, str(path), "--scan", str(result))
     assert (status, out) == (1, "")
     assert err == (
