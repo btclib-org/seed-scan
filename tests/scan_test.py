@@ -468,6 +468,7 @@ def test_the_other_coins_are_not_checked(abandon: str) -> None:
                 "bitcoin-sv",
                 "ecash",
                 "ecash-tokens",
+                "slp-tokens",
                 "litecoin",
                 "dogecoin",
             )

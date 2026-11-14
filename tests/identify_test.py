@@ -190,6 +190,7 @@ def test_each_coin_takes_the_purposes_its_wallets_derive_at() -> None:
         "bitcoin-sv": (44,),
         "ecash": (44,),
         "ecash-tokens": (44,),
+        "slp-tokens": (44,),
         "litecoin": (44, 49, 84),
         "dogecoin": (44,),
     }
@@ -248,6 +249,7 @@ def legacy_address(path: str) -> str:
         ("bitcoin-sv", "m/44h/236h/0h/0/1"),
         ("ecash", "m/44h/899h/0h/0/1"),
         ("ecash-tokens", "m/44h/1899h/0h/0/0"),
+        ("slp-tokens", "m/44h/245h/0h/0/0"),
         ("bitcoin", "m/44h/0h/0h/0/1"),
     ],
 )
@@ -263,9 +265,9 @@ def test_a_base58_address_is_searched_on_the_forks_paths(coin: str, path: str) -
     assert search is not None
     assert search.matches == (Match(0, coin, path),)
     # one reading, Bitcoin's four purposes, Bitcoin Cash's one, Bitcoin
-    # SV's one and one at each of eCash's two coin types, one account, two
-    # branches, two indexes
-    assert search.searched == 1 * (4 + 1 + 1 + 1 + 1) * 1 * 2 * 2
+    # SV's one, one at each of eCash's two coin types and SLP's one, one
+    # account, two branches, two indexes
+    assert search.searched == 1 * (4 + 1 + 1 + 1 + 1 + 1) * 1 * 2 * 2
 
 
 def test_an_address_out_of_the_bound_is_not_found() -> None:

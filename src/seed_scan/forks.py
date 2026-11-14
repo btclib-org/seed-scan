@@ -25,13 +25,13 @@ that wallet's path.
 So the accounts read, on whichever chain, are those whose script the
 chain spends with the key, P2PKH: each Bitcoin account whose descriptors
 are ``pkh``, as BIP44's purpose and Electrum's standard reading have
-them, and each account of a coin of `CHAINS` or of ``ecash-tokens``,
-P2PKH over its xpub. Each is
-read as `seed_scan.scan` reads a Bitcoin account, with the same two
-bounds. A Bitcoin account of another script is listed as not checked,
-with the reason: the chain's transactions carry no witness, so a key
-does not sign for a segwit script there. The bundle's other coins are
-`scan`'s, and are not listed.
+them, and each account of a coin of `CHAINS`, of ``ecash-tokens`` or
+of ``slp-tokens``, P2PKH over its xpub. Each is read as
+`seed_scan.scan` reads a Bitcoin account, with the same two bounds. A
+Bitcoin account of another script is listed as not checked, with the
+reason: the chain's transactions carry no witness, so a key does not
+sign for a segwit script there. The bundle's other coins are `scan`'s,
+and are not listed.
 
 The balance of an account is read as `seed_scan.scan` reads it, off the
 history the server answers for the chain. ``at_fork`` is read off the
@@ -282,8 +282,8 @@ CHAINS = MappingProxyType(
 )
 
 #: The coins whose accounts each chain reads besides Bitcoin's, in the
-#: order read: each chain's own, and ``ecash-tokens``.
-_FORK_COINS = (*CHAINS, "ecash-tokens")
+#: order read: each chain's own, then ``ecash-tokens`` and ``slp-tokens``.
+_FORK_COINS = (*CHAINS, "ecash-tokens", "slp-tokens")
 
 
 @dataclass(frozen=True)
