@@ -134,6 +134,32 @@ def test_an_ethereum_classic_result_reads_back(bundle: str) -> None:
         loads(json.dumps(document), bundle)
 
 
+def test_a_legacy_layout_result_reads_back(bundle: str) -> None:
+    """Each coin's legacy account, its addresses below its key itself.
+
+    Ethereum's shares the key of its account 0, whose receive branch
+    gives other addresses: one of them listed for the legacy account is
+    refused.
+    """
+    ethereum = eth_address(bundle, "m/44h/60h/0h", 3, legacy=True)
+    classic = eth_address(bundle, "m/44h/60h/160720h/0h", 0, legacy=True)
+    fake = Ethereum({ethereum: 1, classic: 2}, chain_id=61)
+    text = scan_dumps(scan(bundle, None, node=node(fake), evm_chain="ethereum-classic"))
+    read = loads(text, bundle)
+    assert scan_dumps(read) == text
+    assert read.evm is not None
+    assert [(u.coin, u.purpose, u.path) for u in read.evm.used] == [
+        ("ethereum", None, "m/44h/60h/0h"),
+        ("ethereum-classic", None, "m/44h/60h/160720h/0h"),
+    ]
+    document = json.loads(text)
+    document["evm"]["used"][0]["addresses"][0]["address"] = eth_address(
+        bundle, "m/44h/60h/0h", 3
+    )
+    with pytest.raises(SeedScanValueError, match="not the bundle's at its position"):
+        loads(json.dumps(document), bundle)
+
+
 def test_an_electrum_result_reads_back() -> None:
     """Its search and its account have no purpose."""
     text = dumps(identify(SEGWIT, [""], no_share, accounts=1))

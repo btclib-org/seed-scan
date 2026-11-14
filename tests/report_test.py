@@ -119,12 +119,16 @@ def result(abandon: str) -> str:
 def evm_result(abandon: str) -> str:
     """Return the result of a node alone: ether at one address, a nonce at one.
 
+    The legacy layout's third address, below account 0's key, holds wei
+    too.
+
     :param abandon: the bundle.
     :returns: its text.
     """
     first = eth_address(abandon, "m/44h/60h/0h", 0)
     sixth = eth_address(abandon, "m/44h/60h/0h", 5)
-    fake = Ethereum({first: 10**18}, {sixth: 4})
+    legacy = eth_address(abandon, "m/44h/60h/0h", 2, legacy=True)
+    fake = Ethereum({first: 10**18, legacy: 3}, {sixth: 4})
     return scan_module.dumps(scan_module.scan(abandon, None, node=node(fake)))
 
 
@@ -210,7 +214,9 @@ def test_the_report_of_a_scanned_bundle(abandon: str, result: str) -> None:
         ),
         "  bitcoin, purpose 86: accounts 0 to 2 read, 0 used",
         f"  ethereum, purpose 44: not checked: {NO_NODE}",
+        f"  ethereum, legacy account: not checked: {NO_NODE}",
         f"  ethereum-classic, purpose 44: not checked: {NO_NODE}",
+        f"  ethereum-classic, legacy account: not checked: {NO_NODE}",
         *other,
         (
             "total: bitcoin, 4000 sat confirmed, 2000 sat unconfirmed,"
@@ -471,9 +477,14 @@ def test_a_forks_total_counts_a_key_once() -> None:
 
 
 def test_the_report_of_an_ethereum_scan(abandon: str, evm_result: str) -> None:
-    """The node, the tokens not asked, each used address, the total."""
+    """The node, the tokens not asked, each used address, the total.
+
+    The legacy account shares account 0's key, and not its addresses: the
+    total counts both.
+    """
     first = eth_address(abandon, "m/44h/60h/0h", 0)
     sixth = eth_address(abandon, "m/44h/60h/0h", 5)
+    legacy = eth_address(abandon, "m/44h/60h/0h", 2, legacy=True)
     lines = report(abandon, evm_result).splitlines()
     assert lines[3:7] == [
         "server: none",
@@ -485,7 +496,7 @@ def test_the_report_of_an_ethereum_scan(abandon: str, evm_result: str) -> None:
         "bounds: account gap 3, gap limit 20",
     ]
     (opening,) = [n for n, line in enumerate(lines) if line.startswith("reading")]
-    assert lines[opening + 1 : opening + 11] == [
+    assert lines[opening + 1 : opening + 15] == [
         *(
             f"  bitcoin, purpose {purpose}: not checked: {NO_SERVER}"
             for purpose in (44, 49, 84, 86)
@@ -494,11 +505,16 @@ def test_the_report_of_an_ethereum_scan(abandon: str, evm_result: str) -> None:
         f"    account 0, m/44h/60h/0h: {10**18} wei at latest",
         f"      receive m/44h/60h/0h/0/0 {first}: {10**18} wei, nonce 0",
         f"      receive m/44h/60h/0h/0/5 {sixth}: 0 wei, nonce 4",
+        "  ethereum, legacy account, on Ethereum: accounts 0 to 0 read, 1 used",
+        "    account 0, m/44h/60h/0h: 3 wei at latest",
+        f"      address m/44h/60h/0h/2 {legacy}: 3 wei, nonce 0",
         f"  ethereum-classic, purpose 44: not checked: {OTHER_CHAIN}",
+        f"  ethereum-classic, legacy account: not checked: {OTHER_CHAIN}",
         f"  bitcoin-cash, purpose 44: not checked: {NOT_READ}",
     ]
     assert lines[-2] == (
-        f"total: ethereum, {10**18} wei of ETH, 1 used accounts, each account key once"
+        f"total: ethereum, {10**18 + 3} wei of ETH, 2 used accounts, each account"
+        " key once"
     )
     assert not [line for line in lines if line.startswith("total: bitcoin")]
 
@@ -532,7 +548,9 @@ def test_a_passphrase_typed_twice_is_counted_once() -> None:
     assert readings[1].accounts == readings[2].accounts
     (bitcoin,) = [a for a in readings[1].accounts if a.path == "m/84h/0h/0h"]
     receive = parse(bitcoin.descriptors[0]).script_pub_keys(0)[0]
-    (ethereum,) = [a for a in readings[1].accounts if a.path == "m/44h/60h/0h"]
+    (ethereum,) = [
+        a for a in readings[1].accounts if a.path == "m/44h/60h/0h" and a.purpose
+    ]
     key = BIP32KeyData.b58decode(ethereum.xpub).derive("m/0/0")
     chain = Chain(HistoryTx(pay(1, (receive, 9)), BLOCK))
     fake = Ethereum({address_from_pub_key(key.sec): 5})
@@ -694,8 +712,8 @@ def test_every_line_naming_a_defined_word_has_a_shape(
     ``forks``, that names a coin, a chain or a reason is of a shape
     `tests.no_secret_test.LINE_SHAPES` holds. The runs pay, spend before
     a block confirms it, cut a purpose short, read Ethereum's accounts on
-    other chains, read Bitcoin Cash, and refuse a passphrase, an address
-    and a scheme.
+    other chains, find a legacy account used, read Bitcoin Cash, and
+    refuse a passphrase, an address and a scheme.
     """
     one = dumps(identify(ABANDON, [""], no_share, accounts=1))
     paid = pay(1, (script(one, "m/84h/0h/0h", 0, 0), 10_000))
@@ -785,6 +803,9 @@ def test_every_line_naming_a_defined_word_has_a_shape(
         f"\nnot checked: reading 0, bitcoin purpose 49: {NO_WITNESS}\n",
         "\ntotal: bitcoin-cash, ",
         "\ntotal: bitcoin-sv, ",
+        "\n  ethereum, legacy account, on Ethereum: accounts 0 to 0 read, 1 used\n",
+        "\nreading 0, ethereum legacy: accounts read: 1\n",
+        "\n  ethereum-classic, legacy account, on Ethereum Classic: accounts 0 to ",
     ):
         assert line in written
     assert not unshaped(written)
@@ -800,11 +821,13 @@ def test_a_result_that_is_no_text_is_refused(abandon: str) -> None:
 def test_the_report_of_an_ethereum_classic_scan(abandon: str) -> None:
     """The chain is named on the node's line, each coin's and the total.
 
-    Each coin's accounts are counted, an account key of each once.
+    Each coin's accounts are counted, an account key of each once, its
+    legacy layout's included.
     """
     ethereum = eth_address(abandon, "m/44h/60h/0h", 0)
     classic = eth_address(abandon, "m/44h/61h/0h", 1)
-    fake = Ethereum({ethereum: 2, classic: 3}, chain_id=61)
+    legacy = eth_address(abandon, "m/44h/60h/160720h/0h", 4, legacy=True)
+    fake = Ethereum({ethereum: 2, classic: 3, legacy: 4}, chain_id=61)
     result = scan_module.scan(
         abandon, None, node=node(fake), evm_chain="ethereum-classic"
     )
@@ -820,12 +843,20 @@ def test_the_report_of_an_ethereum_classic_scan(abandon: str) -> None:
     assert read == [
         "  ethereum, purpose 44, on Ethereum Classic: accounts 0 to 3 read, 1 used",
         (
+            "  ethereum, legacy account, on Ethereum Classic: accounts 0 to 0 read,"
+            " 0 used"
+        ),
+        (
             "  ethereum-classic, purpose 44, on Ethereum Classic: accounts 0 to 3"
             " read, 1 used"
         ),
+        (
+            "  ethereum-classic, legacy account, on Ethereum Classic: accounts 0"
+            " to 0 read, 1 used"
+        ),
     ]
     assert lines[-2] == (
-        "total: ethereum-classic, 5 wei of ETC, 2 used accounts, each account key once"
+        "total: ethereum-classic, 9 wei of ETC, 3 used accounts, each account key once"
     )
 
 
@@ -840,7 +871,7 @@ def test_a_key_read_as_both_coins_is_counted_once(abandon: str) -> None:
         a
         for r in loads(abandon).readings
         for a in r.accounts
-        if a.path == "m/44h/60h/0h"
+        if a.path == "m/44h/60h/0h" and a.purpose
     ]
     text = edited(abandon, "m/44h/61h/0h", xpub=ethereum.xpub)
     fake = Ethereum({eth_address(text, "m/44h/60h/0h", 0): 7}, chain_id=61)

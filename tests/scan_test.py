@@ -651,16 +651,25 @@ def test_the_arguments_are_checked_before_the_reader_is_asked(
 NETHEREUM_ADDRESS = "0x9858EfFD232B4033E47d90003D41EC34EcaEda94"
 
 
-def eth_address(text: str, path: str, index: int) -> str:
+def eth_address(text: str, path: str, index: int, *, legacy: bool = False) -> str:
     """Return the address at an index of an Ethereum account of a bundle.
 
     :param text: the bundle's text.
     :param path: the account's path.
-    :param index: the index on the receive branch.
+    :param index: the index on the receive branch, or below the key
+        itself for a legacy layout.
+    :param legacy: whether the account is a legacy layout, of no purpose,
+        whose key can also be an account's of a purpose.
     :returns: the address, EIP-55 encoded.
     """
-    (account,) = [a for r in loads(text).readings for a in r.accounts if a.path == path]
-    key = BIP32KeyData.b58decode(account.xpub).derive(f"m/0/{index}")
+    (account,) = [
+        a
+        for r in loads(text).readings
+        for a in r.accounts
+        if a.path == path and (a.purpose is None) == legacy
+    ]
+    below = f"m/{index}" if legacy else f"m/0/{index}"
+    key = BIP32KeyData.b58decode(account.xpub).derive(below)
     return address_from_pub_key(key.sec)
 
 
@@ -701,7 +710,10 @@ def test_an_ethereum_address_with_a_balance_or_a_nonce_is_used(abandon: str) -> 
     )
     assert first_account.balance == str(10**18)
     assert (third_account.account, third_account.balance) == (2, "1")
-    assert evm.searched == (EvmSearched(0, "ethereum", 44, 5, cut_short=True),)
+    assert evm.searched == (
+        EvmSearched(0, "ethereum", 44, 5, cut_short=True),
+        EvmSearched(0, "ethereum", None, 1, cut_short=False),
+    )
     assert fake.asked[:2] == ["eth_chainId", "eth_blockNumber"]
     assert result.server is None
     assert not result.searched
@@ -716,14 +728,18 @@ def test_the_ethereum_bounds_are_the_bitcoin_ones(abandon: str) -> None:
     evm = scan(abandon, None, node=node(fake), gap_limit=3).evm
     assert evm is not None
     assert not evm.used
-    assert evm.searched == (EvmSearched(0, "ethereum", 44, 3, cut_short=False),)
+    assert evm.searched == (
+        EvmSearched(0, "ethereum", 44, 3, cut_short=False),
+        EvmSearched(0, "ethereum", None, 1, cut_short=False),
+    )
     evm = scan(abandon, None, node=node(fake), gap_limit=4, account_gap=4).evm
     assert evm is not None
     assert [u.account for u in evm.used] == [0, 3]
     nothing = Ethereum()
     scan(abandon, None, node=node(nothing))
-    # two requests ahead, then two per address: three accounts of 20
-    assert len(nothing.asked) == 2 + 2 * 20 * 3
+    # two requests ahead, then two per address: three accounts of 20,
+    # and the legacy layout's 20
+    assert len(nothing.asked) == 2 + 2 * 20 * (3 + 1)
 
 
 def test_without_a_server_bitcoin_is_not_checked(abandon: str) -> None:
@@ -888,28 +904,36 @@ def test_a_node_of_another_chain_is_refused_before_any_address(abandon: str) -> 
 
 @pytest.mark.parametrize("name", sorted(EVM_CHAINS))
 def test_each_chain_reads_the_coins_it_lists(abandon: str, name: str) -> None:
-    """60h on every chain, 61h on Ethereum Classic alone; the result names it.
+    """Ethereum's accounts on every chain, Ethereum Classic's on its own.
+
+    Each coin's purpose 44 and its legacy layout, whose key's own
+    children are its addresses; the result names the chain.
 
     :param abandon: the bundle.
     :param name: the chain.
     """
     chain = EVM_CHAINS[name]
-    ethereum = eth_address(abandon, "m/44h/60h/0h", 0)
-    classic = eth_address(abandon, "m/44h/61h/1h", 2)
-    fake = Ethereum({ethereum: 5, classic: 6}, chain_id=chain.chain_id)
+    paths = {
+        ("ethereum", 44): ("m/44h/60h/0h", 0, "5"),
+        ("ethereum", None): ("m/44h/60h/0h", 7, "6"),
+        ("ethereum-classic", 44): ("m/44h/61h/1h", 2, "7"),
+        ("ethereum-classic", None): ("m/44h/60h/160720h/0h", 3, "8"),
+    }
+    balances = {
+        eth_address(abandon, path, index, legacy=purpose is None): int(balance)
+        for (_, purpose), (path, index, balance) in paths.items()
+    }
+    fake = Ethereum(balances, chain_id=chain.chain_id)
     result = scan(abandon, None, node=node(fake), evm_chain=name)
     evm = result.evm
     assert evm is not None
     assert (evm.chain, evm.chain_id) == (name, chain.chain_id)
-    assert [s.coin for s in evm.searched] == list(chain.coins)
-    assert [(u.coin, u.path, u.balance) for u in evm.used] == [
-        (coin, path, balance)
-        for coin, path, balance in (
-            ("ethereum", "m/44h/60h/0h", "5"),
-            ("ethereum-classic", "m/44h/61h/1h", "6"),
-        )
-        if coin in chain.coins
-    ]
+    read = [key for key in paths if key[0] in chain.coins]
+    assert [(s.coin, s.purpose) for s in evm.searched] == read
+    assert [
+        (u.coin, u.purpose, u.path, [a.index for a in u.addresses], u.balance)
+        for u in evm.used
+    ] == [(*key, paths[key][0], [paths[key][1]], paths[key][2]) for key in read]
     off_chain = [n for n in result.not_checked if n.coin == "ethereum-classic"]
     expected = [] if "ethereum-classic" in chain.coins else [OTHER_CHAIN]
     assert [n.reason for n in off_chain] == expected

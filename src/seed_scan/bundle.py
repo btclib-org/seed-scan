@@ -55,8 +55,10 @@ An account object holds:
 - ``coin``: ``"bitcoin"``, ``"ethereum"``, ``"ethereum-classic"``,
   ``"bitcoin-cash"``, ``"bitcoin-sv"``, ``"litecoin"`` or ``"dogecoin"``;
 - ``coin_type``: its SLIP-0044 number, from ``0``;
-- ``purpose``: the BIP43 purpose, or ``null`` for Electrum's layouts,
-  which have none;
+- ``purpose``: the BIP43 purpose, or ``null`` for a layout that has
+  none: Electrum's, and the legacy layouts of an EVM coin, whose
+  addresses are the key's own children, as `seed_scan.identify`'s
+  ``COINS`` says;
 - ``account``: the account number, from ``0``;
 - ``path``: the derivation path of the key, hardened levels written
   with ``h``;

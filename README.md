@@ -74,11 +74,14 @@ asked, so an address that only ever received tokens reads as unused.
 
 `--evm-chain` names the chain the node serves, Ethereum where it is not
 given; `seed-scan scan --help` lists the chains. A key gives the same
-address on each, so the accounts at m/44h/60h are read on every chain,
-and on Ethereum Classic those at m/44h/61h too, where its own wallets
-derive. Before any address is asked, the node's chain id is compared
-with the chain's. SECURITY.md's *Limitations, not vulnerabilities* says
-which nodes that refuses, and what it does not prove.
+address on each, so Ethereum's accounts are read on every chain: those
+at `m/44h/60h/<n>h`, and the legacy addresses Ledger Live and
+MyEtherWallet derive at `m/44h/60h/0h/<n>`. On Ethereum Classic its own
+are read too: those at `m/44h/61h/<n>h`, where its wallets derive, and
+the legacy ones at `m/44h/60h/160720h/0h/<n>`. Before any address is
+asked, the node's chain id is compared with the chain's. SECURITY.md's
+*Limitations, not vulnerabilities* says which nodes that refuses, and
+what it does not prove.
 
 A coin with no server or node named, every coin but Bitcoin, Ethereum
 and Ethereum Classic, and Ethereum Classic's accounts on any other
