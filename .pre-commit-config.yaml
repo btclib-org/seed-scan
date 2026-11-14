@@ -119,7 +119,9 @@ repos:
       - id: pretty-format-json
         name: pretty-format-json (in place fixes)
         args: [--autofix, --indent=4, --no-sort-keys]
-        exclude: ^\.vscode/
+        # .bestpractices.json keeps the format btclib-org/.github's
+        # .github/scripts/bestpractices.py writes: two spaces, sorted keys
+        exclude: ^(\.vscode/|\.bestpractices\.json$)
       - id: check-merge-conflict
       - id: check-vcs-permalinks
       - id: detect-private-key
