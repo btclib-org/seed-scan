@@ -2,7 +2,7 @@
 # Distributed under the MIT software license, see the accompanying
 # LICENSE file or https://opensource.org/license/mit for the full text.
 
-"""An Ethereum node's JSON-RPC, for the reads `seed_scan.scan` makes.
+"""An EVM node's JSON-RPC, for the reads `seed_scan.scan` makes.
 
 `Node` asks an execution client the user names: its chain id, its latest
 block number, and the balance and the nonce of an address at the block
@@ -54,6 +54,16 @@ as ``localhost`` is resolved by the system, and RFC 6761 asks resolvers
 to answer it with the loopback address without requiring it. A URL with a
 login is refused, and so is one that is not printable ASCII.
 
+`EVM_CHAINS` holds the chains a node may serve, each with the chain id
+its ``eth_chainId`` answers and the coins of a bundle whose accounts are
+read on it; the comment above it cites each chain. A key gives the same
+address on each, so the bundle's accounts at m/44h/60h are read on every
+one: what such an account held on Ethereum when Ethereum Classic parted
+from it is on that chain too. The accounts at m/44h/61h, Ethereum
+Classic's SLIP-0044 coin type, are read on Ethereum Classic alone, where
+its own wallets derive them, as `seed_scan.identify`'s comment on its
+``COINS`` cites.
+
 .. _src/eth/client.yaml: https://github.com/ethereum/execution-apis/blob/981aa66d79364be8322a9c358aaf0a571cca0873/src/eth/client.yaml
 .. _src/eth/state.yaml: https://github.com/ethereum/execution-apis/blob/981aa66d79364be8322a9c358aaf0a571cca0873/src/eth/state.yaml
 .. _src/schemas/block.yaml: https://github.com/ethereum/execution-apis/blob/981aa66d79364be8322a9c358aaf0a571cca0873/src/schemas/block.yaml
@@ -71,6 +81,8 @@ import json
 import re
 import ssl
 import traceback
+from dataclasses import dataclass
+from types import MappingProxyType
 from typing import TYPE_CHECKING
 from urllib.parse import urlsplit
 
@@ -90,7 +102,9 @@ if TYPE_CHECKING:
     from urllib.request import Request
 
 __all__ = [
+    "EVM_CHAINS",
     "MAX_ANSWER",
+    "EvmChain",
     "Node",
     "quantity",
 ]
@@ -116,6 +130,65 @@ _CAUSES: tuple[type[OSError], ...] = (
     TimeoutError,
     ConnectionRefusedError,
     OSError,
+)
+
+
+@dataclass(frozen=True)
+class EvmChain:
+    """An EVM chain a node serves, and the bundle's coins read on it.
+
+    `name` is how the command and the result name it, and `title` how a
+    summary and the report do. `chain_id` is what ``eth_chainId`` answers
+    on it, and `symbol` names its native asset, of which a balance in wei
+    counts 10**-18. `coins` are the coins of a bundle whose accounts are
+    read on it.
+    """
+
+    name: str
+    title: str
+    chain_id: int
+    symbol: str
+    coins: tuple[str, ...]
+
+
+# Each chain's id, its native asset's symbol, and 18 decimals of that
+# asset, are those of its entry in the ethereum-lists registry, read at
+# the commit linked, which takes `eip155-<chain id>.json` as its name:
+#   https://github.com/ethereum-lists/chains/blob/07ae44203a27d87410e6efadf26cd00b247072cd/_data/chains/eip155-1.json#L40-L45
+#   https://github.com/ethereum-lists/chains/blob/07ae44203a27d87410e6efadf26cd00b247072cd/_data/chains/eip155-61.json#L18-L23
+#   https://github.com/ethereum-lists/chains/blob/07ae44203a27d87410e6efadf26cd00b247072cd/_data/chains/eip155-56.json#L30-L35
+#   https://github.com/ethereum-lists/chains/blob/07ae44203a27d87410e6efadf26cd00b247072cd/_data/chains/eip155-137.json#L24-L29
+#   https://github.com/ethereum-lists/chains/blob/07ae44203a27d87410e6efadf26cd00b247072cd/_data/chains/eip155-42161.json#L3-L10
+#   https://github.com/ethereum-lists/chains/blob/07ae44203a27d87410e6efadf26cd00b247072cd/_data/chains/eip155-10.json#L19-L24
+#   https://github.com/ethereum-lists/chains/blob/07ae44203a27d87410e6efadf26cd00b247072cd/_data/chains/eip155-8453.json#L23-L28
+#   https://github.com/ethereum-lists/chains/blob/07ae44203a27d87410e6efadf26cd00b247072cd/_data/chains/eip155-43114.json#L21-L26
+# Trezor Suite derives each chain's accounts at m/44h/60h, Ethereum
+# Classic's at m/44h/61h, and gives each the same chain id:
+#   https://github.com/trezor/trezor-suite/blob/c861929418c13919b335061d65a169de5aa869f3/networks/ethereum/network-ethereum-suite-common/src/networkConfig.ts#L43-L414
+
+#: The chains a node may serve, by name.
+EVM_CHAINS = MappingProxyType(
+    {
+        chain.name: chain
+        for chain in (
+            EvmChain("ethereum", "Ethereum", 1, "ETH", ("ethereum",)),
+            EvmChain(
+                "ethereum-classic",
+                "Ethereum Classic",
+                61,
+                "ETC",
+                ("ethereum", "ethereum-classic"),
+            ),
+            EvmChain("bnb-smart-chain", "BNB Smart Chain", 56, "BNB", ("ethereum",)),
+            EvmChain("polygon-pos", "Polygon PoS", 137, "POL", ("ethereum",)),
+            EvmChain("arbitrum-one", "Arbitrum One", 42161, "ETH", ("ethereum",)),
+            EvmChain("op-mainnet", "OP Mainnet", 10, "ETH", ("ethereum",)),
+            EvmChain("base", "Base", 8453, "ETH", ("ethereum",)),
+            EvmChain(
+                "avalanche-c-chain", "Avalanche C-Chain", 43114, "AVAX", ("ethereum",)
+            ),
+        )
+    }
 )
 
 
@@ -240,7 +313,7 @@ def _is_loopback(host: str) -> bool:
 
 
 class Node:
-    """An Ethereum node the user names, asked over JSON-RPC 2.0.
+    """An EVM node the user names, asked over JSON-RPC 2.0.
 
     Construction checks the URL, as the module docstring says, and opens
     nothing. `transport` is `btclib_wallet.fetch.transport.http_request`'s

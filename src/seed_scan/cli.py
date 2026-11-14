@@ -21,8 +21,8 @@ either, in case it is a mnemonic typed there by mistake.
 
 ``seed-scan scan`` reads a bundle from the file named, runs
 `seed_scan.scan.scan` on it against the Electrum server the user names
-as ``host:port``, the Ethereum node the user names by its URL, or both,
-and writes the scan result to standard output and a summary to standard
+as ``host:port``, the EVM node the user names by its URL, or both, and
+writes the scan result to standard output and a summary to standard
 error. It reads no secret. README.md's *Scanning a bundle* says why
 there is no default server or node. The Electrum connection is TLS,
 through `btclib_wallet.fetch.transport.TlsLineTransport`; plain TCP
@@ -40,6 +40,11 @@ URLs it takes and how its certificate is verified, over one connection
 kept for the whole scan: ``--cafile`` is the Electrum server's alone. A
 failure of the server, the node or the connection is one line of fixed
 text, which names neither the answer nor the addresses asked.
+
+``--evm-chain`` names the chain the node serves, Ethereum where it is
+not given, and is refused without ``--node``. `seed_scan.scan.scan`
+refuses a node whose chain id is another chain's before it asks the
+node any address.
 
 ``seed-scan forks`` reads a bundle from the file named, runs
 `seed_scan.forks.forks` on it against the Electrum server the user names
@@ -84,7 +89,7 @@ from btclib_wallet.fetch.transport import (
 )
 
 from seed_scan.bundle import dumps
-from seed_scan.evm import Node
+from seed_scan.evm import EVM_CHAINS, Node
 from seed_scan.exceptions import SeedScanException, SeedScanValueError
 from seed_scan.forks import CHAINS, Chain, forks
 from seed_scan.forks import dumps as forks_dumps
@@ -101,7 +106,7 @@ if TYPE_CHECKING:
 
     from seed_scan.bundle import Bundle
     from seed_scan.forks import ForkSearched, ForksResult, Skipped
-    from seed_scan.scan import ScanResult, Searched
+    from seed_scan.scan import EvmSearched, ScanResult, Searched
 
 __all__ = [
     "main",
@@ -261,7 +266,7 @@ def _purpose(purpose: int | None) -> str:
     return "Electrum" if purpose is None else f"purpose {purpose}"
 
 
-def _searched(done: Searched | ForkSearched, coin: str) -> str:
+def _searched(done: Searched | ForkSearched | EvmSearched, coin: str) -> str:
     """Return the line that says how many accounts of a purpose were read."""
     purpose = _purpose(done.purpose)
     line = f"reading {done.reading}, {coin}{purpose}: accounts read: {done.accounts}"
@@ -274,8 +279,12 @@ def _scan_summary(result: ScanResult) -> str:
     """Return what the scan result says, for the user."""
     evm = result.evm
     lines = [] if result.server is None else [f"server: {result.server}"]
-    if evm is not None:
-        lines.append(f"node: {evm.node}, chain id {evm.chain_id}, block {evm.block}")
+    chain = None if evm is None else EVM_CHAINS[evm.chain]
+    if evm is not None and chain is not None:
+        lines.append(
+            f"node: {evm.node}, {chain.title}, chain id {evm.chain_id},"
+            f" block {evm.block}"
+        )
     lines.append(
         f"bounds: account gap {result.account_gap}, gap limit {result.gap_limit}"
     )
@@ -286,12 +295,12 @@ def _scan_summary(result: ScanResult) -> str:
         f" {u.unconfirmed} sat unconfirmed"
         for u in result.used
     ]
-    if evm is not None:
-        lines.append("ethereum: ether and nonces read, no token balance")
-        lines += [_searched(done, "ethereum ") for done in evm.searched]
+    if evm is not None and chain is not None:
+        lines.append(f"{chain.title}: {chain.symbol} and nonces read, no token balance")
+        lines += [_searched(done, f"{done.coin} ") for done in evm.searched]
         lines += [
             f"used: reading {u.reading}, {u.path}: {len(u.addresses)} addresses,"
-            f" {u.balance} wei"
+            f" {u.balance} wei of {chain.symbol}"
             for u in evm.used
         ]
     if not result.used and (evm is None or not evm.used):
@@ -470,10 +479,13 @@ def _scan_command(
 
     def run() -> tuple[str, str]:
         if args.server is None and args.node is None:
-            err_msg = "name an Electrum --server, an Ethereum --node or both"
+            err_msg = "name an Electrum --server, an EVM --node or both"
             raise SeedScanValueError(err_msg)
         if args.cafile is not None and args.server is None:
             raise SeedScanValueError("--cafile is for --server, and none is named")
+        if args.evm_chain is not None and args.node is None:
+            raise SeedScanValueError("--evm-chain is for --node, and none is named")
+        chain = {} if args.evm_chain is None else {"evm_chain": args.evm_chain}
         text = _read_text(args.bundle)
         reader = None if args.server is None else _electrum(args, connect)
         with SessionTransport() as session:
@@ -484,6 +496,7 @@ def _scan_command(
                 reader,
                 server=args.server,
                 node=nodes[0] if nodes else None,
+                **chain,
                 gap_limit=args.gap_limit,
                 account_gap=args.account_gap,
             )
@@ -664,11 +677,11 @@ def _parser() -> argparse.ArgumentParser:
         help="find the used accounts of a bundle on your own server or node",
         description=(
             "Read a public bundle, ask the Electrum server named which of its"
-            " Bitcoin accounts were used and the Ethereum node named which of"
-            " its Ethereum accounts were, and write the scan result to"
-            " standard output. Each learns every address asked. Ethereum's"
-            " accounts are read for ether and nonces: a token balance is not"
-            " asked."
+            " Bitcoin accounts were used and the EVM node named which of its"
+            " Ethereum and Ethereum Classic accounts were on the chain it"
+            " serves, and write the scan result to standard output. Each"
+            " learns every address asked. The node is asked for the native"
+            " asset and nonces: a token balance is not asked."
         ),
     )
     scan_parser.add_argument("bundle", help="the bundle file identify wrote")
@@ -683,9 +696,14 @@ def _parser() -> argparse.ArgumentParser:
     scan_parser.add_argument(
         "--node",
         help=(
-            "the Ethereum node to ask, as an https URL, or an http one on a"
+            "the EVM node to ask, as an https URL, or an http one on a"
             " loopback address such as http://127.0.0.1:8545"
         ),
+    )
+    scan_parser.add_argument(
+        "--evm-chain",
+        choices=sorted(EVM_CHAINS),
+        help="the chain the node serves (default: ethereum)",
     )
     _add_bounds(scan_parser)
     forks_parser = commands.add_parser(

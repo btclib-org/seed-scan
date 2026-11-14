@@ -52,8 +52,8 @@ The object's members:
 
 An account object holds:
 
-- ``coin``: ``"bitcoin"``, ``"ethereum"``, ``"bitcoin-cash"``,
-  ``"bitcoin-sv"``, ``"litecoin"`` or ``"dogecoin"``;
+- ``coin``: ``"bitcoin"``, ``"ethereum"``, ``"ethereum-classic"``,
+  ``"bitcoin-cash"``, ``"bitcoin-sv"``, ``"litecoin"`` or ``"dogecoin"``;
 - ``coin_type``: its SLIP-0044 number, from ``0``;
 - ``purpose``: the BIP43 purpose, or ``null`` for Electrum's layouts,
   which have none;
@@ -124,6 +124,7 @@ LANGUAGES = ("cs", "en", "es", "fr", "it", "ja", "ko", "pt", "ru", "tr", "zh", "
 COIN_NAMES = (
     "bitcoin",
     "ethereum",
+    "ethereum-classic",
     "bitcoin-cash",
     "bitcoin-sv",
     "litecoin",

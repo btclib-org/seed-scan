@@ -31,16 +31,22 @@ from btclib_wallet.fetch.history import (
 )
 from coin_addresses.evm import address_from_pub_key
 
+from seed_scan import cli
 from seed_scan import scan as scan_module
 from seed_scan.bundle import dumps, loads
-from seed_scan.evm import Node
+from seed_scan.evm import EVM_CHAINS, Node
 from seed_scan.exceptions import SeedScanTypeError, SeedScanValueError
 from seed_scan.identify import identify
+from seed_scan.report import report
 from seed_scan.scan import (
     FORMAT,
+    NO_NODE,
+    NOT_READ,
+    OTHER_CHAIN,
     VERSION,
     Address,
     EvmAddress,
+    EvmSearched,
     NotRead,
     Searched,
     Tip,
@@ -54,9 +60,15 @@ from .identify_test import (
     BIP86_RECEIVE,
     SEGWIT,
     SEGWIT_CHANGE,
+    SHARES,
+    Prompt,
     no_share,
 )
-from .no_secret_test import Secrets, assert_text_secret_free
+from .no_secret_test import (
+    Secrets,
+    assert_json_secret_free,
+    assert_lines_secret_free,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Iterator, Sequence
@@ -458,9 +470,10 @@ def test_an_electrum_reading_has_one_account() -> None:
 def test_the_other_coins_are_not_checked(abandon: str) -> None:
     """Each coin not read is listed once per reading, with the reason."""
     result = scan(abandon, Chain(), server="s:1")
-    reason = "scan reads Bitcoin and Ethereum alone in this version"
+    reason = "scan reads Bitcoin, Ethereum and Ethereum Classic alone in this version"
     assert result.not_checked == (
-        NotRead(0, "ethereum", "no Ethereum node was named"),
+        NotRead(0, "ethereum", "no EVM node was named"),
+        NotRead(0, "ethereum-classic", "no EVM node was named"),
         *(
             NotRead(0, coin, reason)
             for coin in ("bitcoin-cash", "bitcoin-sv", "litecoin", "dogecoin")
@@ -490,7 +503,7 @@ def test_nothing_scan_writes_holds_a_secret(abandon: str) -> None:
     secrets.sentence(ABANDON)
     paths = sorted({a.path for r in loads(abandon).readings for a in r.accounts})
     secrets.seed(bip39.seed_from_mnemonic(ABANDON, ""), paths)
-    assert_text_secret_free(text, secrets.every())
+    assert_json_secret_free(text, secrets.every())
 
 
 def edited(text: str, path: str, **members: object) -> str:
@@ -674,7 +687,12 @@ def test_an_ethereum_address_with_a_balance_or_a_nonce_is_used(abandon: str) -> 
     result = scan(abandon, None, node=node(fake))
     evm = result.evm
     assert evm is not None
-    assert (evm.node, evm.chain_id, evm.block) == ("https://node.example", 1, 16)
+    assert (evm.node, evm.chain, evm.chain_id, evm.block) == (
+        "https://node.example",
+        "ethereum",
+        1,
+        16,
+    )
     first_account, third_account = evm.used
     assert first_account.path == "m/44h/60h/0h"
     assert first_account.addresses == (
@@ -683,7 +701,7 @@ def test_an_ethereum_address_with_a_balance_or_a_nonce_is_used(abandon: str) -> 
     )
     assert first_account.balance == str(10**18)
     assert (third_account.account, third_account.balance) == (2, "1")
-    assert evm.searched == (Searched(0, 44, 5, cut_short=True),)
+    assert evm.searched == (EvmSearched(0, "ethereum", 44, 5, cut_short=True),)
     assert fake.asked[:2] == ["eth_chainId", "eth_blockNumber"]
     assert result.server is None
     assert not result.searched
@@ -698,7 +716,7 @@ def test_the_ethereum_bounds_are_the_bitcoin_ones(abandon: str) -> None:
     evm = scan(abandon, None, node=node(fake), gap_limit=3).evm
     assert evm is not None
     assert not evm.used
-    assert evm.searched == (Searched(0, 44, 3, cut_short=False),)
+    assert evm.searched == (EvmSearched(0, "ethereum", 44, 3, cut_short=False),)
     evm = scan(abandon, None, node=node(fake), gap_limit=4, account_gap=4).evm
     assert evm is not None
     assert [u.account for u in evm.used] == [0, 3]
@@ -718,7 +736,14 @@ def test_without_a_server_bitcoin_is_not_checked(abandon: str) -> None:
     document = json.loads(scan_module.dumps(result))
     assert document["server"] is None
     assert list(document)[-1] == "evm"
-    assert list(document["evm"]) == ["node", "chain_id", "block", "searched", "used"]
+    assert list(document["evm"]) == [
+        "node",
+        "chain",
+        "chain_id",
+        "block",
+        "searched",
+        "used",
+    ]
 
 
 def test_a_server_and_a_node_are_both_read(abandon: str) -> None:
@@ -730,8 +755,13 @@ def test_a_server_and_a_node_are_both_read(abandon: str) -> None:
     assert [u.path for u in result.used] == ["m/84h/0h/0h"]
     assert result.evm is not None
     assert [u.path for u in result.evm.used] == ["m/44h/60h/0h"]
-    reason = "scan reads Bitcoin and Ethereum alone in this version"
-    assert {n.reason for n in result.not_checked} == {reason}
+    assert {(n.coin, n.reason) for n in result.not_checked} == {
+        ("ethereum-classic", OTHER_CHAIN),
+        *(
+            (coin, NOT_READ)
+            for coin in ("bitcoin-cash", "bitcoin-sv", "litecoin", "dogecoin")
+        ),
+    }
 
 
 def test_nothing_the_ethereum_scan_writes_holds_a_secret(abandon: str) -> None:
@@ -743,7 +773,32 @@ def test_nothing_the_ethereum_scan_writes_holds_a_secret(abandon: str) -> None:
     secrets.sentence(ABANDON)
     paths = sorted({a.path for r in loads(abandon).readings for a in r.accounts})
     secrets.seed(bip39.seed_from_mnemonic(ABANDON, ""), paths)
-    assert_text_secret_free(text, secrets.every())
+    assert_json_secret_free(text, secrets.every())
+
+
+def test_a_clean_ethereum_classic_scan_holds_no_secret() -> None:
+    """Shares holding ``class``: no secret in the result, report or summary.
+
+    The format's names hold that word, as ``ethereum-classic`` and
+    ``Ethereum Classic`` do, and its member names others, as ``cut_short``
+    holds ``short``: each is the format's, not the mnemonic's. The node's
+    URL holds a double quote, which the result writes escaped and the
+    report and the summary as it is, on the line that names the chain.
+    """
+    bundle = dumps(identify(SHARES[0], [""], Prompt(SHARES[1]), accounts=5))
+    classic = eth_address(bundle, "m/44h/61h/0h", 0)
+    fake = Ethereum({classic: 3}, chain_id=61)
+    quoted = Node('https://node".example/rpc', transport=fake)
+    result = scan(bundle, None, node=quoted, evm_chain="ethereum-classic")
+    text = scan_module.dumps(result)
+    secrets = Secrets()
+    for share in SHARES:
+        secrets.sentence(share)
+    assert '"node": "https://node\\".example"' in text
+    assert_json_secret_free(text, secrets.every())
+    for written in (report(bundle, text), cli._scan_summary(result)):
+        assert 'node: https://node".example, Ethereum Classic, chain id 61' in written
+        assert_lines_secret_free(written, secrets.every())
 
 
 def off_curve(xpub: str) -> str:
@@ -819,3 +874,77 @@ def test_a_scan_of_nothing_is_refused(
     """
     with pytest.raises(SeedScanValueError, match=said):
         scan(abandon, None, server=server)
+
+
+def test_a_node_of_another_chain_is_refused_before_any_address(abandon: str) -> None:
+    """An Ethereum Classic node, for Ethereum: its chain id alone is asked."""
+    fake = Ethereum(chain_id=61)
+    with pytest.raises(SeedScanValueError) as caught:
+        scan(abandon, None, node=node(fake))
+    assert str(caught.value) == "the node does not serve Ethereum"
+    assert "61" not in str(caught.value)
+    assert fake.asked == ["eth_chainId"]
+
+
+@pytest.mark.parametrize("name", sorted(EVM_CHAINS))
+def test_each_chain_reads_the_coins_it_lists(abandon: str, name: str) -> None:
+    """60h on every chain, 61h on Ethereum Classic alone; the result names it.
+
+    :param abandon: the bundle.
+    :param name: the chain.
+    """
+    chain = EVM_CHAINS[name]
+    ethereum = eth_address(abandon, "m/44h/60h/0h", 0)
+    classic = eth_address(abandon, "m/44h/61h/1h", 2)
+    fake = Ethereum({ethereum: 5, classic: 6}, chain_id=chain.chain_id)
+    result = scan(abandon, None, node=node(fake), evm_chain=name)
+    evm = result.evm
+    assert evm is not None
+    assert (evm.chain, evm.chain_id) == (name, chain.chain_id)
+    assert [s.coin for s in evm.searched] == list(chain.coins)
+    assert [(u.coin, u.path, u.balance) for u in evm.used] == [
+        (coin, path, balance)
+        for coin, path, balance in (
+            ("ethereum", "m/44h/60h/0h", "5"),
+            ("ethereum-classic", "m/44h/61h/1h", "6"),
+        )
+        if coin in chain.coins
+    ]
+    off_chain = [n for n in result.not_checked if n.coin == "ethereum-classic"]
+    expected = [] if "ethereum-classic" in chain.coins else [OTHER_CHAIN]
+    assert [n.reason for n in off_chain] == expected
+
+
+def test_ethereum_classic_accounts_need_a_node(abandon: str) -> None:
+    """Without a node, both coins are listed with the same reason."""
+    result = scan(abandon, Chain(), server="s:1", evm_chain="ethereum-classic")
+    evm_coins = [n for n in result.not_checked if n.coin.startswith("ethereum")]
+    assert evm_coins == [
+        NotRead(0, "ethereum", NO_NODE),
+        NotRead(0, "ethereum-classic", NO_NODE),
+    ]
+
+
+@pytest.mark.parametrize(
+    "evm_chain, error, said",
+    [
+        ("ethereum-mainnet", SeedScanValueError, "invalid evm_chain: not one scan"),
+        (1, SeedScanTypeError, "invalid evm_chain type: int"),
+    ],
+)
+def test_a_chain_scan_does_not_read_is_refused(
+    abandon: str, evm_chain: object, error: type[Exception], said: str
+) -> None:
+    """Before the node is asked, and without quoting the name.
+
+    :param abandon: the bundle.
+    :param evm_chain: the chain named.
+    :param error: what is raised.
+    :param said: what the refusal opens with.
+    """
+    fake = Ethereum()
+    with pytest.raises(error) as caught:
+        scan(abandon, None, node=node(fake), evm_chain=evm_chain)  # type: ignore[arg-type]
+    assert str(caught.value).startswith(said)
+    assert "ethereum-mainnet" not in str(caught.value)
+    assert not fake.asked

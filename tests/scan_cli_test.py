@@ -47,6 +47,7 @@ from seed_scan import cli
 from seed_scan.bundle import dumps, loads
 from seed_scan.evm import Node
 from seed_scan.identify import identify
+from seed_scan.scan import OTHER_CHAIN
 
 from .evm_test import Ethereum, cause, replying, serve, serving
 from .identify_test import ABANDON, no_share
@@ -917,27 +918,78 @@ def test_the_node_alone_is_scanned(
     assert document["server"] is None
     evm = document["evm"]
     name = f"http://127.0.0.1:{node.port}"
-    assert (evm["node"], evm["chain_id"], evm["block"]) == (name, 1, 16)
+    assert (evm["node"], evm["chain"], evm["chain_id"], evm["block"]) == (
+        name,
+        "ethereum",
+        1,
+        16,
+    )
     (used,) = evm["used"]
     assert used["addresses"] == [
         {"index": 0, "address": address, "balance": "5", "nonce": 0}
     ]
-    elsewhere = "scan reads Bitcoin and Ethereum alone in this version"
+    elsewhere = (
+        "scan reads Bitcoin, Ethereum and Ethereum Classic alone in this version"
+    )
     assert err.splitlines() == [
-        f"node: {name}, chain id 1, block 16",
+        f"node: {name}, Ethereum, chain id 1, block 16",
         "bounds: account gap 3, gap limit 20",
-        "ethereum: ether and nonces read, no token balance",
+        "Ethereum: ETH and nonces read, no token balance",
         (
             "reading 0, ethereum purpose 44: accounts read: 1, cut short:"
             " the bundle's accounts end before the account gap"
         ),
-        "used: reading 0, m/44h/60h/0h: 1 addresses, 5 wei",
+        "used: reading 0, m/44h/60h/0h: 1 addresses, 5 wei of ETH",
         "not checked: reading 0, bitcoin: no Electrum server was named",
+        f"not checked: reading 0, ethereum-classic: {OTHER_CHAIN}",
         f"not checked: reading 0, bitcoin-cash: {elsewhere}",
         f"not checked: reading 0, bitcoin-sv: {elsewhere}",
         f"not checked: reading 0, litecoin: {elsewhere}",
         f"not checked: reading 0, dogecoin: {elsewhere}",
     ]
+
+
+def test_the_chain_named_is_read_and_named(
+    capsys: pytest.CaptureFixture[str], bundle: str, bundle_text: str
+) -> None:
+    """Ethereum Classic: both coins read, and the chain named in each output."""
+    address = eth_address(bundle_text, "m/44h/61h/0h", 0)
+    with serve(serving(Ethereum({address: 7}, chain_id=61))) as node:
+        argv = [bundle, "--node", node.url(), "--evm-chain", "ethereum-classic"]
+        status, out, err = run(capsys, argv, Connections(Electrum()))
+    assert status == 0
+    evm = json.loads(out)["evm"]
+    assert (evm["chain"], evm["chain_id"]) == ("ethereum-classic", 61)
+    assert [(s["coin"], s["purpose"]) for s in evm["searched"]] == [
+        ("ethereum", 44),
+        ("ethereum-classic", 44),
+    ]
+    lines = err.splitlines()
+    assert (
+        lines[0]
+        == f"node: http://127.0.0.1:{node.port}, Ethereum Classic, chain id 61, block 16"
+    )
+    assert "Ethereum Classic: ETC and nonces read, no token balance" in lines
+    assert "used: reading 0, m/44h/61h/0h: 1 addresses, 7 wei of ETC" in lines
+    assert "ethereum-classic" not in "".join(
+        line for line in lines if line.startswith("not checked:")
+    )
+
+
+def test_a_node_of_another_chain_is_refused(
+    capsys: pytest.CaptureFixture[str], bundle: str
+) -> None:
+    """A BNB Smart Chain node named as Base's: one line, no chain id quoted."""
+    fake = Ethereum(chain_id=56)
+    with serve(serving(fake)) as node:
+        argv = [bundle, "--node", node.url(), "--evm-chain", "base"]
+        status, out, err = run(capsys, argv, Connections(Electrum()))
+    assert (status, out, err) == (
+        1,
+        "",
+        "seed-scan scan: the node does not serve Base\n",
+    )
+    assert fake.asked == ["eth_chainId"]
 
 
 def test_nothing_used_on_the_node_is_said(
@@ -966,14 +1018,18 @@ def test_the_server_and_the_node_are_both_scanned(
     assert [u["path"] for u in document["evm"]["used"]] == ["m/44h/60h/0h"]
     assert err.startswith(f"server: h:1\nnode: http://127.0.0.1:{node.port},")
     assert "used: reading 0, m/84h/0h/0h: 1 addresses, 1 transactions" in err
-    assert "used: reading 0, m/44h/60h/0h: 1 addresses, 1 wei" in err
+    assert "used: reading 0, m/44h/60h/0h: 1 addresses, 1 wei of ETH" in err
     assert "no account used" not in err
 
 
 @pytest.mark.parametrize(
     "argv, said",
     [
-        ([], "name an Electrum --server, an Ethereum --node or both"),
+        ([], "name an Electrum --server, an EVM --node or both"),
+        (
+            ["--server", "h:1", "--evm-chain", "base"],
+            "--evm-chain is for --node, and none is named",
+        ),
         (
             ["--node", "http://127.0.0.1:1", "--cafile", "ca.pem"],
             "--cafile is for --server, and none is named",
@@ -988,7 +1044,7 @@ def test_the_server_and_the_node_are_both_scanned(
 def test_options_the_command_cannot_scan_with_are_refused(
     capsys: pytest.CaptureFixture[str], bundle: str, argv: list[str], said: str
 ) -> None:
-    """No backend, a CA file for no server, a URL `Node` refuses.
+    """No backend, a CA file for no server, a chain for no node, a bad URL.
 
     :param capsys: pytest's capture of the standard streams.
     :param bundle: the bundle's file.

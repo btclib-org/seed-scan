@@ -43,7 +43,7 @@ dependencies = [
     "bip32-descriptors>=2026.11.13",
     # the descriptors of an account, and for `scan` the discovery of the
     # accounts in use against an Electrum server over TLS, and the HTTP
-    # transport the Ethereum node is asked over
+    # transport an EVM chain's node is asked over
     "btclib-wallet>=2026.11.13",
     # the Ethereum address of a public key, `evm.address_from_pub_key`
     "coin-addresses>=2026.11.14",

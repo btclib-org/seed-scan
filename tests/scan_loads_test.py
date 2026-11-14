@@ -20,7 +20,7 @@ from btclib_wallet.fetch.history import HistoryTx
 from seed_scan.bundle import dumps
 from seed_scan.exceptions import SeedScanTypeError, SeedScanValueError
 from seed_scan.identify import identify
-from seed_scan.scan import NO_NODE, NO_SERVER, NOT_READ, loads, scan
+from seed_scan.scan import NO_NODE, NO_SERVER, NOT_READ, OTHER_CHAIN, loads, scan
 from seed_scan.scan import dumps as scan_dumps
 
 from .evm_test import Ethereum
@@ -61,13 +61,15 @@ def result(bundle: str) -> str:
 def evm_result(bundle: str) -> str:
     """Return the result of a node alone: one used account, two addresses.
 
+    The node serves Polygon PoS, which reads Ethereum's accounts alone.
+
     :param bundle: the bundle.
     :returns: its text.
     """
     first = eth_address(bundle, "m/44h/60h/0h", 0)
     sixth = eth_address(bundle, "m/44h/60h/0h", 5)
     fake = Ethereum({first: 10**18}, {sixth: 4}, chain_id=137)
-    return scan_dumps(scan(bundle, None, node=node(fake)))
+    return scan_dumps(scan(bundle, None, node=node(fake), evm_chain="polygon-pos"))
 
 
 def test_a_result_reads_back_as_scan_wrote_it(bundle: str, result: str) -> None:
@@ -85,7 +87,11 @@ def test_an_ethereum_result_reads_back(bundle: str, evm_result: str) -> None:
     assert scan_dumps(read) == evm_result
     assert read.server is None
     assert read.evm is not None
-    assert (read.evm.node, read.evm.chain_id) == ("https://node.example", 137)
+    assert (read.evm.node, read.evm.chain, read.evm.chain_id) == (
+        "https://node.example",
+        "polygon-pos",
+        137,
+    )
     (used,) = read.evm.used
     assert [(a.index, a.balance, a.nonce) for a in used.addresses] == [
         (0, str(10**18), 0),
@@ -102,7 +108,30 @@ def test_a_result_of_both_reads_back(bundle: str) -> None:
     text = scan_dumps(scan(bundle, chain, server="s:1", node=node(fake)))
     read = loads(text, bundle)
     assert scan_dumps(read) == text
-    assert {n.reason for n in read.not_checked} == {NOT_READ}
+    assert {n.reason for n in read.not_checked} == {NOT_READ, OTHER_CHAIN}
+
+
+def test_an_ethereum_classic_result_reads_back(bundle: str) -> None:
+    """Account 0 of each coin used: one key each, neither listed twice."""
+    ethereum = eth_address(bundle, "m/44h/60h/0h", 0)
+    classic = eth_address(bundle, "m/44h/61h/0h", 0)
+    fake = Ethereum({ethereum: 1, classic: 2}, chain_id=61)
+    text = scan_dumps(scan(bundle, None, node=node(fake), evm_chain="ethereum-classic"))
+    read = loads(text, bundle)
+    assert scan_dumps(read) == text
+    assert read.evm is not None
+    assert [(u.coin, u.account) for u in read.evm.used] == [
+        ("ethereum", 0),
+        ("ethereum-classic", 0),
+    ]
+    document = json.loads(text)
+    document["evm"]["chain"], document["evm"]["chain_id"] = "ethereum", 1
+    with pytest.raises(SeedScanValueError, match="a coin the chain does not read"):
+        loads(json.dumps(document), bundle)
+    document = json.loads(text)
+    document["evm"]["chain"] = 61
+    with pytest.raises(SeedScanTypeError, match="member 'chain' of type int"):
+        loads(json.dumps(document), bundle)
 
 
 def test_an_electrum_result_reads_back() -> None:
@@ -221,6 +250,14 @@ def evm_address_twice(document: dict[str, Any]) -> None:
     """
     addresses = document["evm"]["used"][0]["addresses"]
     addresses.append(addresses[0])
+
+
+def evm_searched_twice(document: dict[str, Any]) -> None:
+    """List the search of Ethereum's purpose 44 twice.
+
+    :param document: the result.
+    """
+    document["evm"]["searched"].append(document["evm"]["searched"][0])
 
 
 def evm_used_twice(document: dict[str, Any]) -> None:
@@ -423,6 +460,17 @@ EVM_VALUE_ERRORS = [
         "member 'node' is not a scheme, host",
     ),
     (in_evm(setter("chain_id", -1)), "member 'chain_id' is below 0"),
+    (in_evm(setter("chain_id", 1)), "member 'chain_id' is not the chain's"),
+    (in_evm(setter("chain", PLANTED)), "member 'chain' is not one scan reads"),
+    (
+        in_evm(first("searched", setter("coin", "ethereum-classic"))),
+        "a coin the chain does not read",
+    ),
+    (in_evm(first("used", setter("coin", PLANTED))), "a coin the chain does not read"),
+    (
+        in_evm(first("used", setter("coin", "bitcoin"))),
+        "a coin the chain does not read",
+    ),
     (in_evm(first("searched", setter("purpose", 84))), "a search reads no account"),
     (in_evm(first("used", setter("account", 2))), "a used account was not searched"),
     (
@@ -430,6 +478,7 @@ EVM_VALUE_ERRORS = [
         "member 'path' is not the account's",
     ),
     (in_evm(first("searched", setter("cut_short", False))), DISAGREE),
+    (evm_searched_twice, "a purpose searched twice"),
     (evm_used_twice, "a used account listed twice"),
     (evm_address_twice, "an address listed twice"),
     (in_evm_address("address", PLANTED), "an address is not the bundle's"),
@@ -641,9 +690,14 @@ def test_the_reason_a_coin_is_not_checked_is_the_one_scan_gives(
 ) -> None:
     """A coin whose backend was not named says so; every other, `NOT_READ`."""
     reasons = {(n.coin, n.reason) for n in loads(result, bundle).not_checked}
-    assert ("ethereum", NO_NODE) in reasons
-    assert {r for c, r in reasons if c != "ethereum"} == {NOT_READ}
+    evm_coins = {"ethereum", "ethereum-classic"}
+    assert {(c, r) for c, r in reasons if c in evm_coins} == {
+        ("ethereum", NO_NODE),
+        ("ethereum-classic", NO_NODE),
+    }
+    assert {r for c, r in reasons if c not in evm_coins} == {NOT_READ}
     assert "bitcoin" not in {c for c, _ in reasons}
     reasons = {(n.coin, n.reason) for n in loads(evm_result, bundle).not_checked}
     assert ("bitcoin", NO_SERVER) in reasons
+    assert ("ethereum-classic", OTHER_CHAIN) in reasons
     assert "ethereum" not in {c for c, _ in reasons}

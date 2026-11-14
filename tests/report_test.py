@@ -22,6 +22,7 @@ from btclib_wallet.descriptors import add_checksum, parse, strip_checksum
 from btclib_wallet.fetch.history import HistoryTx
 from coin_addresses.evm import address_from_pub_key
 
+from seed_scan import cli
 from seed_scan import forks as forks_module
 from seed_scan import report as report_module
 from seed_scan import scan as scan_module
@@ -37,13 +38,31 @@ from seed_scan.report import (
     VERSION,
     report,
 )
-from seed_scan.scan import NO_NODE, NO_SERVER, NOT_READ
+from seed_scan.scan import NO_NODE, NO_SERVER, NOT_READ, OTHER_CHAIN
 
 from .evm_test import Ethereum
 from .forks_test import NO_WITNESS, OWN, SHARED, p2pkh
-from .identify_test import ABANDON, BIP84_CHANGE, OLD, SEGWIT, STANDARD, no_share
-from .no_secret_test import Secrets, assert_text_secret_free
-from .scan_test import BLOCK, ELSEWHERE, Chain, eth_address, node, pay, script
+from .identify_test import (
+    ABANDON,
+    BIP84_CHANGE,
+    OLD,
+    SEGWIT,
+    SHARES,
+    STANDARD,
+    Prompt,
+    no_share,
+)
+from .no_secret_test import Secrets, assert_lines_secret_free, unshaped
+from .scan_test import (
+    BLOCK,
+    ELSEWHERE,
+    Chain,
+    edited,
+    eth_address,
+    node,
+    pay,
+    script,
+)
 
 #: A bundle whose search does not find the address: one index past it.
 MISSED = dumps(
@@ -191,6 +210,7 @@ def test_the_report_of_a_scanned_bundle(abandon: str, result: str) -> None:
         ),
         "  bitcoin, purpose 86: accounts 0 to 2 read, 0 used",
         f"  ethereum, purpose 44: not checked: {NO_NODE}",
+        f"  ethereum-classic, purpose 44: not checked: {NO_NODE}",
         *other,
         (
             "total: bitcoin, 4000 sat confirmed, 2000 sat unconfirmed,"
@@ -458,26 +478,27 @@ def test_the_report_of_an_ethereum_scan(abandon: str, evm_result: str) -> None:
     assert lines[3:7] == [
         "server: none",
         (
-            "node: https://node.example, chain id 1, latest block 16 before"
-            " the first address was read"
+            "node: https://node.example, Ethereum, chain id 1, latest block 16"
+            " before the first address was read"
         ),
-        f"ethereum tokens: not checked: {NO_TOKENS}",
+        f"Ethereum tokens: not checked: {NO_TOKENS}",
         "bounds: account gap 3, gap limit 20",
     ]
     (opening,) = [n for n, line in enumerate(lines) if line.startswith("reading")]
-    assert lines[opening + 1 : opening + 10] == [
+    assert lines[opening + 1 : opening + 11] == [
         *(
             f"  bitcoin, purpose {purpose}: not checked: {NO_SERVER}"
             for purpose in (44, 49, 84, 86)
         ),
-        "  ethereum, purpose 44: accounts 0 to 3 read, 1 used",
+        "  ethereum, purpose 44, on Ethereum: accounts 0 to 3 read, 1 used",
         f"    account 0, m/44h/60h/0h: {10**18} wei at latest",
         f"      receive m/44h/60h/0h/0/0 {first}: {10**18} wei, nonce 0",
         f"      receive m/44h/60h/0h/0/5 {sixth}: 0 wei, nonce 4",
+        f"  ethereum-classic, purpose 44: not checked: {OTHER_CHAIN}",
         f"  bitcoin-cash, purpose 44: not checked: {NOT_READ}",
     ]
     assert lines[-2] == (
-        f"total: ethereum, {10**18} wei, 1 used accounts, each account key once"
+        f"total: ethereum, {10**18} wei of ETH, 1 used accounts, each account key once"
     )
     assert not [line for line in lines if line.startswith("total: bitcoin")]
 
@@ -497,7 +518,8 @@ def test_a_report_of_both_coins_totals_each(abandon: str) -> None:
         " each account key once\n"
     ) in text
     assert (
-        "\ntotal: ethereum, 3 wei, 1 used accounts, each account key once\ndigest: "
+        "\ntotal: ethereum, 3 wei of ETH, 1 used accounts, each account key once"
+        "\ndigest: "
     ) in text
     assert NO_SERVER not in text
     assert NO_NODE not in text
@@ -525,7 +547,7 @@ def test_a_passphrase_typed_twice_is_counted_once() -> None:
             "total: bitcoin, 9 sat confirmed, 0 sat unconfirmed, 1 used accounts,"
             " each account key once"
         ),
-        "total: ethereum, 5 wei, 1 used accounts, each account key once",
+        "total: ethereum, 5 wei of ETH, 1 used accounts, each account key once",
     ]
 
 
@@ -656,10 +678,176 @@ def test_nothing_report_writes_holds_a_secret(
     secrets.sentence(ABANDON)
     paths = sorted({a.path for r in loads(abandon).readings for a in r.accounts})
     secrets.seed(bip39.seed_from_mnemonic(ABANDON, ""), paths)
-    assert_text_secret_free(text, secrets.every())
+    assert_lines_secret_free(text, secrets.every())
+
+
+#: BIP173's testnet P2WSH vector, an address `identify` does not search.
+TESTNET = "tb1qrp33g0q5c5txsp9arysrx4k6zdkfs4nce4xj0gdcccefvpysxf3q0sl5k7"
+
+
+def test_every_line_naming_a_defined_word_has_a_shape(
+    abandon: str, result: str, evm_result: str, forked: str
+) -> None:
+    """The reports and summaries of many runs: no such line is searched whole.
+
+    Each line of a report, or of a summary of ``identify``, ``scan`` or
+    ``forks``, that names a coin, a chain or a reason is of a shape
+    `tests.no_secret_test.LINE_SHAPES` holds. The runs pay, spend before
+    a block confirms it, cut a purpose short, read Ethereum's accounts on
+    other chains, read Bitcoin Cash, and refuse a passphrase, an address
+    and a scheme.
+    """
+    one = dumps(identify(ABANDON, [""], no_share, accounts=1))
+    paid = pay(1, (script(one, "m/84h/0h/0h", 0, 0), 10_000))
+    spent = pay(2, (ELSEWHERE, 9_000), spends=paid)
+    pending = Chain(HistoryTx(paid, BLOCK), HistoryTx(spent, None))
+    short = Chain(HistoryTx(pay(1, (script(one, "m/86h/0h/0h", 0, 0), 5)), BLOCK))
+    btc = Chain(HistoryTx(pay(1, (script(abandon, "m/49h/0h/0h", 0, 0), 5)), BLOCK))
+    eth = eth_address(abandon, "m/44h/60h/0h", 0)
+    segwit = dumps(identify(SEGWIT, [""], no_share, accounts=1))
+    refused = ["", "\N{LATIN SMALL LETTER E WITH ACUTE}"]
+    runs = [
+        (abandon, scan_module.loads(result, abandon)),
+        (abandon, scan_module.loads(evm_result, abandon)),
+        (abandon, None),
+        (one, scan_module.scan(one, pending, server="s:1")),
+        (one, scan_module.scan(one, short, server="s:1")),
+        (segwit, scan_module.scan(segwit, Chain(), server="s:1")),
+        (
+            abandon,
+            scan_module.scan(abandon, btc, server="s:1", node=node(Ethereum({eth: 3}))),
+        ),
+        (
+            abandon,
+            scan_module.scan(
+                abandon,
+                None,
+                node=node(Ethereum({eth: 2}, chain_id=61)),
+                evm_chain="ethereum-classic",
+            ),
+        ),
+        (
+            abandon,
+            scan_module.scan(
+                abandon,
+                None,
+                node=node(Ethereum({eth: 2}, chain_id=137)),
+                evm_chain="polygon-pos",
+            ),
+        ),
+        (dumps(identify(OLD, [""], no_share, address="not an address")), None),
+        (dumps(identify(ABANDON, [""], no_share, accounts=1, address=TESTNET)), None),
+        (dumps(identify(SHARES[0], refused, Prompt(SHARES[1]), accounts=1)), None),
+        (dumps(identify(SHARES[0], [""], no_share)), None),
+        (dumps(identify("qzx qzx", [""], no_share)), None),
+        (MISSED, None),
+    ]
+    texts = []
+    for bundle, scanned in runs:
+        texts.append(cli._summary(loads(bundle)))
+        if scanned is None:
+            texts.append(report(bundle))
+        else:
+            texts += [
+                report(bundle, scan_module.dumps(scanned)),
+                cli._scan_summary(scanned),
+            ]
+    cut = forked_of(one, HistoryTx(pay(1, (p2pkh("m/44h/145h/0h/0/0"), 5)), OWN))
+    document = json.loads(forked)
+    document["searched"] = [s for s in document["searched"] if s["coin"] == "bitcoin"]
+    document["used"] = [u for u in document["used"] if u["coin"] == "bitcoin"]
+    sv = forked_of(
+        abandon,
+        HistoryTx(pay(1, (p2pkh("m/44h/0h/0h/0/0"), 300)), SHARED),
+        HistoryTx(pay(2, (p2pkh("m/44h/236h/0h/0/0"), 20)), OWN),
+        chain="bitcoin-sv",
+    )
+    for text, scan_text, forks in (
+        (abandon, result, [forked, sv]),
+        (one, None, [cut]),
+        (abandon, None, [json.dumps(document)]),
+    ):
+        texts.append(report(text, scan_text, forks))
+        texts += [cli._forks_summary(forks_module.loads(f, text)) for f in forks]
+    written = "".join(texts)
+    for line in (
+        "\ntotal: bitcoin, 10000 sat confirmed, -10000 sat unconfirmed,",
+        "\nnot derived: slip39: passphrase 1: not one SLIP-0039 accepts\n",
+        f"\n  ethereum-classic, purpose 44: not checked: {OTHER_CHAIN}\n",
+        "\nreading 0, purpose 86: accounts read: 1, cut short: ",
+        ", of Bitcoin Cash's and Bitcoin SV's for a base58 address, ",
+        "\nchain: Bitcoin Cash, forked from Bitcoin at height 478559\n",
+        "\nchain: Bitcoin SV, forked from Bitcoin at height ",
+        ", on Bitcoin SV: accounts 0 to ",
+        f"\ncashtokens: not checked: {NO_CASHTOKENS}\n",
+        f", on Bitcoin Cash: not checked: {NOT_IN_FORKS}\n",
+        ", then forks\n",
+        f"\nnot checked: reading 0, bitcoin purpose 49: {NO_WITNESS}\n",
+        "\ntotal: bitcoin-cash, ",
+        "\ntotal: bitcoin-sv, ",
+    ):
+        assert line in written
+    assert not unshaped(written)
+    assert_lines_secret_free(written, ["coin", "cash"])
 
 
 def test_a_result_that_is_no_text_is_refused(abandon: str) -> None:
     """Its type is named, as `seed_scan.scan.loads` names it."""
     with pytest.raises(SeedScanTypeError, match="scan result: text of type bytes"):
         report(abandon, b"{}")  # type: ignore[arg-type]
+
+
+def test_the_report_of_an_ethereum_classic_scan(abandon: str) -> None:
+    """The chain is named on the node's line, each coin's and the total.
+
+    Each coin's accounts are counted, an account key of each once.
+    """
+    ethereum = eth_address(abandon, "m/44h/60h/0h", 0)
+    classic = eth_address(abandon, "m/44h/61h/0h", 1)
+    fake = Ethereum({ethereum: 2, classic: 3}, chain_id=61)
+    result = scan_module.scan(
+        abandon, None, node=node(fake), evm_chain="ethereum-classic"
+    )
+    lines = report(abandon, scan_module.dumps(result)).splitlines()
+    assert lines[4:6] == [
+        (
+            "node: https://node.example, Ethereum Classic, chain id 61, latest"
+            " block 16 before the first address was read"
+        ),
+        f"Ethereum Classic tokens: not checked: {NO_TOKENS}",
+    ]
+    read = [line for line in lines if line.startswith("  ethereum")]
+    assert read == [
+        "  ethereum, purpose 44, on Ethereum Classic: accounts 0 to 3 read, 1 used",
+        (
+            "  ethereum-classic, purpose 44, on Ethereum Classic: accounts 0 to 3"
+            " read, 1 used"
+        ),
+    ]
+    assert lines[-2] == (
+        "total: ethereum-classic, 5 wei of ETC, 2 used accounts, each account key once"
+    )
+
+
+def test_a_key_read_as_both_coins_is_counted_once(abandon: str) -> None:
+    """Ethereum's and Ethereum Classic's account 0 under one xpub: one total.
+
+    The bundle is edited so that both hold the same key, as `loads` and
+    `scan` accept: the same address is read for each coin, and its funds
+    are counted once.
+    """
+    (ethereum,) = [
+        a
+        for r in loads(abandon).readings
+        for a in r.accounts
+        if a.path == "m/44h/60h/0h"
+    ]
+    text = edited(abandon, "m/44h/61h/0h", xpub=ethereum.xpub)
+    fake = Ethereum({eth_address(text, "m/44h/60h/0h", 0): 7}, chain_id=61)
+    result = scan_module.scan(text, None, node=node(fake), evm_chain="ethereum-classic")
+    assert result.evm is not None
+    assert [u.coin for u in result.evm.used] == ["ethereum", "ethereum-classic"]
+    lines = report(text, scan_module.dumps(result)).splitlines()
+    assert lines[-2] == (
+        "total: ethereum-classic, 7 wei of ETC, 1 used accounts, each account key once"
+    )

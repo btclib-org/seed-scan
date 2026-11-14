@@ -23,17 +23,26 @@ one finds it, for each kind of secret.
 from __future__ import annotations
 
 import base64
+import dataclasses
+import json
+import re
+from typing import TYPE_CHECKING
 
 import pytest
 from bip32_descriptors.bip32 import BIP32KeyData
 from bip39_slip39 import bip39, electrum, slip39
 from btclib.b58 import wif_from_prv_key
 
-from seed_scan import cli
-from seed_scan.bundle import loads
+from seed_scan import bundle, cli, forks, report, scan
+from seed_scan.bundle import COIN_NAMES, loads
+from seed_scan.evm import EVM_CHAINS
+from seed_scan.scan import OTHER_CHAIN
 
 from .identify_test import ABANDON, SHARES, Prompt
 from .secret_free import assert_secret_free
+
+if TYPE_CHECKING:
+    from collections.abc import Iterable
 
 #: A secret as a run holds it: text, or bytes.
 Secret = str | bytes
@@ -51,16 +60,255 @@ WILD_FATHER = (
 PLAGUEIS = "Did you ever hear the tragedy of Darth Plagueis the Wise?"
 
 
-def assert_text_secret_free(text: str, secrets: list[Secret]) -> None:
-    """Assert that no piece of a secret, in any spelling, is in a text.
+#: The member names of the objects the commands write as JSON.
+MEMBERS = frozenset(
+    {"format", "version"}
+    | {
+        field.name
+        for module in (bundle, scan, forks)
+        for name in module.__all__
+        if dataclasses.is_dataclass(kind := getattr(module, name))
+        for field in dataclasses.fields(kind)
+    }
+)
 
-    The text is handed to `assert_secret_free` as a refusal's message, so
-    that one search, the tree's, reads the bundle and the refusals alike.
 
-    :param text: what the command wrote.
+def _group(*patterns: str) -> str:
+    """Return a regular expression's group that matches any of the patterns."""
+    return f"({'|'.join(patterns)})"
+
+
+def _either(words: Iterable[str]) -> str:
+    """Return a regular expression's group that matches any of the words."""
+    return _group(*map(re.escape, words))
+
+
+def _any(words: Iterable[str]) -> str:
+    """Return a regular expression that matches any of the words, no group."""
+    return f"(?:{'|'.join(map(re.escape, words))})"
+
+
+#: The reasons a scan result writes, each a fixed text.
+SCAN_REASONS = (scan.NO_SERVER, scan.NO_NODE, scan.OTHER_CHAIN, scan.NOT_READ)
+
+#: The reason a forks result writes for a Bitcoin account of a segwit
+#: script, as `seed_scan.forks` words it, its chain's title any.
+_NO_WITNESS = (
+    re.escape("a segwit script: ")
+    + _any(chain.title for chain in forks.CHAINS.values())
+    + re.escape("'s transactions carry no witness, so a key does not sign for it")
+    + re.escape(" there")
+)
+
+#: The reason `seed_scan.bundle.slip39_passphrase` writes, its number any:
+#: the first ``0`` of the reason of passphrase 0 is that number.
+_SLIP39_REASON = re.escape(bundle.slip39_passphrase(0)).replace("0", r"\d+", 1)
+
+#: The reasons a bundle writes.
+_BUNDLE_REASON = _group(*map(re.escape, bundle.REASONS.values()), _SLIP39_REASON)
+
+_COIN = _either(COIN_NAMES)
+_EVM_NAME = _either(EVM_CHAINS)
+_CHAIN = _either((*EVM_CHAINS, *forks.CHAINS))
+_EVM_TITLE = _either(chain.title for chain in EVM_CHAINS.values())
+_FORK_NAME = _either(forks.CHAINS)
+_FORK_TITLE = _either(chain.title for chain in forks.CHAINS.values())
+_TITLE = _either(
+    (
+        *(chain.title for chain in EVM_CHAINS.values()),
+        *(chain.title for chain in forks.CHAINS.values()),
+    )
+)
+_SCAN_REASON = _either(SCAN_REASONS)
+_FORKS_REASON = _group(_NO_WITNESS)
+_REPORT_REASON = _group(
+    *map(
+        re.escape,
+        (*SCAN_REASONS, report.NO_SCAN, report.NOT_IN_SCAN, report.NOT_IN_FORKS),
+    ),
+    _NO_WITNESS,
+)
+
+#: The members whose value JSON writes as a defined word, and the words
+#: each may hold, whole: a coin's name, a chain's, or a reason.
+DEFINED_VALUES = {
+    "coin": re.compile(_COIN),
+    "chain": re.compile(_CHAIN),
+    "reason": re.compile(f"{_BUNDLE_REASON}|{_SCAN_REASON}|{_FORKS_REASON}"),
+}
+
+
+def _defined(name: str, value: object) -> bool:
+    """Return whether a member's value is a word `DEFINED_VALUES` holds."""
+    words = DEFINED_VALUES.get(name)
+    return isinstance(value, str) and words is not None and bool(words.fullmatch(value))
+
+
+def _members(pairs: list[tuple[str, object]]) -> list[tuple[str | None, object]]:
+    """Return a JSON object's members without the defined words.
+
+    `json.loads` calls this on each object, the innermost first, and the
+    list it returns keeps a member whose name is written twice. A name of
+    `MEMBERS` becomes ``None``, and so does a value `_defined` says is a
+    defined word. Every other name and value is kept.
+
+    :param pairs: the object's members, as names and values.
+    :returns: the members kept.
+    """
+    return [
+        (
+            None if name in MEMBERS else name,
+            None if _defined(name, value) else value,
+        )
+        for name, value in pairs
+    ]
+
+
+def assert_json_secret_free(text: str, secrets: list[Secret]) -> None:
+    """Assert that no piece of a secret, in any spelling, is in a JSON text.
+
+    The text is parsed, the defined words are dropped from where JSON
+    writes them, as `_members` says, and the `repr` of what is left is
+    handed to `assert_secret_free` as a refusal's message: one search, the
+    tree's, reads the bundle and the refusals alike. A defined word can
+    hold a word of a mnemonic, as ``ethereum-classic`` holds SLIP-0039's
+    ``class`` and ``cut_short`` its ``short``. A number is kept as it is
+    written, since a float's value can lose digits its text shows.
+
+    :param text: a JSON document a command wrote.
     :param secrets: each secret, as text or bytes.
     """
-    assert_secret_free(ValueError(text), secrets)
+    kept = json.loads(text, object_pairs_hook=_members, parse_float=str, parse_int=str)
+    assert_secret_free(ValueError(repr(kept)), secrets)
+
+
+#: A number as a line writes it, a sign allowed wherever it stands: a
+#: shape matched more loosely drops no more, since only its groups are
+#: dropped.
+_N = r"-?\d+"
+
+#: Lines of `seed_scan.report` and of the summaries of ``identify``,
+#: ``scan`` and ``forks`` that hold a defined word, each whole, as the
+#: code writes it.
+#: Each group is a defined word: a coin's or an asset's name, a chain's
+#: name or title, or a reason.
+LINE_SHAPES = tuple(
+    re.compile(shape)
+    for shape in (
+        # seed_scan.report
+        (
+            rf"node: .*, {_EVM_TITLE}, chain id {_N}, latest block {_N} before"
+            " the first address was read"
+        ),
+        rf"{_EVM_TITLE} tokens: not checked: {_either([report.NO_TOKENS])}",
+        rf"chain: {_FORK_TITLE}, forked from (Bitcoin) at height {_N}",
+        rf"(cashtokens): not checked: {_either([report.NO_CASHTOKENS])}",
+        rf"not derived: [^:]+: {_BUNDLE_REASON}",
+        rf"address search: not run: {_BUNDLE_REASON}",
+        (
+            rf"  {_COIN}, (?:purpose {_N}|Electrum account)(?:, on {_TITLE})?"
+            rf"(?:: not checked: {_REPORT_REASON}"
+            rf"|: accounts 0 to {_N} read, {_N} used"
+            rf"(?:, cut short: run identify with --accounts above {_N}, then"
+            r" (?:scan|forks))?)"
+        ),
+        (
+            rf"total: (bitcoin), {_N} sat confirmed, {_N} sat unconfirmed, {_N}"
+            " used accounts, each account key once"
+        ),
+        (
+            rf"total: {_EVM_NAME}, {_N} wei of \w+, {_N} used accounts, each"
+            " account key once"
+        ),
+        (
+            rf"total: {_FORK_NAME}, {_N} sat confirmed, {_N} sat unconfirmed,"
+            rf" {_N} sat at the fork, {_N} used accounts, each account key once"
+        ),
+        # seed_scan.cli, the summary of identify
+        rf"not checked: [^:]+: {_BUNDLE_REASON}",
+        rf"address not searched: {_BUNDLE_REASON}",
+        (
+            rf"address searched in {_N} positions: accounts 0 to {_N} of each"
+            rf" (Bitcoin) purpose, of {_FORK_TITLE}'s and {_FORK_TITLE}'s for a"
+            rf" base58 address, and Electrum's account, receive and change,"
+            rf" indexes 0 to {_N}"
+        ),
+        rf"found: reading {_N}, {_COIN}, \S+",
+        # seed_scan.cli, the summary of scan
+        rf"node: .*, {_EVM_TITLE}, chain id {_N}, block {_N}",
+        rf"{_EVM_TITLE}: \w+ and nonces read, no token balance",
+        (
+            rf"reading {_N}, {_COIN} (?:purpose {_N}|Electrum): accounts read: {_N}"
+            r"(?:, cut short: the bundle's accounts end before the account gap)?"
+        ),
+        rf"not checked: reading {_N}, {_COIN}: {_SCAN_REASON}",
+        # seed_scan.cli, the summary of forks: its chain's line is the
+        # report's, and its lines of what it read the summary of scan's
+        (
+            rf"used: reading {_N}, {_COIN}, \S+: {_N} addresses, {_N} transactions,"
+            rf" {_N} sat confirmed, {_N} sat unconfirmed, {_N} sat at the fork"
+        ),
+        (
+            rf"not checked: reading {_N}, {_COIN} (?:purpose {_N}|Electrum):"
+            rf" {_FORKS_REASON}"
+        ),
+    )
+)
+
+#: A coin's name, a chain's name or title, or a reason, wherever it is.
+_ANY_DEFINED = re.compile(
+    rf"\b(?:{_COIN}|{_CHAIN}|{_TITLE}|{_BUNDLE_REASON}|{_REPORT_REASON}"
+    rf"|{_either([report.NO_TOKENS, report.NO_CASHTOKENS])})\b"
+)
+
+
+def unshaped(text: str) -> list[str]:
+    """Return the lines of a text that hold a defined word and fit no shape.
+
+    Such a line is searched whole, its defined words with it.
+
+    :param text: lines a command wrote.
+    :returns: those of them none of `LINE_SHAPES` matches whole.
+    """
+    return [
+        line
+        for line in text.split("\n")
+        if _ANY_DEFINED.search(line)
+        and not any(shape.fullmatch(line) for shape in LINE_SHAPES)
+    ]
+
+
+def _line_kept(line: str) -> str:
+    """Return a line without the defined words its shape writes.
+
+    A line of none of `LINE_SHAPES` is kept whole: where the code writes
+    a line another way, every word of it is searched.
+
+    :param line: a line a command wrote.
+    :returns: what of it is searched.
+    """
+    for shape in LINE_SHAPES:
+        if found := shape.fullmatch(line):
+            for group in reversed(range(1, shape.groups + 1)):
+                start, end = found.span(group)
+                if start >= 0:
+                    line = line[:start] + line[end:]
+            return line
+    return line
+
+
+def assert_lines_secret_free(text: str, secrets: list[Secret]) -> None:
+    """Assert that no piece of a secret, in any spelling, is in a text's lines.
+
+    The text is a report or a summary. Each line loses the defined words
+    its shape writes, as `_line_kept` says, and what is left is handed to
+    `assert_secret_free` as a refusal's message.
+
+    :param text: lines a command wrote.
+    :param secrets: each secret, as text or bytes.
+    """
+    kept = "\n".join(map(_line_kept, text.split("\n")))
+    assert_secret_free(ValueError(kept), secrets)
 
 
 class Secrets:
@@ -123,28 +371,32 @@ class Secrets:
                 self.key(account.derive([branch, 0]))
 
 
-def run(capsys: pytest.CaptureFixture[str], *typed: str) -> tuple[str, list[str]]:
+#: What `identify` writes: the bundle, as JSON, and the summary's lines.
+Written = tuple[str, str]
+
+
+def run(capsys: pytest.CaptureFixture[str], *typed: str) -> tuple[Written, list[str]]:
     """Run `identify` on what the user types; answer its output and paths.
 
     :param capsys: pytest's capture of the standard streams.
     :param typed: what the user types at the hidden prompts, in order.
-    :returns: what it wrote on both streams, and the path of every
-        account key in its bundle.
+    :returns: what it wrote on standard output and on standard error, and
+        the path of every account key in its bundle.
     """
     argv = ["identify", "--accounts", "1", "--address", "bc1qx", "--indexes", "1"]
     assert cli.main(argv, prompt=Prompt(*typed), forbid_network=lambda: None) == 0
     out, err = capsys.readouterr()
     paths = sorted({a.path for r in loads(out).readings for a in r.accounts})
-    return out + err, paths
+    return (out, err), paths
 
 
-def bip39_case(capsys: pytest.CaptureFixture[str]) -> tuple[str, Secrets]:
+def bip39_case(capsys: pytest.CaptureFixture[str]) -> tuple[Written, Secrets]:
     """BIP39: the mnemonic of BIP84's vector, with "TREZOR" typed.
 
     :param capsys: pytest's capture of the standard streams.
     :returns: what the command wrote, and the secrets it handled.
     """
-    text, paths = run(capsys, ABANDON, TREZOR, "")
+    written, paths = run(capsys, ABANDON, TREZOR, "")
     secrets = Secrets()
     secrets.sentence(ABANDON)
     secrets.add("passphrase", TREZOR)
@@ -152,16 +404,16 @@ def bip39_case(capsys: pytest.CaptureFixture[str]) -> tuple[str, Secrets]:
     secrets.add("entropy", entropy)
     for passphrase in ("", TREZOR):
         secrets.seed(bip39.seed_from_mnemonic(ABANDON, passphrase), paths)
-    return text, secrets
+    return written, secrets
 
 
-def slip39_case(capsys: pytest.CaptureFixture[str]) -> tuple[str, Secrets]:
+def slip39_case(capsys: pytest.CaptureFixture[str]) -> tuple[Written, Secrets]:
     """SLIP-0039: two shares of vector 4, with "TREZOR" typed.
 
     :param capsys: pytest's capture of the standard streams.
     :returns: what the command wrote, and the secrets it handled.
     """
-    text, paths = run(capsys, SHARES[0], TREZOR, "", SHARES[1])
+    written, paths = run(capsys, SHARES[0], TREZOR, "", SHARES[1])
     secrets = Secrets()
     for share in SHARES:
         secrets.sentence(share)
@@ -171,16 +423,16 @@ def slip39_case(capsys: pytest.CaptureFixture[str]) -> tuple[str, Secrets]:
     secrets.add("entropy", ems.value)
     for passphrase in ("", TREZOR):
         secrets.seed(ems.master_secret(passphrase), paths)
-    return text, secrets
+    return written, secrets
 
 
-def electrum_case(capsys: pytest.CaptureFixture[str]) -> tuple[str, Secrets]:
+def electrum_case(capsys: pytest.CaptureFixture[str]) -> tuple[Written, Secrets]:
     """Electrum: SEED_TEST_CASES' `english_with_passphrase`.
 
     :param capsys: pytest's capture of the standard streams.
     :returns: what the command wrote, and the secrets it handled.
     """
-    text, paths = run(capsys, WILD_FATHER, PLAGUEIS, "")
+    written, paths = run(capsys, WILD_FATHER, PLAGUEIS, "")
     secrets = Secrets()
     secrets.sentence(WILD_FATHER)
     secrets.add("passphrase", PLAGUEIS)
@@ -188,7 +440,7 @@ def electrum_case(capsys: pytest.CaptureFixture[str]) -> tuple[str, Secrets]:
     secrets.add("entropy", entropy.to_bytes((entropy.bit_length() + 7) // 8, "big"))
     for passphrase in ("", PLAGUEIS):
         secrets.seed(electrum.seed_from_mnemonic(WILD_FATHER, passphrase), paths)
-    return text, secrets
+    return written, secrets
 
 
 CASES = {"bip39": bip39_case, "slip39": slip39_case, "electrum": electrum_case}
@@ -203,9 +455,11 @@ def test_nothing_identify_writes_holds_a_secret(
     :param case: the scheme, by name.
     :param capsys: pytest's capture of the standard streams.
     """
-    text, secrets = CASES[case](capsys)
-    assert '"readings": [\n    {' in text
-    assert_text_secret_free(text, secrets.every())
+    (out, err), secrets = CASES[case](capsys)
+    assert '"readings": [\n    {' in out
+    assert err.startswith("schemes claiming the words: ")
+    assert_json_secret_free(out, secrets.every())
+    assert_lines_secret_free(err, secrets.every())
 
 
 #: Each kind of secret a run handles.
@@ -229,16 +483,149 @@ def test_a_planted_secret_is_found(
 ) -> None:
     """Each kind of secret, swapped for an xpub's prefix, is found.
 
-    Bytes are planted as upper-case hex, the spelling a leak would most
-    likely take and the one furthest from what the search is fed.
+    The prefix is the bundle's, which the JSON search reads. Bytes are
+    planted as upper-case hex, the spelling a leak would most likely take
+    and the one furthest from what the search is fed.
 
     :param kind: which secret is planted.
     :param case: the scheme, by name.
     :param capsys: pytest's capture of the standard streams.
     """
-    text, secrets = CASES[case](capsys)
+    (out, _), secrets = CASES[case](capsys)
     assert sorted(secrets.kinds) == sorted(KINDS)
     secret = secrets.kinds[kind][-1]
     shown = secret if isinstance(secret, str) else secret.hex().upper()
     with pytest.raises(AssertionError):
-        assert_text_secret_free(text.replace("xpub", shown, 1), secrets.every())
+        assert_json_secret_free(out.replace("xpub", shown, 1), secrets.every())
+
+
+#: The search of each format, by name.
+SEARCHES = {"json": assert_json_secret_free, "lines": assert_lines_secret_free}
+
+
+@pytest.mark.parametrize(
+    "form, text, secret",
+    [
+        ("json", '{"passphrase": "bitcoin"}', "bitcoin"),
+        ("json", '{"coin": "bitcoin", "reason": "ethereum"}', "ethereum"),
+        ("json", '{"coin": "ethereum-classic", "passphrase": "class"}', "class"),
+        ("json", '{"passphrase": "ethereum-classic"}', "class"),
+        ("json", '{"chain": "ethereum-classic", "short": 1}', "short"),
+        ("json", '{"reason": "Ethereum Classic"}', "class"),
+        ("json", '{"failed: ethereum-classic, try again": 1}', "class"),
+        ("json", '{"reason": "failed: ethereum-classic, try again"}', "class"),
+        ("json", '{"reason": "failed: bitcoin, try again"}', "bitcoin"),
+        ("json", '{"note": "classic", "note": 1}', "class"),
+        ("json", '{"note": 12345678901234567890.0}', bytes.fromhex("901234567890")),
+        ("lines", "passphrase: bitcoin", "bitcoin"),
+        ("lines", "failed: ethereum-classic, try again", "class"),
+        ("lines", "total: ethereum-classic, 1 wei of ETC, class", "class"),
+        ("lines", "passphrase ethereum-classic", "class"),
+        ("lines", '"chain": "ethereum-classic",', "class"),
+        ("lines", "node: https://h, Ethereum Classical, chain id 61, block 1", "class"),
+        (
+            "lines",
+            "node: https://class.h, Ethereum Classic, chain id 61, block 1",
+            "class",
+        ),
+        (
+            "lines",
+            "  bitcoin, purpose 44: not checked: failed: ethereum-classic, try again",
+            "class",
+        ),
+    ],
+)
+def test_a_defined_word_elsewhere_is_found(
+    form: str, text: str, secret: Secret
+) -> None:
+    """A defined word is dropped where its format writes it, and nowhere else.
+
+    :param form: which search reads the text.
+    :param text: what a command wrote.
+    :param secret: a word of a mnemonic, a passphrase, or a key's bytes.
+    """
+    with pytest.raises(AssertionError):
+        SEARCHES[form](text, [secret])
+
+
+@pytest.mark.parametrize(
+    "form, text, secret",
+    [
+        ("json", '{\n  "coin": "ethereum-classic"\n}', "class"),
+        ("json", '{\n  "chain": "ethereum-classic",\n  "cut_short": true\n}', "class"),
+        ("json", '{"cut_short": true}', "short"),
+        ("json", f'{{"reason": "{OTHER_CHAIN}"}}', "class"),
+        (
+            "json",
+            '{"node": "https://node\\".example", "chain": "ethereum-classic"}',
+            "class",
+        ),
+        (
+            "lines",
+            (
+                "total: ethereum-classic, 1 wei of ETC, 1 used accounts, each"
+                " account key once"
+            ),
+            "class",
+        ),
+        (
+            "lines",
+            (
+                "  ethereum-classic, purpose 44, on Ethereum Classic: accounts 0"
+                " to 3 read, 1 used"
+            ),
+            "class",
+        ),
+        ("lines", f"Ethereum Classic tokens: not checked: {report.NO_TOKENS}", "class"),
+        (
+            "lines",
+            (
+                "total: bitcoin, 10000 sat confirmed, -10000 sat unconfirmed, 1"
+                " used accounts, each account key once"
+            ),
+            "coin",
+        ),
+        (
+            "json",
+            '{"reason": "passphrase 1: not one SLIP-0039 accepts"}',
+            "SLIP-0039 accepts",
+        ),
+        (
+            "lines",
+            "not derived: slip39: passphrase 1: not one SLIP-0039 accepts",
+            "SLIP-0039 accepts",
+        ),
+        (
+            "lines",
+            'node: https://node".example, Ethereum Classic, chain id 61, block 16',
+            "class",
+        ),
+    ],
+)
+def test_a_defined_word_where_the_format_writes_it_is_not_a_leak(
+    form: str, text: str, secret: str
+) -> None:
+    """A defined word can hold a word of a mnemonic, and is not searched.
+
+    A name holds SLIP-0039's ``class``, a member name its ``short``, and
+    ``bitcoin`` BIP39's ``coin``. A reason is dropped whole.
+
+    :param form: which search reads the text.
+    :param text: what a command wrote.
+    :param secret: a word of a mnemonic, or a piece of a reason.
+    """
+    SEARCHES[form](text, [secret])
+
+
+def test_a_line_of_no_shape_naming_a_defined_word_is_listed() -> None:
+    """`unshaped` lists it, and no line of a shape or naming none."""
+    lines = [
+        "passphrase: bitcoin",
+        "seed-scan report 1",
+        (
+            "total: bitcoin, 1 sat confirmed, -1 sat unconfirmed, 1 used accounts,"
+            " each account key once"
+        ),
+        "for a base58 address",
+    ]
+    assert unshaped("\n".join(lines)) == ["passphrase: bitcoin"]

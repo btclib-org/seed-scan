@@ -7,32 +7,37 @@
 `scan` reads the text of a bundle, with `seed_scan.bundle` alone, and
 asks a `btclib_wallet.fetch.history.HistoryReader` which of its Bitcoin
 accounts have history, and a `seed_scan.evm.Node` which of its Ethereum
-accounts were used. It reads no secret: a bundle holds none, and
-`seed_scan.bundle.loads` refuses a key that is not public.
-`seed_scan.cli` gives it an Electrum server, an Ethereum node or both,
-each named by the user. A coin whose backend is not given is listed as
-not checked.
+and Ethereum Classic accounts were used on the EVM chain it serves. It
+reads no secret: a bundle holds none, and `seed_scan.bundle.loads`
+refuses a key that is not public. `seed_scan.cli` gives it an Electrum
+server, an EVM node or both, each named by the user. A coin whose
+backend is not given is listed as not checked.
 
-Bitcoin and Ethereum are the coins read. For Bitcoin, for each reading,
-each BIP43 purpose is read
-from account 0 up, as BIP44's *Account discovery* reads it, until
-``account_gap`` accounts in a row have no history; an Electrum reading
-has one account, which is read alone. Each account is
-`btclib_wallet.bip44.discover_account` on the receive and change
-descriptors the bundle holds, each branch read until ``gap_limit``
-indexes in a row have no history. A purpose whose accounts in the bundle
-end before that gap is reached is said to be cut short, since an account
-after them may be used. Every other coin of the bundle is listed as not
-checked, with the reason.
+Bitcoin, Ethereum and Ethereum Classic are the coins read. For Bitcoin,
+for each reading, each BIP43 purpose is read from account 0 up, as
+BIP44's *Account discovery* reads it, until ``account_gap`` accounts in
+a row have no history; an Electrum reading has one account, which is
+read alone. Each account is `btclib_wallet.bip44.discover_account` on
+the receive and change descriptors the bundle holds, each branch read
+until ``gap_limit`` indexes in a row have no history. A purpose whose
+accounts in the bundle end before that gap is reached is said to be cut
+short, since an account after them may be used. Every other coin of the
+bundle is listed as not checked, with the reason.
 
-Ethereum's accounts are read the same way, purpose by purpose and with
-the same two bounds, on the receive branch alone: the addresses of an
-account are those of the keys ``0/0``, ``0/1`` and on below its
-``xpub``, as `coin_addresses.evm` writes them. An address is used where
-the node answers a balance or a nonce other than zero, each at the
-block tag ``latest``. That is ether alone: an address that only ever
-received tokens has neither, and reads as unused, as no token balance
-is asked in this version.
+The caller names the EVM chain the node serves, a key of
+`seed_scan.evm.EVM_CHAINS`, and a node whose ``eth_chainId`` answers
+another chain id is refused before any address is asked. The accounts
+read are those of the coins its `seed_scan.evm.EvmChain` lists:
+Ethereum's on each chain, and Ethereum Classic's too on Ethereum
+Classic; an Ethereum Classic account is listed as not checked on any
+other. Each coin's accounts are read the same way as Bitcoin's, purpose
+by purpose and with the same two bounds, on the receive branch alone:
+the addresses of an account are those of the keys ``0/0``, ``0/1`` and
+on below its ``xpub``, as `coin_addresses.evm` writes them. An address
+is used where the node answers a balance or a nonce other than zero,
+each at the block tag ``latest``. That is the chain's native asset
+alone: an address that only ever received tokens has neither, and reads
+as unused, as no token balance is asked in this version.
 
 The balance of an account is read off the history discovery returns: an
 output paying one of its used scripts counts until a transaction of that
@@ -78,20 +83,25 @@ only. Its members:
   history was read up to.
 - ``not_checked``: one object per reading and coin not read, with
   ``reading``, ``coin`` and ``reason``: `NO_SERVER` for Bitcoin,
-  `NO_NODE` for Ethereum, and `NOT_READ` for every other coin.
-- ``evm``: ``null`` where no Ethereum node was asked, or the Ethereum
-  scan: ``node``, the node asked, as its scheme, host and port, with no
-  path or query; ``chain_id``, as the node answered it; ``block``, the
-  latest block's number, asked before the first address; ``searched``,
-  as above, for Ethereum's accounts; and ``used``, one object per
-  account with a used address: ``reading``, ``purpose``, ``account`` and
-  ``path``, as the bundle has them; ``addresses``, each used address as
-  ``index``, on the receive branch, ``address``, ``balance`` and
-  ``nonce``; and ``balance``, the sum of the addresses' balances.
+  `NO_NODE` for Ethereum and Ethereum Classic, `OTHER_CHAIN` for
+  Ethereum Classic on a node of another chain, and `NOT_READ` for every
+  other coin.
+- ``evm``: ``null`` where no EVM node was asked, or the EVM scan:
+  ``node``, the node asked, as its scheme, host and port, with no path
+  or query; ``chain``, the chain read, a key of
+  `seed_scan.evm.EVM_CHAINS`; ``chain_id``, as the node answered it,
+  which is that chain's; ``block``, the latest block's number, asked
+  before the first address; ``searched``, as above, with ``coin`` after
+  ``reading``, for the accounts of each coin read; and ``used``, one
+  object per account with a used address: ``coin``, ``reading``,
+  ``purpose``, ``account`` and ``path``, as the bundle has them;
+  ``addresses``, each used address as ``index``, on the receive branch,
+  ``address``, ``balance`` and ``nonce``; and ``balance``, the sum of
+  the addresses' balances.
 
-A balance in ``evm`` is in wei, written as a string of decimal digits:
-an ether is 10**18 wei, and RFC 8259's section 6 holds an integer past
-2**53 to be one JSON readers may not agree on.
+A balance in ``evm`` is in wei, 10**-18 of the chain's native asset,
+written as a string of decimal digits: RFC 8259's section 6 holds an
+integer past 2**53 to be one JSON readers may not agree on.
 
 `loads` reads a result back, against the text of the bundle it was made
 from.
@@ -117,7 +127,7 @@ from coin_addresses.evm import address_from_pub_key
 
 from seed_scan.bundle import Account, Bundle, Reading
 from seed_scan.bundle import loads as bundle_loads
-from seed_scan.evm import Node
+from seed_scan.evm import EVM_CHAINS, EvmChain, Node
 from seed_scan.exceptions import SeedScanTypeError, SeedScanValueError
 
 if TYPE_CHECKING:
@@ -130,11 +140,13 @@ __all__ = [
     "NOT_READ",
     "NO_NODE",
     "NO_SERVER",
+    "OTHER_CHAIN",
     "VERSION",
     "Address",
     "EvmAccount",
     "EvmAddress",
     "EvmScan",
+    "EvmSearched",
     "NotRead",
     "ScanResult",
     "Searched",
@@ -160,18 +172,27 @@ GAP_LIMIT = 20
 #: external chain has no transactions; a recovery would rather over-search.
 ACCOUNT_GAP = 3
 
-#: The coins `scan` reads.
+#: The coins `scan` reads: Bitcoin, and those an EVM chain reads.
 _BITCOIN = "bitcoin"
-_ETHEREUM = "ethereum"
+_EVM_COINS = tuple(
+    dict.fromkeys(coin for chain in EVM_CHAINS.values() for coin in chain.coins)
+)
+
+#: The chain `scan` reads where the caller names none.
+_DEFAULT_CHAIN = "ethereum"
 
 #: The ``reason`` Bitcoin is not checked for, where no server is given.
 NO_SERVER = "no Electrum server was named"
 
-#: The ``reason`` Ethereum is not checked for, where no node is given.
-NO_NODE = "no Ethereum node was named"
+#: The ``reason`` an EVM coin is not checked for, where no node is given.
+NO_NODE = "no EVM node was named"
+
+#: The ``reason`` Ethereum Classic is not checked for, where the node
+#: serves another chain.
+OTHER_CHAIN = "read on Ethereum Classic alone, and the node serves another chain"
 
 #: The ``reason`` every other coin is not checked for.
-NOT_READ = "scan reads Bitcoin and Ethereum alone in this version"
+NOT_READ = "scan reads Bitcoin, Ethereum and Ethereum Classic alone in this version"
 
 # the last port, and the digits it takes, leading zeros aside
 _MAX_PORT = 65535
@@ -257,7 +278,7 @@ class NotRead:
 
 @dataclass(frozen=True)
 class EvmAddress:
-    """A used Ethereum address: its index, its balance in wei, its nonce."""
+    """A used EVM address: its index, its balance in wei, its nonce."""
 
     index: int
     address: str
@@ -266,9 +287,21 @@ class EvmAddress:
 
 
 @dataclass(frozen=True)
-class EvmAccount:
-    """An Ethereum account with a used address, and its balance in wei."""
+class EvmSearched:
+    """The accounts of one reading, coin and purpose read on the EVM chain."""
 
+    reading: int
+    coin: str
+    purpose: int | None
+    accounts: int
+    cut_short: bool
+
+
+@dataclass(frozen=True)
+class EvmAccount:
+    """An account with a used address on the EVM chain, its balance in wei."""
+
+    coin: str
     reading: int
     purpose: int | None
     account: int
@@ -279,12 +312,13 @@ class EvmAccount:
 
 @dataclass(frozen=True)
 class EvmScan:
-    """What the Ethereum node answered: the module docstring's ``evm``."""
+    """What the EVM node answered: the module docstring's ``evm``."""
 
     node: str
+    chain: str
     chain_id: int
     block: int
-    searched: tuple[Searched, ...]
+    searched: tuple[EvmSearched, ...]
     used: tuple[EvmAccount, ...]
 
 
@@ -362,26 +396,33 @@ def _numbered(position: int, purposes: _Purposes[_T]) -> None:
             raise SeedScanValueError(err_msg)
 
 
-def _plan(
-    position: int, reading: Reading
-) -> tuple[_Purposes[tuple[Descriptor, ...]], _Purposes[BIP32KeyData], list[str]]:
-    """Return a reading's Bitcoin and Ethereum accounts, and its other coins."""
+#: A reading's accounts of each EVM coin, by coin, in the bundle's order.
+_EvmCoins = dict[str, _Purposes[BIP32KeyData]]
+
+#: A reading's Bitcoin accounts, its EVM coins' and its other coins.
+_Plan = tuple[_Purposes[tuple[Descriptor, ...]], _EvmCoins, list[str]]
+
+
+def _plan(position: int, reading: Reading) -> _Plan:
+    """Return a reading's Bitcoin and EVM accounts, and its other coins."""
     bitcoin: _Purposes[tuple[Descriptor, ...]] = {}
-    ethereum: _Purposes[BIP32KeyData] = {}
+    evm: _EvmCoins = {}
     others: list[str] = []
     for number, account in enumerate(reading.accounts):
         where = f"reading {position}, account {number}"
         if account.coin == _BITCOIN:
             descriptors = _descriptors(account, where)
             bitcoin.setdefault(account.purpose, []).append((account, descriptors))
-        elif account.coin == _ETHEREUM:
+        elif account.coin in _EVM_COINS:
             key = _key(account, where)
-            ethereum.setdefault(account.purpose, []).append((account, key))
+            purposes = evm.setdefault(account.coin, {})
+            purposes.setdefault(account.purpose, []).append((account, key))
         elif account.coin not in others:
             others.append(account.coin)
     _numbered(position, bitcoin)
-    _numbered(position, ethereum)
-    return bitcoin, ethereum, others
+    for purposes in evm.values():
+        _numbered(position, purposes)
+    return bitcoin, evm, others
 
 
 def _owned_outputs(
@@ -565,7 +606,7 @@ def _bitcoin_account(
 def _evm_account(
     reading: int, account: Account, key: BIP32KeyData, *, node: Node, gap_limit: int
 ) -> EvmAccount | None:
-    """Return an Ethereum account's used addresses, or None where none is.
+    """Return an EVM account's used addresses, or None where none is.
 
     The receive branch is read from index 0 until `gap_limit` indexes in
     a row are unused.
@@ -585,6 +626,7 @@ def _evm_account(
     if not addresses:
         return None
     return EvmAccount(
+        coin=account.coin,
         reading=reading,
         purpose=account.purpose,
         account=account.account,
@@ -644,42 +686,51 @@ def scan(
     *,
     server: str | None = None,
     node: Node | None = None,
+    evm_chain: str = _DEFAULT_CHAIN,
     gap_limit: int = GAP_LIMIT,
     account_gap: int = ACCOUNT_GAP,
 ) -> ScanResult:
     """Run account discovery on the bundle whose text is `text`.
 
     `reader` reads Bitcoin's accounts, and `server` is what the result
-    names as the server it asks; `node` reads Ethereum's. Either may be
-    None, and not both; a coin whose backend is None is listed as not
-    checked. The bundle is read, and every account of it checked, before
-    `reader` or `node` is asked anything. Refused, as
-    `seed_scan.bundle.loads` refuses it: text that is not a bundle.
-    Refused as a `SeedScanValueError` too: a descriptor that does not
-    parse, as one whose key is no point of the curve, an extended public
-    key that does not decode, accounts not numbered from 0, and a
-    `server` that `parse_server` refuses. A bound below 1 is refused,
-    and one that is no integer is a `SeedScanTypeError`, as is a
-    `server` that is no string beside a `reader`. Refused once `reader`
-    is asked: an account whose history lists two transactions spending
-    one output, or whose used positions a read under `gap_limit` does
-    not reach, in two reads; and an account whose balance, or a used
-    address's, is outside 0 to 21 million bitcoin, which `loads` would
-    refuse.
+    names as the server it asks; `node` reads the accounts of the coins
+    `evm_chain` reads, a key of `seed_scan.evm.EVM_CHAINS`, which the
+    node serves. Either may be None, and not both; a coin whose backend
+    is None is listed as not checked. The bundle is read, and every
+    account of it checked, before `reader` or `node` is asked anything.
+    An `evm_chain` not in `seed_scan.evm.EVM_CHAINS` is refused without
+    quoting it, and one that is no string is a `SeedScanTypeError`.
+    Refused, as `seed_scan.bundle.loads` refuses it: text that is not a
+    bundle. Refused as a `SeedScanValueError` too: a descriptor that
+    does not parse, as one whose key is no point of the curve, an
+    extended public key that does not decode, accounts not numbered from
+    0, and a `server` that `parse_server` refuses. A bound below 1 is
+    refused, and one that is no integer is a `SeedScanTypeError`, as is
+    a `server` that is no string beside a `reader`. Refused once
+    `reader` is asked: an account whose history lists two transactions
+    spending one output, or whose used positions a read under
+    `gap_limit` does not reach, in two reads; and an account whose
+    balance, or a used address's, is outside 0 to 21 million bitcoin,
+    which `loads` would refuse. Refused once `node` is asked: a node
+    whose chain id is not `evm_chain`'s.
     """
     bundle = bundle_loads(text)
     _backends(reader, server, node)
+    chain = _evm_chain(evm_chain)
     gap_limit = _limit(gap_limit, "gap_limit")
     account_gap = _limit(account_gap, "account_gap")
     plans = [_plan(n, reading) for n, reading in enumerate(bundle.readings)]
     searched: list[Searched] = []
     used: list[UsedAccount] = []
     not_checked: list[NotRead] = []
-    for n, (bitcoin, ethereum, others) in enumerate(plans):
+    for n, (bitcoin, evm_coins, others) in enumerate(plans):
         if reader is None and bitcoin:
             not_checked.append(NotRead(n, _BITCOIN, NO_SERVER))
-        if node is None and ethereum:
-            not_checked.append(NotRead(n, _ETHEREUM, NO_NODE))
+        not_checked += [
+            NotRead(n, coin, NO_NODE if node is None else OTHER_CHAIN)
+            for coin in evm_coins
+            if node is None or coin not in chain.coins
+        ]
         not_checked += [NotRead(n, coin, NOT_READ) for coin in others]
         if reader is None:
             continue
@@ -688,7 +739,9 @@ def scan(
             done, found = _discover(n, purpose, accounts, read, account_gap)
             searched.append(done)
             used += found
-    evm = None if node is None else _scan_evm(plans, node, gap_limit, account_gap)
+    evm = None
+    if node is not None:
+        evm = _scan_evm(plans, node, chain, (gap_limit, account_gap))
     return ScanResult(
         bundle=sha256(text.encode("utf-8")).hexdigest(),
         server=server,
@@ -701,25 +754,43 @@ def scan(
     )
 
 
+def _evm_chain(name: str) -> EvmChain:
+    """Return the EVM chain `name` names, refusing one scan does not read."""
+    if not isinstance(name, str):
+        raise SeedScanTypeError(f"invalid evm_chain type: {type(name).__name__}")
+    if name not in EVM_CHAINS:
+        raise SeedScanValueError("invalid evm_chain: not one scan reads")
+    return EVM_CHAINS[name]
+
+
 def _scan_evm(
-    plans: Sequence[
-        tuple[_Purposes[tuple[Descriptor, ...]], _Purposes[BIP32KeyData], list[str]]
-    ],
-    node: Node,
-    gap_limit: int,
-    account_gap: int,
+    plans: Sequence[_Plan], node: Node, chain: EvmChain, bounds: tuple[int, int]
 ) -> EvmScan:
-    """Ask the node its chain id and latest block, then read the accounts."""
-    chain_id, block = node.chain_id(), node.block_number()
-    searched: list[Searched] = []
+    """Ask the node its chain id and latest block, then read the accounts.
+
+    A node whose chain id is not `chain`'s is refused before its latest
+    block is asked, without quoting the chain id it answered. `bounds`
+    are ``gap_limit`` and ``account_gap``.
+    """
+    gap_limit, account_gap = bounds
+    chain_id = node.chain_id()
+    if chain_id != chain.chain_id:
+        raise SeedScanValueError(f"the node does not serve {chain.title}")
+    block = node.block_number()
+    searched: list[EvmSearched] = []
     used: list[EvmAccount] = []
-    for n, (_, ethereum, _) in enumerate(plans):
+    for n, (_, evm_coins, _) in enumerate(plans):
         read = partial(_evm_account, n, node=node, gap_limit=gap_limit)
-        for purpose, accounts in ethereum.items():
-            done, found = _discover(n, purpose, accounts, read, account_gap)
-            searched.append(done)
-            used += found
-    return EvmScan(node.name, chain_id, block, tuple(searched), tuple(used))
+        for coin, purposes in evm_coins.items():
+            if coin not in chain.coins:
+                continue
+            for purpose, accounts in purposes.items():
+                done, found = _discover(n, purpose, accounts, read, account_gap)
+                searched.append(
+                    EvmSearched(n, coin, purpose, done.accounts, done.cut_short)
+                )
+                used += found
+    return EvmScan(node.name, chain.name, chain_id, block, tuple(searched), tuple(used))
 
 
 def parse_server(text: str, name: str) -> tuple[str, int]:
@@ -977,7 +1048,7 @@ def _used(
 def _evm_addresses(
     document: dict[str, Any], account: Account, gap_limit: int
 ) -> tuple[EvmAddress, ...]:
-    """Read an Ethereum account's used addresses, each the bundle's there.
+    """Read an EVM account's used addresses, each the bundle's there.
 
     Each holds a balance or a nonce, as `scan` lists no other.
     """
@@ -1009,7 +1080,10 @@ def _evm_used(
     searched: dict[tuple[int, int | None], Searched],
     gap_limit: int,
 ) -> EvmAccount:
-    """Read one ``used`` object of ``evm``: an Ethereum account it searched."""
+    """Read one ``used`` object of ``evm``: an account of its coin it searched.
+
+    `accounts` and `searched` are those of the object's coin.
+    """
     reading, purpose, account = _account(document, accounts, searched)
     addresses = _evm_addresses(document, account, gap_limit)
     if not addresses:
@@ -1019,6 +1093,7 @@ def _evm_used(
         err_msg = "scan result: the addresses' balances are not the account's"
         raise SeedScanValueError(err_msg)
     return EvmAccount(
+        coin=account.coin,
         reading=reading,
         purpose=purpose,
         account=account.account,
@@ -1072,10 +1147,46 @@ def _keyed(used: Sequence[UsedAccount | EvmAccount]) -> None:
         raise SeedScanValueError("scan result: a used account listed twice")
 
 
+def _evm_coin(document: dict[str, Any], chain: EvmChain) -> str:
+    """Return the ``coin`` member of an object of ``evm``: one `chain` reads."""
+    coin: str = _member(document, "coin", str)
+    if coin not in chain.coins:
+        raise SeedScanValueError("scan result: a coin the chain does not read")
+    return coin
+
+
+#: The searches of each coin of ``evm``, by reading and purpose.
+_EvmSearches = dict[str, dict[tuple[int, int | None], Searched]]
+
+
+def _evm_searches(
+    evm: dict[str, Any], bundle: Bundle, chain: EvmChain
+) -> tuple[_EvmSearches, tuple[EvmSearched, ...]]:
+    """Read the ``searched`` member of ``evm``: by coin, and in its order.
+
+    Each object is read as `_searches` reads Bitcoin's, against the
+    bundle's accounts of its coin, and each coin's purposes are searched
+    once.
+    """
+    by_coin: _EvmSearches = {}
+    in_order: list[EvmSearched] = []
+    for item in _objects(evm, "searched"):
+        coin = _evm_coin(item, chain)
+        done = _searched(item, _held(bundle, coin))
+        of_coin = by_coin.setdefault(coin, {})
+        if (done.reading, done.purpose) in of_coin:
+            raise SeedScanValueError("scan result: a purpose searched twice")
+        of_coin[done.reading, done.purpose] = done
+        in_order.append(
+            EvmSearched(done.reading, coin, done.purpose, done.accounts, done.cut_short)
+        )
+    return by_coin, tuple(in_order)
+
+
 def _evm(
     document: dict[str, Any], bundle: Bundle, bounds: tuple[int, int]
 ) -> EvmScan | None:
-    """Read the ``evm`` member: ``null``, or the Ethereum scan.
+    """Read the ``evm`` member: ``null``, or the EVM scan.
 
     `bounds` are the result's ``gap_limit`` and ``account_gap``.
     """
@@ -1092,18 +1203,30 @@ def _evm(
     if name != node:
         err_msg = "scan result: member 'node' is not a scheme, host and port"
         raise SeedScanValueError(err_msg)
-    accounts = _held(bundle, _ETHEREUM)
-    searched = _searches(evm, accounts)
-    used = [
-        _evm_used(item, accounts, searched, gap_limit) for item in _objects(evm, "used")
-    ]
-    _keyed(used)
-    _check_searches(searched, used, accounts, account_gap)
+    chain_name: str = _member(evm, "chain", str)
+    chain = EVM_CHAINS.get(chain_name)
+    if chain is None:
+        raise SeedScanValueError("scan result: member 'chain' is not one scan reads")
+    if _count(evm, "chain_id") != chain.chain_id:
+        raise SeedScanValueError("scan result: member 'chain_id' is not the chain's")
+    searched, in_order = _evm_searches(evm, bundle, chain)
+    used: list[EvmAccount] = []
+    for item in _objects(evm, "used"):
+        coin = _evm_coin(item, chain)
+        held = _held(bundle, coin)
+        used.append(_evm_used(item, held, searched.get(coin, {}), gap_limit))
+    for coin in chain.coins:
+        of_coin = [u for u in used if u.coin == coin]
+        _keyed(of_coin)
+        _check_searches(
+            searched.get(coin, {}), of_coin, _held(bundle, coin), account_gap
+        )
     return EvmScan(
         node=node,
-        chain_id=_count(evm, "chain_id"),
+        chain=chain.name,
+        chain_id=chain.chain_id,
         block=_count(evm, "block"),
-        searched=tuple(searched.values()),
+        searched=in_order,
         used=tuple(used),
     )
 
@@ -1113,8 +1236,8 @@ def _not_read(
 ) -> NotRead:
     """Read one ``not_checked`` object: a coin of that reading, not read.
 
-    `reasons` gives the reason of Bitcoin and Ethereum, or None where the
-    result reads that coin; any other coin's is `NOT_READ`.
+    `reasons` gives the reason of Bitcoin and of each EVM coin, or None
+    where the result reads that coin; any other coin's is `NOT_READ`.
     """
     reading = _count(document, "reading")
     coin: str = _member(document, "coin", str)
@@ -1151,18 +1274,19 @@ def loads(text: str, bundle: str) -> ScanResult:
 
     A reader echoes the text members, so each holds only what the format
     defines: a ``server`` that `parse_server` takes; a ``node`` that
-    `seed_scan.evm.Node` takes, and names as it is written; ids of 64 hex
-    characters; a balance in wei of decimal digits, below 2**256; a
-    ``reason`` that is the one `scan` gives that coin, for a coin of that
-    reading it did not read. What the
-    result says of the bundle is checked against it: each search and each
-    used account names accounts of the bundle of its coin, a used account
-    one its search read, its ``path`` the bundle's, each address the one
-    the account's keys give at that position, an Ethereum address with a
-    balance or a nonce, and each account's balance the sum of its
-    addresses'. Each search's ``accounts`` and ``cut_short`` are the ones
-    `scan` gives for the used accounts listed, the bundle's accounts and
-    ``account_gap``.
+    `seed_scan.evm.Node` takes, and names as it is written; a ``chain``
+    of `seed_scan.evm.EVM_CHAINS`, with that chain's ``chain_id``, and a
+    ``coin`` in ``evm`` that the chain reads; ids of 64 hex characters;
+    a balance in wei of decimal digits, below 2**256; a ``reason`` that
+    is the one `scan` gives that coin, for a coin of that reading it did
+    not read. What the result says of the bundle is checked against it:
+    each search and each used account names accounts of the bundle of
+    its coin, a used account one its search read, its ``path`` the
+    bundle's, each address the one the account's keys give at that
+    position, an EVM address with a balance or a nonce, and each
+    account's balance the sum of its addresses'. Each search's
+    ``accounts`` and ``cut_short`` are the ones `scan` gives for the
+    used accounts listed, the bundle's accounts and ``account_gap``.
 
     What a used account lists is what `scan` could have found: an
     address at least, each branch's used positions within ``gap_limit``
@@ -1198,10 +1322,11 @@ def loads(text: str, bundle: str) -> ScanResult:
     evm = _evm(document, read, (gap_limit, account_gap))
     if server is None and evm is None:
         raise SeedScanValueError("scan result: it names neither a server nor a node")
-    reasons = {
-        _BITCOIN: NO_SERVER if server is None else None,
-        _ETHEREUM: NO_NODE if evm is None else None,
-    }
+    reasons: dict[str, str | None] = {_BITCOIN: NO_SERVER if server is None else None}
+    for coin in _EVM_COINS:
+        reasons[coin] = NO_NODE
+        if evm is not None:
+            reasons[coin] = None if coin in EVM_CHAINS[evm.chain].coins else OTHER_CHAIN
     return ScanResult(
         bundle=digest,
         server=server,

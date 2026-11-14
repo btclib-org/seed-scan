@@ -105,6 +105,19 @@ class Coin:
 #   https://github.com/MetaMask/accounts/blob/cbb1f487b2746d75ecf8ef05accd8ce338f3873e/packages/keyring-eth-hd/src/hd-keyring.ts#L39
 #   https://github.com/trezor/trezor-suite/blob/c861929418c13919b335061d65a169de5aa869f3/networks/ethereum/network-ethereum-suite-common/src/networkConfig.ts#L43-L80
 #   https://github.com/trustwallet/wallet-core/blob/7a21615fad32edd8dc0b040d845de3973cde2c5a/registry.json#L481-L491
+# - Ethereum Classic 44, at its SLIP-0044 coin type,
+#   https://github.com/satoshilabs/slips/blob/7a2abdd1e823f5180e0997434250eda88b57cb75/slip-0044.md#L94
+#   in Trezor Suite, Ledger Live, which derives a currency's accounts at
+#   its coin type by default, and wallet-core,
+#   https://github.com/trezor/trezor-suite/blob/c861929418c13919b335061d65a169de5aa869f3/networks/ethereum/network-ethereum-suite-common/src/networkConfig.ts#L406-L414
+#   https://github.com/LedgerHQ/ledger-live/blob/91056c17c325bf042f6449c3ed74412adcb84899/domain/entity/currency-crypto/src/currencies/ethereum_classic.ts#L3-L6
+#   https://github.com/LedgerHQ/ledger-live/blob/91056c17c325bf042f6449c3ed74412adcb84899/libs/ledger-wallet-framework/src/derivation.ts#L314-L315
+#   https://github.com/LedgerHQ/ledger-live/blob/91056c17c325bf042f6449c3ed74412adcb84899/libs/ledger-wallet-framework/src/derivation.ts#L367
+#   https://github.com/trustwallet/wallet-core/blob/7a21615fad32edd8dc0b040d845de3973cde2c5a/registry.json#L512-L525
+#   Ledger Live also offers MetaMask's layout there, under m/44h/60h,
+#   Ethereum's own,
+#   https://github.com/LedgerHQ/ledger-live/blob/91056c17c325bf042f6449c3ed74412adcb84899/libs/ledger-wallet-framework/src/derivation.ts#L52-L57
+#   https://github.com/LedgerHQ/ledger-live/blob/91056c17c325bf042f6449c3ed74412adcb84899/libs/ledger-wallet-framework/src/derivation.ts#L257
 # Trezor's firmware takes 49 and 84 where a coin's definition sets
 # "segwit", 86 where it sets "taproot"; Litecoin's sets segwit alone,
 # Bitcoin Cash's and Dogecoin's neither:
@@ -120,6 +133,7 @@ class Coin:
 COINS = (
     Coin("bitcoin", 0, (44, 49, 84, 86)),
     Coin("ethereum", 60, (44,)),
+    Coin("ethereum-classic", 61, (44,)),
     Coin("bitcoin-cash", 145, (44,)),
     Coin("bitcoin-sv", 236, (44,)),
     Coin("litecoin", 2, (44, 49, 84)),

@@ -39,7 +39,7 @@ from seed_scan.identify import identify
 from seed_scan.scan import Address
 
 from .identify_test import ABANDON, SEGWIT, STANDARD, legacy_address, no_share
-from .no_secret_test import Secrets, assert_text_secret_free
+from .no_secret_test import Secrets, assert_json_secret_free
 from .scan_test import ELSEWHERE, Chain, edited, pay
 
 if TYPE_CHECKING:
@@ -346,7 +346,7 @@ def test_nothing_forks_writes_holds_a_secret(abandon: str) -> None:
     secrets.sentence(ABANDON)
     paths = sorted({a.path for r in loads(abandon).readings for a in r.accounts})
     secrets.seed(bip39.seed_from_mnemonic(ABANDON, ""), paths)
-    assert_text_secret_free(text, secrets.every())
+    assert_json_secret_free(text, secrets.every())
 
 
 def test_a_double_spend_in_both_reads_is_refused(abandon: str) -> None:
