@@ -355,9 +355,10 @@ def _loopback(host: str, port: int) -> list[str]:
     address is loopback in ``127.0.0.0/8`` or as ``::1``; an IPv4 address
     written in IPv6, as ``::ffff:127.0.0.1``, is refused.
     """
-    # `ipaddress.ip_address(...).is_loopback` is not used: it accepts an
-    # IPv4-mapped loopback address from Python 3.13 on and refuses it on
-    # 3.11 and 3.12, so --tcp would accept a different set by interpreter
+    # `ipaddress.ip_address(...).is_loopback` is not used: its answer for
+    # an IPv4-mapped loopback address changed between Python releases,
+    # patch releases of 3.11 and 3.12 included, so --tcp would accept a
+    # different set by interpreter
     found = None
     # a name the codec refuses raises a `UnicodeError`, and one that does
     # not resolve an `OSError`: the refusal is raised outside `suppress`,

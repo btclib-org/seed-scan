@@ -949,10 +949,7 @@ def test_a_failure_to_close_the_tls_connection_leaves_the_result_written(
 
     def failing(self: ssl.SSLSocket) -> None:
         closing(self)
-        # The test server's socket may close before the scan returns, or
-        # after the patch is undone: whether a server-side close passes
-        # here is timing, so the branch that skips it is not always taken.
-        if not self.server_side:  # pragma: no branch -- the server's close is racy
+        if not self.server_side:
             raise OSError(ABANDON)
 
     monkeypatch.setattr(ssl.SSLSocket, "close", failing)
@@ -960,6 +957,8 @@ def test_a_failure_to_close_the_tls_connection_leaves_the_result_written(
     argv = ["scan", bundle, "--server", f"127.0.0.1:{tls_server.port}"]
     argv += ["--cafile", str(tls / "ca.pem"), "--gap-limit", "2"]
     assert cli.main(argv, connect=connect) == 0
+    # the server's own socket closes while the patch holds, not after
+    tls_server.stop()
     out, err = capsys.readouterr()
     (used,) = json.loads(out)["used"]
     assert used["unconfirmed"] == 9
