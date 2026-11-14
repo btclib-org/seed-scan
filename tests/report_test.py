@@ -261,6 +261,15 @@ def test_a_forks_result_follows_the_scan_s_lines(
     assert lines[-2].startswith("total: bitcoin-cash, ")
 
 
+@pytest.mark.parametrize("forks", [None, {}, "text", 1.5])
+def test_forks_other_than_a_list_or_a_tuple_is_refused(
+    abandon: str, forks: object
+) -> None:
+    """A dictionary, a lone text, None: a type error before any text is read."""
+    with pytest.raises(SeedScanTypeError, match="^invalid forks type: "):
+        report(abandon, None, forks)  # type: ignore[arg-type]
+
+
 def test_two_forks_results_of_one_chain_are_refused(abandon: str, forked: str) -> None:
     """One per chain: a second would list each account twice."""
     with pytest.raises(SeedScanValueError, match="^forks results: two of one chain$"):

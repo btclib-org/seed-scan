@@ -94,7 +94,7 @@ from typing import TYPE_CHECKING, TypeVar
 
 from seed_scan.bundle import Account, Bundle, Reading, Search
 from seed_scan.bundle import loads as bundle_loads
-from seed_scan.exceptions import SeedScanValueError
+from seed_scan.exceptions import SeedScanTypeError, SeedScanValueError
 from seed_scan.forks import CHAINS, ForkAccount, ForkSearched, ForksResult
 from seed_scan.forks import loads as forks_loads
 from seed_scan.scan import EvmAccount, ScanResult, Searched, UsedAccount
@@ -447,8 +447,11 @@ def report(bundle: str, result: str | None = None, forks: Sequence[str] = ()) ->
     Refused as `seed_scan.bundle.loads`, `seed_scan.scan.loads` and
     `seed_scan.forks.loads` refuse their texts, a result made from
     another bundle among them, and where two forks results are of one
-    chain.
+    chain. ``forks`` other than a list or a tuple is a
+    `SeedScanTypeError`, before any text is read.
     """
+    if not isinstance(forks, list | tuple):
+        raise SeedScanTypeError(f"invalid forks type: {type(forks).__name__}")
     read = bundle_loads(bundle)
     scanned = None
     lines = [f"seed-scan report {VERSION}", f"bundle: sha256 {_digest(bundle)}"]
