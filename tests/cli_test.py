@@ -16,6 +16,7 @@ from collections import deque
 from typing import TYPE_CHECKING
 
 import pytest
+from typing_extensions import override
 
 from seed_scan import cli
 from seed_scan.bundle import loads
@@ -25,7 +26,7 @@ from .identify_test import ABANDON, BIP84_CHANGE, SHARES, Prompt
 from .secret_free import assert_secret_free
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Iterator
 
 
 def no_guard() -> None:
@@ -165,6 +166,30 @@ def test_with_no_argv_the_process_arguments_are_read(
         cli.main()
     assert caught.value.code == 2
     assert "required" in capsys.readouterr().err
+
+
+class _Fickle(list[str]):
+    """A list iterating as ``--help`` once, and as a number after."""
+
+    def __init__(self) -> None:
+        super().__init__(["--help"])
+        self.answers: list[list[object]] = [["--help"], [1]]
+        self.calls = 0
+
+    @override
+    def __iter__(self) -> Iterator[str]:
+        self.calls += 1
+        return iter(self.answers.pop(0))  # type: ignore[arg-type]
+
+
+def test_argv_is_read_once(capsys: pytest.CaptureFixture[str]) -> None:
+    """What is checked is what is parsed: a list is iterated once."""
+    fickle = _Fickle()
+    with pytest.raises(SystemExit) as caught:
+        cli.main(fickle)
+    assert caught.value.code == 0
+    assert fickle.calls == 1
+    assert "usage:" in capsys.readouterr().out
 
 
 @pytest.mark.parametrize(

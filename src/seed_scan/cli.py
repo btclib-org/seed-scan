@@ -743,19 +743,23 @@ def _add_bounds(parser: argparse.ArgumentParser) -> None:
     )
 
 
-def _assert_argv(argv: list[str] | tuple[str, ...] | None) -> None:
-    """Refuse an argv that is neither None nor a list or a tuple of strings.
+def _checked_argv(argv: list[str] | tuple[str, ...] | None) -> list[str] | None:
+    """Return a copy of argv, refusing one not None nor a list or tuple of str.
 
     A list or a tuple, as `sys.argv` and every caller of the command
     give: an emptiness never hides a wrong type (a str, bytes, a range).
+    The copy is what is checked and parsed, so a subclass iterating
+    differently a second time cannot pass one argv and parse another.
     """
     if argv is None:
-        return
+        return None
     if not isinstance(argv, list | tuple):
         raise SeedScanTypeError(f"invalid argv type: {type(argv).__name__}")
-    for raw in argv:
+    copy: list[object] = list(argv)
+    for raw in copy:
         if not isinstance(raw, str):
             raise SeedScanTypeError(f"invalid argv type: {type(raw).__name__}")
+    return [str(raw) for raw in copy]
 
 
 def main(
@@ -771,8 +775,7 @@ def main(
     the hidden prompt, the refusal of every socket and new process that
     ``identify`` and ``report`` install, and the transport to a server.
     """
-    _assert_argv(argv)
-    args = _parser().parse_args(argv)
+    args = _parser().parse_args(_checked_argv(argv))
     if args.command == "scan":
         return _scan_command(args, connect)
     if args.command == "forks":
