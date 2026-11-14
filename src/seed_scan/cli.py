@@ -729,7 +729,10 @@ def _parser() -> argparse.ArgumentParser:
     report_parser.add_argument("bundle", help="the bundle file identify wrote")
     report_parser.add_argument(
         "--scan",
-        help="the result scan wrote for that bundle; without it, nothing is checked",
+        help=(
+            "the result scan wrote for that bundle; without it, the report"
+            " checks only what --forks names"
+        ),
     )
     report_parser.add_argument(
         "--forks",

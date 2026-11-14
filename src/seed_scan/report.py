@@ -80,17 +80,19 @@ every other character is literal.
   confirmed, <n> sat unconfirmed, <n> sat at the fork, <n> used
   accounts, each account key once``. Two readings can hold the same
   account keys, as the same passphrase typed twice gives: each is
-  listed with its accounts, and a total counts the funds of a key once.
+  listed with its accounts, and a total counts once the accounts paid by
+  the same outputs, those of one key read as one script type.
 - ``digest: sha256 <hex>``: the SHA-256 of every line above it, so that
   ``sed '$d' report.txt | shasum -a 256`` gives it back.
 """
 
 from __future__ import annotations
 
+import re
 from hashlib import sha256
 from typing import TYPE_CHECKING, TypeVar
 
-from seed_scan.bundle import Bundle, Reading, Search
+from seed_scan.bundle import Account, Bundle, Reading, Search
 from seed_scan.bundle import loads as bundle_loads
 from seed_scan.exceptions import SeedScanValueError
 from seed_scan.forks import CHAINS, ForkAccount, ForkSearched, ForksResult
@@ -99,7 +101,7 @@ from seed_scan.scan import EvmAccount, ScanResult, Searched, UsedAccount
 from seed_scan.scan import loads as scan_loads
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Callable, Sequence
 
 __all__ = [
     "NOT_IN_FORKS",
@@ -354,20 +356,51 @@ def _forks(result: ForksResult, text: str) -> list[str]:
 _Used = TypeVar("_Used", UsedAccount, EvmAccount, ForkAccount)
 
 
-def _once(bundle: Bundle, coin: str, used: tuple[_Used, ...]) -> list[_Used]:
-    """Return the used accounts of a coin, the first of each account key.
+#: A key origin of a descriptor, which changes none of its scripts.
+_ORIGIN = re.compile(r"\[[^]]*\]")
 
-    The key is the bundle's xpub and descriptors of the account.
+
+def _scripts(account: Account) -> tuple[str, ...]:
+    """Return what gives an account's scripts or addresses.
+
+    Its xpub, and its descriptors without key origin or checksum: two
+    accounts of one key and one script type are paid by the same outputs,
+    whatever path the origin names.
     """
-    keys = {
-        (n, account.purpose, account.account): (account.xpub, account.descriptors)
+    return (
+        account.xpub,
+        *(_ORIGIN.sub("", text.partition("#")[0]) for text in account.descriptors),
+    )
+
+
+def _p2pkh(account: Account) -> tuple[str, ...]:
+    """Return what gives the scripts of an account `forks` reads: its xpub.
+
+    `forks` reads every account as P2PKH over its xpub's receive and change
+    branches, whatever its coin.
+    """
+    return (account.xpub,)
+
+
+def _once(
+    bundle: Bundle,
+    used: Sequence[tuple[str, _Used]],
+    key: Callable[[Account], tuple[str, ...]] = _scripts,
+) -> list[_Used]:
+    """Return the used accounts, the first of each `key`.
+
+    `used` pairs each account with its coin. Two accounts of one `key`
+    hold the same funds, which a total counts once.
+    """
+    accounts = {
+        (account.coin, n, account.purpose, account.account): account
         for n, reading in enumerate(bundle.readings)
         for account in reading.accounts
-        if account.coin == coin
     }
-    first: dict[tuple[str, tuple[str, ...]], _Used] = {}
-    for one in used:
-        first.setdefault(keys[one.reading, one.purpose, one.account], one)
+    first: dict[tuple[str, ...], _Used] = {}
+    for coin, one in used:
+        account = accounts[coin, one.reading, one.purpose, one.account]
+        first.setdefault(key(account), one)
     return list(first.values())
 
 
@@ -375,14 +408,14 @@ def _totals(bundle: Bundle, result: ScanResult) -> list[str]:
     """Return the total of each coin the result reads, each key once."""
     lines = []
     if result.server is not None:
-        used = _once(bundle, "bitcoin", result.used)
+        used = _once(bundle, [("bitcoin", u) for u in result.used])
         lines.append(
             f"total: bitcoin, {sum(u.confirmed for u in used)} sat confirmed,"
             f" {sum(u.unconfirmed for u in used)} sat unconfirmed,"
             f" {len(used)} used accounts, each account key once"
         )
     if result.evm is not None:
-        accounts = _once(bundle, "ethereum", result.evm.used)
+        accounts = _once(bundle, [("ethereum", u) for u in result.evm.used])
         lines.append(
             f"total: ethereum, {sum(int(u.balance) for u in accounts)} wei,"
             f" {len(accounts)} used accounts, each account key once"
@@ -391,12 +424,8 @@ def _totals(bundle: Bundle, result: ScanResult) -> list[str]:
 
 
 def _forks_total(bundle: Bundle, result: ForksResult) -> str:
-    """Return the total of a forks result, each key once."""
-    used = [
-        one
-        for coin in ("bitcoin", result.chain)
-        for one in _once(bundle, coin, tuple(u for u in result.used if u.coin == coin))
-    ]
+    """Return the total of a forks result, each key once, whatever its coin."""
+    used = _once(bundle, [(u.coin, u) for u in result.used], _p2pkh)
     return (
         f"total: {result.chain}, {sum(u.confirmed for u in used)} sat confirmed,"
         f" {sum(u.unconfirmed for u in used)} sat unconfirmed,"
@@ -411,7 +440,7 @@ def report(bundle: str, result: str | None = None, forks: Sequence[str] = ()) ->
     :param bundle: the bundle's text.
     :param result: the scan result's text, or ``None`` where there is
         none, as after `scan` refused, or its server or its node failed:
-        every account is then not checked.
+        scan's lines then list every account as not checked.
     :param forks: the texts of the forks results, one per chain.
     :returns: the report, the module docstring's layout.
 

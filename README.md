@@ -115,12 +115,12 @@ It reads the bundle and the scan result made from it, offline, and
 writes what they say to standard output: for each reading, coin and
 purpose, the used accounts and each of their used addresses, with its
 balance and path, and what was not checked and why. Without `--scan`,
-as after a server or a node failed, every account is listed as not
-checked. Each `--forks` names a forks result made from the bundle, one
-per chain, and the report lists what it read the same way, each used
-account with its balance at the fork too. A result made from another
-bundle is refused. The last line is the SHA-256 of the lines above it.
-`seed_scan.report` documents the layout.
+as after a server or a node failed, scan's lines list every account as
+not checked. Each `--forks` names a forks result made from the bundle,
+one per chain, with or without `--scan`, and the report lists what it
+read the same way, each used account with its balance at the fork too.
+A result made from another bundle is refused. The last line is the
+SHA-256 of the lines above it. `seed_scan.report` documents the layout.
 
 ## What touches the secret
 

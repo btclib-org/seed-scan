@@ -352,6 +352,9 @@ def test_the_help_names_the_report_and_its_options(
     with pytest.raises(SystemExit):
         cli.main(["report", "--help"])
     out = " ".join(capsys.readouterr().out.split())
-    assert "--scan SCAN" in out
+    assert (
+        "--scan SCAN the result scan wrote for that bundle; without it, the report"
+        " checks only what --forks names"
+    ) in out
     assert "--forks FORKS a result forks wrote for that bundle; once per chain" in out
     assert "seed_scan.report" in out

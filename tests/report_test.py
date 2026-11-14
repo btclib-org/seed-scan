@@ -18,7 +18,7 @@ from hashlib import sha256
 import pytest
 from bip32_descriptors.bip32 import BIP32KeyData
 from bip39_slip39 import bip39
-from btclib_wallet.descriptors import parse
+from btclib_wallet.descriptors import add_checksum, parse, strip_checksum
 from btclib_wallet.fetch.history import HistoryTx
 from coin_addresses.evm import address_from_pub_key
 
@@ -300,6 +300,60 @@ def test_a_forks_purpose_cut_short_names_the_rerun() -> None:
         "  bitcoin-cash, purpose 44, on Bitcoin Cash: accounts 0 to 0 read, 1 used,"
         " cut short: run identify with --accounts above 1, then forks\n"
     ) in report(text, None, [forked])
+
+
+def shared(text: str, path: str, other: str, *, descriptors: bool) -> str:
+    """Return a bundle whose account at `other` holds the key at `path`.
+
+    :param text: the bundle's text.
+    :param path: the account whose key is shared.
+    :param other: the account given that key.
+    :param descriptors: whether `other` takes the descriptors too, with
+        its own path as their key origin.
+    :returns: the edited bundle's text.
+    """
+    document = json.loads(text)
+    accounts = {a["path"]: a for a in document["readings"][0]["accounts"]}
+    accounts[other]["xpub"] = accounts[path]["xpub"]
+    if descriptors:
+        origin = f"{path[1:]}]", f"{other[1:]}]"
+        accounts[other]["descriptors"] = [
+            add_checksum(strip_checksum(d).replace(*origin))
+            for d in accounts[path]["descriptors"]
+        ]
+    edited = json.dumps(document)
+    loads(edited)
+    return edited
+
+
+def test_a_forks_total_counts_an_output_once_across_coins() -> None:
+    """A Bitcoin and a Bitcoin Cash account of one key: one payment, once."""
+    one = dumps(identify(ABANDON, [""], no_share, accounts=1))
+    text = shared(one, "m/44h/0h/0h", "m/44h/145h/0h", descriptors=False)
+    paid = HistoryTx(pay(1, (p2pkh("m/44h/0h/0h/0/0"), 123)), SHARED)
+    lines = report(text, None, [forked_of(text, paid)]).splitlines()
+    assert len([line for line in lines if line.startswith("    account 0, ")]) == 2
+    assert lines[-2] == (
+        "total: bitcoin-cash, 123 sat confirmed, 0 sat unconfirmed, 123 sat at"
+        " the fork, 1 used accounts, each account key once"
+    )
+
+
+def test_a_scan_total_counts_an_output_once_whatever_the_origin() -> None:
+    """Two accounts of one key and script type, their origins apart: once.
+
+    Each lists the payment; the total counts it once.
+    """
+    two = dumps(identify(ABANDON, [""], no_share, accounts=2))
+    text = shared(two, "m/44h/0h/0h", "m/44h/0h/1h", descriptors=True)
+    chain = Chain(HistoryTx(pay(1, (p2pkh("m/44h/0h/0h/0/0"), 123)), BLOCK))
+    result = scan_module.dumps(scan_module.scan(text, chain, server="s:1"))
+    lines = report(text, result).splitlines()
+    assert len([line for line in lines if line.startswith("    account ")]) == 2
+    assert lines[-2] == (
+        "total: bitcoin, 123 sat confirmed, 0 sat unconfirmed, 1 used accounts,"
+        " each account key once"
+    )
 
 
 def test_a_forks_total_counts_a_key_once() -> None:
