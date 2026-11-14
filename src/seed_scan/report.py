@@ -31,7 +31,8 @@ every other character is literal.
 - per forks result, in the order given, ``forks: sha256 <hex>``, the
   SHA-256 of its text, then ``chain: <title>, forked from Bitcoin at
   height <n>``, ``server: <host:port>`` and ``bounds: account gap <n>,
-  gap limit <n>``, and for a Bitcoin Cash result ``cashtokens: not
+  gap limit <n>``, then for a Bitcoin Cash result ``cashtokens: not
+  checked: <reason>``, and for an eCash result ``slp and alp tokens: not
   checked: <reason>``; or ``forks: none`` alone, where none is given.
 - ``claims: <scheme>, ...``: the schemes that claim the words, or
   ``claims: none``.
@@ -98,6 +99,7 @@ from seed_scan.exceptions import SeedScanTypeError, SeedScanValueError
 from seed_scan.forks import (
     BITCOIN_CASH,
     CHAINS,
+    ECASH,
     ForkAccount,
     ForkSearched,
     ForksResult,
@@ -114,6 +116,7 @@ __all__ = [
     "NOT_IN_SCAN",
     "NO_CASHTOKENS",
     "NO_SCAN",
+    "NO_SLP_ALP",
     "NO_TOKENS",
     "VERSION",
     "report",
@@ -142,6 +145,13 @@ NO_CASHTOKENS = (
     "forks does not read an output carrying them as paying its script, so its"
     " satoshis are not counted, and an account paid only through such outputs"
     " reads as unused"
+)
+
+#: Why SLP and ALP tokens are not checked where an eCash forks result is
+#: given.
+NO_SLP_ALP = (
+    "forks counts the satoshis of an output holding them, and does not read"
+    " the tokens, which the transaction's first output assigns to it"
 )
 
 _BRANCHES = ("receive", "change")
@@ -358,6 +368,8 @@ def _forks(result: ForksResult, text: str) -> list[str]:
     ]
     if result.chain == BITCOIN_CASH.name:
         lines.append(f"cashtokens: not checked: {NO_CASHTOKENS}")
+    elif result.chain == ECASH.name:
+        lines.append(f"slp and alp tokens: not checked: {NO_SLP_ALP}")
     return lines
 
 

@@ -31,6 +31,7 @@ from seed_scan.identify import identify
 from seed_scan.report import (
     NO_CASHTOKENS,
     NO_SCAN,
+    NO_SLP_ALP,
     NO_TOKENS,
     NOT_IN_FORKS,
     NOT_IN_SCAN,
@@ -153,6 +154,7 @@ def test_the_report_of_a_scanned_bundle(abandon: str, result: str) -> None:
         for coin, purpose in [
             ("bitcoin-cash", 44),
             ("bitcoin-sv", 44),
+            ("ecash", 44),
             ("litecoin", 44),
             ("litecoin", 49),
             ("litecoin", 84),
@@ -240,6 +242,7 @@ def test_the_report_of_a_forks_result(abandon: str, forked: str) -> None:
             " 5 sat unconfirmed"
         ),
         "  bitcoin-sv, purpose 44, on Bitcoin Cash: accounts 0 to 2 read, 0 used",
+        "  ecash, purpose 44, on Bitcoin Cash: accounts 0 to 2 read, 0 used",
         (
             "total: bitcoin-cash, 11000 sat confirmed, 5 sat unconfirmed,"
             " 10000 sat at the fork, 2 used accounts, each account key once"
@@ -343,6 +346,7 @@ def test_a_bitcoin_sv_result_lists_bitcoin_cash_s_accounts(abandon: str) -> None
             " 0 sat unconfirmed"
         ),
         "  bitcoin-sv, purpose 44, on Bitcoin SV: accounts 0 to 2 read, 0 used",
+        "  ecash, purpose 44, on Bitcoin SV: accounts 0 to 2 read, 0 used",
         (
             "total: bitcoin-sv, 7000 sat confirmed, 0 sat unconfirmed, 0 sat at"
             " the fork, 1 used accounts, each account key once"
@@ -351,8 +355,91 @@ def test_a_bitcoin_sv_result_lists_bitcoin_cash_s_accounts(abandon: str) -> None
     ]
 
 
+def test_an_ecash_result_lists_each_coin_s_accounts(abandon: str) -> None:
+    """Each coin forks reads is listed on eCash, and totalled once.
+
+    300 sat held at the fork at Bitcoin's path, then 20 sat paid at
+    Bitcoin Cash's coin type, 30 at Bitcoin SV's and 40 at eCash's, read
+    on eCash. The SLP and ALP line is an eCash result's alone.
+    """
+    bitcoin = p2pkh("m/44h/0h/0h/0/0")
+    paid = [
+        (p2pkh(f"{path}/0/0"), sat)
+        for path, sat in [
+            ("m/44h/145h/0h", 20),
+            ("m/44h/236h/0h", 30),
+            ("m/44h/899h/0h", 40),
+        ]
+    ]
+    forked = forked_of(
+        abandon,
+        HistoryTx(pay(1, (bitcoin, 300)), SHARED),
+        HistoryTx(pay(2, *paid), OWN),
+        chain="ecash",
+    )
+    lines = report(abandon, None, [forked]).splitlines()
+    assert lines[3:9] == [
+        f"forks: sha256 {digest(forked)}",
+        "chain: eCash, forked from Bitcoin at height 478559",
+        "server: h:1",
+        "bounds: account gap 3, gap limit 20",
+        f"slp and alp tokens: not checked: {NO_SLP_ALP}",
+        "claims: bip39",
+    ]
+    reason = NO_WITNESS.replace("Bitcoin Cash", "eCash")
+    read = "  bitcoin, purpose 44, on eCash: accounts 0 to 3 read, 1 used"
+    opening = lines.index(read)
+    assert lines[opening:] == [
+        read,
+        (
+            "    account 0, m/44h/0h/0h: 300 sat confirmed, 0 sat unconfirmed,"
+            " 300 sat at the fork, 1 transactions, read up to height 2"
+        ),
+        (
+            f"      receive m/44h/0h/0h/0/0 {bitcoin.address}: 300 sat confirmed,"
+            " 0 sat unconfirmed"
+        ),
+        *(
+            f"  bitcoin, purpose {purpose}, on eCash: not checked: {reason}"
+            for purpose in (49, 84, 86)
+        ),
+        "  bitcoin-cash, purpose 44, on eCash: accounts 0 to 3 read, 1 used",
+        (
+            "    account 0, m/44h/145h/0h: 20 sat confirmed, 0 sat unconfirmed,"
+            " 0 sat at the fork, 1 transactions, read up to height 2"
+        ),
+        (
+            f"      receive m/44h/145h/0h/0/0 {paid[0][0].address}: 20 sat"
+            " confirmed, 0 sat unconfirmed"
+        ),
+        "  bitcoin-sv, purpose 44, on eCash: accounts 0 to 3 read, 1 used",
+        (
+            "    account 0, m/44h/236h/0h: 30 sat confirmed, 0 sat unconfirmed,"
+            " 0 sat at the fork, 1 transactions, read up to height 2"
+        ),
+        (
+            f"      receive m/44h/236h/0h/0/0 {paid[1][0].address}: 30 sat"
+            " confirmed, 0 sat unconfirmed"
+        ),
+        "  ecash, purpose 44, on eCash: accounts 0 to 3 read, 1 used",
+        (
+            "    account 0, m/44h/899h/0h: 40 sat confirmed, 0 sat unconfirmed,"
+            " 0 sat at the fork, 1 transactions, read up to height 2"
+        ),
+        (
+            f"      receive m/44h/899h/0h/0/0 {paid[2][0].address}: 40 sat"
+            " confirmed, 0 sat unconfirmed"
+        ),
+        (
+            "total: ecash, 390 sat confirmed, 0 sat unconfirmed, 300 sat at the"
+            " fork, 4 used accounts, each account key once"
+        ),
+        lines[-1],
+    ]
+
+
 def test_no_total_adds_two_chains(abandon: str, result: str, forked: str) -> None:
-    """Bitcoin's, Bitcoin Cash's and Bitcoin SV's amounts each in its own total.
+    """Bitcoin's and each fork's amounts, each in its own total.
 
     The same accounts are read on each chain, and each chain's satoshis
     are its own coin.
@@ -364,8 +451,14 @@ def test_no_total_adds_two_chains(abandon: str, result: str, forked: str) -> Non
         HistoryTx(pay(2, (p2pkh("m/44h/236h/0h/0/0"), 20)), OWN),
         chain="bitcoin-sv",
     )
-    lines = report(abandon, result, [forked, sv]).splitlines()
-    assert lines[-4:-1] == [
+    xec = forked_of(
+        abandon,
+        HistoryTx(pay(1, (bitcoin, 300)), SHARED),
+        HistoryTx(pay(2, (p2pkh("m/44h/899h/0h/0/0"), 40)), OWN),
+        chain="ecash",
+    )
+    lines = report(abandon, result, [forked, sv, xec]).splitlines()
+    assert lines[-5:-1] == [
         (
             "total: bitcoin, 4000 sat confirmed, 2000 sat unconfirmed,"
             " 1 used accounts, each account key once"
@@ -376,6 +469,10 @@ def test_no_total_adds_two_chains(abandon: str, result: str, forked: str) -> Non
         ),
         (
             "total: bitcoin-sv, 320 sat confirmed, 0 sat unconfirmed,"
+            " 300 sat at the fork, 2 used accounts, each account key once"
+        ),
+        (
+            "total: ecash, 340 sat confirmed, 0 sat unconfirmed,"
             " 300 sat at the fork, 2 used accounts, each account key once"
         ),
     ]
@@ -622,6 +719,7 @@ def test_every_documented_line_is_one_a_report_writes(
             report(abandon, result, [forked]),
             report(one, None, [forked_of(one, own)]),
             report(standard, None, [forked_of(standard)]),
+            report(one, None, [forked_of(one, chain="ecash")]),
             report(abandon, result),
             report(abandon, evm_result),
             report(abandon),

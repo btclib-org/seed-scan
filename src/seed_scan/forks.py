@@ -15,11 +15,12 @@ blocks at the chain's checkpoints are another chain's.
 chains, at the same script, and a wallet of the new chain may since have
 used the key at Bitcoin's paths or at a coin type of its own:
 `seed_scan.identify`'s comment on its `COINS` cites the wallets of each
-chain and the paths they derive at. Bitcoin SV parted from Bitcoin Cash
-after Bitcoin Cash parted from Bitcoin, so it also holds what a key held
-on Bitcoin Cash at that later split. And a base58 address spells the
-same script on each of these chains, so a payment made on one chain to
-an address of another chain's wallet is at that wallet's path.
+chain and the paths they derive at. Bitcoin SV and eCash each parted
+from Bitcoin Cash after Bitcoin Cash parted from Bitcoin, so each also
+holds what a key held on Bitcoin Cash at its own later split. And a
+base58 address spells the same script on each of these chains, so a
+payment made on one chain to an address of another chain's wallet is at
+that wallet's path.
 
 So the accounts read, on whichever chain, are those whose script the
 chain spends with the key, P2PKH: each Bitcoin account whose descriptors
@@ -35,8 +36,8 @@ The balance of an account is read as `seed_scan.scan` reads it, off the
 history the server answers for the chain. ``at_fork`` is read off the
 same history, from the transactions confirmed below the chain's
 `Chain.fork_height`, which Bitcoin's history holds too: what the account
-held when the chain parted from Bitcoin, which for Bitcoin SV is Bitcoin
-Cash's fork, not its own later split from Bitcoin Cash.
+held when the chain parted from Bitcoin, which for Bitcoin SV and eCash
+is Bitcoin Cash's fork, not their own later split from Bitcoin Cash.
 
 On Bitcoin Cash, an output carrying CashTokens holds the token prefix
 before its script, in the same length field, as the CashTokens
@@ -44,6 +45,14 @@ specification's *Token Encoding* says
 (https://github.com/cashtokens/cashtokens/blob/41d2444c17bbfb456d4061953a3ed0e32161571b/readme.md#token-encoding):
 it is not read as paying the script, so its satoshis are not counted,
 and an account paid only through such outputs reads as unused.
+
+On eCash, an output holding SLP or ALP tokens pays its script as any
+output does: the tokens it holds are written in the transaction's first
+output, an ``OP_RETURN``, as SLP's parser in ecash-lib and the ALP
+standard say
+(https://github.com/Bitcoin-ABC/bitcoin-abc/blob/988b903deb04311b12ba067734dab3ff9f5411a7/modules/ecash-lib/src/token/slp.parse.ts#L79-L89,
+https://github.com/Bitcoin-ABC/bitcoin-abc/blob/988b903deb04311b12ba067734dab3ff9f5411a7/doc/standards/alp.md#11-empp).
+Its satoshis are counted, and its tokens are not read.
 
 The result is one JSON object, which `dumps` writes. It holds public data
 only. Its members:
@@ -124,6 +133,7 @@ __all__ = [
     "BITCOIN_CASH",
     "BITCOIN_SV",
     "CHAINS",
+    "ECASH",
     "FORMAT",
     "VERSION",
     "Chain",
@@ -201,8 +211,34 @@ BITCOIN_SV = Chain(
     ),
 )
 
+#: eCash, which holds Bitcoin Cash's blocks up to its own split, at
+#: Bitcoin Cash's upgrade of November 2020. Its checkpoints are the fork
+#: block from Bitcoin, which Electrum ABC pins; Bitcoin ABC's checkpoint
+#: at that upgrade, where Bitcoin Cash Node's list holds another block;
+#: and the latest of Bitcoin ABC's list. Its wallets write an address in
+#: CashAddr, with the prefix ``ecash``, and its base58 prefixes are
+#: Bitcoin's, so the legacy address of the result spells the same script.
+#: The sources:
+#: https://github.com/Bitcoin-ABC/bitcoin-abc/blob/988b903deb04311b12ba067734dab3ff9f5411a7/electrum/electrumabc/networks.py#L106-L110
+#: https://github.com/Bitcoin-ABC/bitcoin-abc/blob/988b903deb04311b12ba067734dab3ff9f5411a7/src/networks/abc/checkpoints.cpp#L58-L61
+#: https://gitlab.com/bitcoin-cash-node/bitcoin-cash-node/-/blob/e13b48e37b3005dca9a316f75aea456697a5dfd6/src/chainparams.cpp#L290-292
+#: https://github.com/Bitcoin-ABC/bitcoin-abc/blob/988b903deb04311b12ba067734dab3ff9f5411a7/src/networks/abc/checkpoints.cpp#L106-L109
+#: https://github.com/Bitcoin-ABC/bitcoin-abc/blob/988b903deb04311b12ba067734dab3ff9f5411a7/src/kernel/chainparams.cpp#L198-L203
+ECASH = Chain(
+    name="ecash",
+    title="eCash",
+    fork_height=478559,
+    checkpoints=(
+        (478559, "000000000000000000651ef99cb9fcbe0dadde1d424bd9f15ff20136191a5eec"),
+        (661648, "000000000000000004284c9d8b2c8ff731efeaec6be50729bdc9bd07f910757d"),
+        (949200, "000000000000000098694560815190dba8bbe2f06c08a7c23837df3c4886cba2"),
+    ),
+)
+
 #: The chains `forks` reads, by name, in the order their accounts are read.
-CHAINS = MappingProxyType({chain.name: chain for chain in (BITCOIN_CASH, BITCOIN_SV)})
+CHAINS = MappingProxyType(
+    {chain.name: chain for chain in (BITCOIN_CASH, BITCOIN_SV, ECASH)}
+)
 
 
 @dataclass(frozen=True)

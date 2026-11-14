@@ -104,8 +104,8 @@ the key since. `forks` asks the Electrum server named, which serves the
 chain named, which of the bundle's accounts were used there, and writes
 the forks result to standard output and what it found to standard
 error. `seed-scan forks --help` lists the chains it reads. How it reads
-a Bitcoin Cash output that also carries CashTokens is in
-`seed_scan.forks`.
+a Bitcoin Cash output that also carries CashTokens, and an eCash output
+holding SLP or ALP tokens, is in `seed_scan.forks`.
 
 The server is the user's own, reached as *Scanning a bundle* says, over
 TLS or, with `--tcp`, over loopback. Before any address is asked, its
