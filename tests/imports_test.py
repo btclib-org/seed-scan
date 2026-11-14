@@ -127,10 +127,9 @@ def test_the_tests_package_imports_no_submodule() -> None:
 # directory. The directory name is what finds a package that `uv run --with`
 # layers over the environment: it sits in a site-packages directory that
 # `sysconfig` does not name. Keyed on the file and not on
-# `sys.stdlib_module_names`, which lists the standard library's public
-# names: PyPy implements some of it in modules of its own -- `_blake2`,
-# `_cffi_ssl`, `_lzma_cffi` -- that the list does not name and that live
-# beside the standard library, not in site-packages
+# `sys.stdlib_module_names`: the standard library's directory holds
+# modules the list does not name, as the `_sysconfigdata_*` module,
+# named after the platform, that the probe's own `sysconfig` call loads
 _INSTALLED = """
 import sys, sysconfig
 from pathlib import Path

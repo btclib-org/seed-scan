@@ -989,28 +989,11 @@ def node_context(tls: Path) -> ssl.SSLContext:
     return context
 
 
-def trust(monkeypatch: pytest.MonkeyPatch, store: Path) -> None:
-    """Make ``SSL_CERT_FILE`` name a store until the test ends.
-
-    The variable is set empty first, so that undoing it goes through the
-    empty value before deleting it. PyPy on Windows deletes a variable
-    from the process's environment block alone, while OpenSSL reads the C
-    runtime's copy with ``getenv``: a store only deleted would stay
-    trusted by every later test. Set empty with ``_wputenv``, the
-    variable leaves that copy too.
-
-    :param monkeypatch: what sets the variable and undoes it.
-    :param store: the file of CA certificates.
-    """
-    monkeypatch.setenv("SSL_CERT_FILE", "")
-    monkeypatch.setenv("SSL_CERT_FILE", str(store))
-
-
 def test_a_node_whose_certificate_the_store_trusts_is_asked(
     tls: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """``SSL_CERT_FILE`` names the store: here the test CA alone."""
-    trust(monkeypatch, tls / "ca.pem")
+    monkeypatch.setenv("SSL_CERT_FILE", str(tls / "ca.pem"))
     with (
         serve(serving(Ethereum(chain_id=5)), node_context(tls)) as served,
         SessionTransport() as session,
@@ -1021,11 +1004,11 @@ def test_a_node_whose_certificate_the_store_trusts_is_asked(
     assert len(served.requests) == 2
 
 
-def test_a_store_trust_set_is_no_longer_trusted_once_undone(tls: Path) -> None:
-    """The test CA is trusted while `trust` holds, and not once undone."""
+def test_a_store_set_is_no_longer_trusted_once_undone(tls: Path) -> None:
+    """The test CA is trusted while the variable names it, not once undone."""
     with serve(serving(Ethereum()), node_context(tls)) as served:
         with pytest.MonkeyPatch.context() as monkeypatch:
-            trust(monkeypatch, tls / "ca.pem")
+            monkeypatch.setenv("SSL_CERT_FILE", str(tls / "ca.pem"))
             with SessionTransport() as session:
                 assert Node(served.url("https"), transport=session).chain_id() == 1
         with SessionTransport() as session, pytest.raises(FetchError) as caught:
@@ -1054,7 +1037,7 @@ def test_a_node_certificate_that_does_not_verify_is_a_failure(
     :param cafile: the store in the folder, if not the system's.
     """
     if cafile is not None:
-        trust(monkeypatch, tls / cafile)
+        monkeypatch.setenv("SSL_CERT_FILE", str(tls / cafile))
     with (
         serve(serving(Ethereum()), node_context(tls)) as served,
         SessionTransport() as session,
