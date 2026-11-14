@@ -52,6 +52,11 @@ Known limits, each an open issue:
   result that `seed-scan report` refuses, an address read at an earlier
   block than the scan's; the scan is then run again
   ([ISS 79](https://github.com/btclib-org/seed-scan/issues/79)).
+- With bitcoin-core-rpc 2026.11.14, which a fresh install resolves, a
+  failed exchange with an EVM node no longer says why: a certificate
+  that does not verify, a refused connection and an expired timeout
+  each still stop the scan, with "no usable answer from the node"
+  ([ISS 86](https://github.com/btclib-org/seed-scan/issues/86)).
 - The tests that search seed-scan's outputs for a secret exempt more
   text than those outputs write, in a forks report's token line
   ([ISS 75](https://github.com/btclib-org/seed-scan/issues/75)) and in
