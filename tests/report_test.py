@@ -581,6 +581,39 @@ def test_no_total_adds_two_chains(abandon: str, result: str, forked: str) -> Non
     ]
 
 
+def test_a_forks_address_two_xpub_texts_give_is_counted_once(abandon: str) -> None:
+    """A Bitcoin Cash account given Bitcoin's account 0 key at another depth.
+
+    The two xpubs differ as text and give the same P2PKH scripts, so both
+    accounts list the address paid before the fork: the total counts its
+    coins, at the fork and since, once, and the two accounts as one.
+    """
+    document = json.loads(abandon)
+    accounts = document["readings"][0]["accounts"]
+    (bitcoin,) = [a for a in accounts if a["path"] == "m/44h/0h/0h"]
+    (cash,) = [a for a in accounts if a["path"] == "m/44h/145h/1h"]
+    key = BIP32KeyData.b58decode(bitcoin["xpub"])
+    cash["xpub"] = BIP32KeyData(
+        key.version,
+        key.depth + 1,
+        key.parent_fingerprint,
+        key.index,
+        key.chain_code,
+        key.key,
+    ).b58encode()
+    text = json.dumps(document)
+    paid = HistoryTx(pay(1, (p2pkh("m/44h/0h/0h/0/0"), 10_000)), SHARED)
+    forked = forked_of(text, paid)
+    assert [
+        (u["path"], u["confirmed"], u["at_fork"]) for u in json.loads(forked)["used"]
+    ] == [("m/44h/0h/0h", 10_000, 10_000), ("m/44h/145h/1h", 10_000, 10_000)]
+    lines = report(text, None, [forked]).splitlines()
+    assert lines[-2] == (
+        "total: bitcoin-cash, 10000 sat confirmed, 0 sat unconfirmed,"
+        " 10000 sat at the fork, 1 used accounts, each account key once"
+    )
+
+
 def shared(text: str, path: str, other: str, *, descriptors: bool) -> str:
     """Return a bundle whose account at `other` holds the key at `path`.
 

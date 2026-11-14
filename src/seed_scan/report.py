@@ -98,7 +98,10 @@ every other character is literal.
   script type. Two accounts of different keys can still list one
   address, so the Bitcoin and EVM totals sum the balance of each address
   once, and so do the token totals its token balances, as the first used
-  account listing it has them.
+  account listing it has them. A forks total holds what each account had
+  at the fork, so it counts once the accounts of one public key and chain
+  code, whatever else their xpubs spell: those list the same scripts, and
+  any others none of them.
 - ``digest: sha256 <hex>``: the SHA-256 of every line above it, so that
   ``sed '$d' report.txt | shasum -a 256`` gives it back.
 """
@@ -109,6 +112,8 @@ import re
 from hashlib import sha256
 from types import MappingProxyType
 from typing import TYPE_CHECKING, TypeVar
+
+from bip32_descriptors.bip32 import BIP32KeyData
 
 from seed_scan.bundle import Account, Bundle, Reading, Search
 from seed_scan.bundle import loads as bundle_loads
@@ -477,12 +482,17 @@ def _scripts(account: Account) -> tuple[str, ...]:
 
 
 def _p2pkh(account: Account) -> tuple[str, ...]:
-    """Return what gives the scripts of an account `forks` reads: its xpub.
+    """Return what gives the scripts of an account `forks` reads.
 
     Each account a forks result lists is read as P2PKH over its xpub's
-    receive and change branches, whatever its coin.
+    receive and change branches, whatever its coin: those scripts are
+    given by the xpub's public key and chain code alone, not by the
+    depth, parent and index it also spells. Two accounts of one key and
+    chain code list the same scripts, held at the fork as since; two of
+    others list none in common.
     """
-    return (account.xpub,)
+    key = BIP32KeyData.b58decode(account.xpub)
+    return (key.key.hex(), key.chain_code.hex())
 
 
 def _once(
@@ -565,7 +575,10 @@ def _evm_totals(bundle: Bundle, chain: str, used: tuple[EvmAccount, ...]) -> lis
 
 
 def _forks_total(bundle: Bundle, result: ForksResult) -> str:
-    """Return the total of a forks result, each key once, whatever its coin."""
+    """Return the total of a forks result, each key once, whatever its coin.
+
+    A key is its public key and chain code, as `_p2pkh` says.
+    """
     used = _once(bundle, [(u.coin, u) for u in result.used], _p2pkh)
     return (
         f"total: {result.chain}, {sum(u.confirmed for u in used)} sat confirmed,"
