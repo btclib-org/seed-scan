@@ -62,10 +62,8 @@ against the system's CA certificates, or against those of the file
 `--cafile` names, which is how a server with a self-signed certificate
 is reached. Before any address is asked, the server's genesis block and
 its block at a height Bitcoin Core pins are compared with Bitcoin's.
-That refuses a server of a chain forked from Bitcoin at that height or
-below, as one of Bitcoin Cash's, and not one of a chain forked above it.
-Nor does it prove the histories the server answers are Bitcoin's, as
-SECURITY.md's *Limitations, not vulnerabilities* says.
+SECURITY.md's *Limitations, not vulnerabilities* says which servers that
+refuses, and what it does not prove.
 
 The node is an execution client's JSON-RPC, at an `https` URL, or an
 `http` one on a loopback address such as `http://127.0.0.1:8545`.

@@ -187,7 +187,7 @@ _WORD = 2**256
 # what bounds a balance in satoshis: 21 million bitcoin, Bitcoin Core's
 # MAX_MONEY, which no amount of the chain passes
 _MAX_SATOSHI = 21_000_000 * 100_000_000
-# the refusal of a balance past it, by `scan` and by `loads`
+# the refusal of a balance past it
 _OUTSIDE = "a balance outside 0 to 21 million bitcoin"
 
 _T = TypeVar("_T")
