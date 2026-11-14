@@ -27,10 +27,9 @@ bundle is listed as not checked, with the reason.
 The caller names the EVM chain the node serves, a key of
 `seed_scan.evm.EVM_CHAINS`, and a node whose ``eth_chainId`` answers
 another chain id is refused before any address is asked. The accounts
-read are those of the coins its `seed_scan.evm.EvmChain` lists:
-Ethereum's on each chain, Ethereum Classic's too on Ethereum Classic,
-and BNB's too on BNB Smart Chain; an account of a coin one chain alone
-reads is listed as not checked on any other. Each coin's accounts are
+read are those of the coins its `seed_scan.evm.EvmChain` lists, as
+`seed_scan.evm` says; an account of a coin one chain alone reads is
+listed as not checked on any other. Each coin's accounts are
 read the same way as Bitcoin's, purpose by purpose and with the same two
 bounds, on the receive branch alone: the addresses of an account are
 those of the keys ``0/0``, ``0/1`` and on below its ``xpub``, as
