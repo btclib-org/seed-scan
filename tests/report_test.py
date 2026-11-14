@@ -156,6 +156,7 @@ def test_the_report_of_a_scanned_bundle(abandon: str, result: str) -> None:
             ("bitcoin-sv", 44),
             ("ecash", 44),
             ("ecash-tokens", 44),
+            ("slp-tokens", 44),
             ("litecoin", 44),
             ("litecoin", 49),
             ("litecoin", 84),
@@ -245,6 +246,7 @@ def test_the_report_of_a_forks_result(abandon: str, forked: str) -> None:
         "  bitcoin-sv, purpose 44, on Bitcoin Cash: accounts 0 to 2 read, 0 used",
         "  ecash, purpose 44, on Bitcoin Cash: accounts 0 to 2 read, 0 used",
         "  ecash-tokens, purpose 44, on Bitcoin Cash: accounts 0 to 2 read, 0 used",
+        "  slp-tokens, purpose 44, on Bitcoin Cash: accounts 0 to 2 read, 0 used",
         (
             "total: bitcoin-cash, 11000 sat confirmed, 5 sat unconfirmed,"
             " 10000 sat at the fork, 2 used accounts, each account key once"
@@ -350,6 +352,7 @@ def test_a_bitcoin_sv_result_lists_bitcoin_cash_s_accounts(abandon: str) -> None
         "  bitcoin-sv, purpose 44, on Bitcoin SV: accounts 0 to 2 read, 0 used",
         "  ecash, purpose 44, on Bitcoin SV: accounts 0 to 2 read, 0 used",
         "  ecash-tokens, purpose 44, on Bitcoin SV: accounts 0 to 2 read, 0 used",
+        "  slp-tokens, purpose 44, on Bitcoin SV: accounts 0 to 2 read, 0 used",
         (
             "total: bitcoin-sv, 7000 sat confirmed, 0 sat unconfirmed, 0 sat at"
             " the fork, 1 used accounts, each account key once"
@@ -362,9 +365,9 @@ def test_an_ecash_result_lists_each_coin_s_accounts(abandon: str) -> None:
     """Each coin forks reads is listed on eCash, and totalled once.
 
     300 sat held at the fork at Bitcoin's path, then 20 sat paid at
-    Bitcoin Cash's coin type, 30 at Bitcoin SV's, 40 at eCash's and 50 at
-    Cashtab's, read on eCash. The SLP and ALP line is an eCash result's
-    alone.
+    Bitcoin Cash's coin type, 30 at Bitcoin SV's, 40 at eCash's, 50 at
+    Cashtab's and 60 at Electron Cash SLP's, read on eCash. The SLP and
+    ALP line is an eCash result's alone.
     """
     bitcoin = p2pkh("m/44h/0h/0h/0/0")
     paid = [
@@ -374,6 +377,7 @@ def test_an_ecash_result_lists_each_coin_s_accounts(abandon: str) -> None:
             ("m/44h/236h/0h", 30),
             ("m/44h/899h/0h", 40),
             ("m/44h/1899h/0h", 50),
+            ("m/44h/245h/0h", 60),
         ]
     ]
     forked = forked_of(
@@ -444,9 +448,18 @@ def test_an_ecash_result_lists_each_coin_s_accounts(abandon: str) -> None:
             f"      receive m/44h/1899h/0h/0/0 {paid[3][0].address}: 50 sat"
             " confirmed, 0 sat unconfirmed"
         ),
+        "  slp-tokens, purpose 44, on eCash: accounts 0 to 3 read, 1 used",
         (
-            "total: ecash, 440 sat confirmed, 0 sat unconfirmed, 300 sat at the"
-            " fork, 5 used accounts, each account key once"
+            "    account 0, m/44h/245h/0h: 60 sat confirmed, 0 sat unconfirmed,"
+            " 0 sat at the fork, 1 transactions, read up to height 2"
+        ),
+        (
+            f"      receive m/44h/245h/0h/0/0 {paid[4][0].address}: 60 sat"
+            " confirmed, 0 sat unconfirmed"
+        ),
+        (
+            "total: ecash, 500 sat confirmed, 0 sat unconfirmed, 300 sat at the"
+            " fork, 6 used accounts, each account key once"
         ),
         lines[-1],
     ]

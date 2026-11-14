@@ -153,8 +153,9 @@ def test_each_chain_reads_the_accounts_of_every_chain(abandon: str, chain: str) 
 
     Bitcoin SV and eCash each hold Bitcoin Cash's blocks up to their
     split, and a base58 address spells one script on each, so each reads
-    every fork coin, Cashtab's eCash address included. Each counts at the
-    fork from Bitcoin, Bitcoin SV's and eCash's included.
+    every fork coin, Cashtab's eCash address and Electron Cash SLP's
+    account included. Each counts at the fork from Bitcoin, Bitcoin SV's
+    and eCash's included.
 
     :param abandon: the bundle.
     :param chain: the chain read.
@@ -165,6 +166,7 @@ def test_each_chain_reads_the_accounts_of_every_chain(abandon: str, chain: str) 
         "m/44h/236h/0h",
         "m/44h/899h/0h",
         "m/44h/1899h/0h",
+        "m/44h/245h/0h",
     ]
     chain_read = Chain(
         HistoryTx(pay(1, *((p2pkh(f"{path}/0/0"), 1) for path in paths)), SHARED)
@@ -176,6 +178,7 @@ def test_each_chain_reads_the_accounts_of_every_chain(abandon: str, chain: str) 
         ("bitcoin-sv", "m/44h/236h/0h", 1),
         ("ecash", "m/44h/899h/0h", 1),
         ("ecash-tokens", "m/44h/1899h/0h", 1),
+        ("slp-tokens", "m/44h/245h/0h", 1),
     ]
     assert result.fork_height == BITCOIN_CASH.fork_height
 
@@ -261,6 +264,7 @@ def test_nothing_used_reads_each_p2pkh_purpose_and_lists_the_segwit_ones(
         ForkSearched(0, "bitcoin-sv", 44, 3, cut_short=False),
         ForkSearched(0, "ecash", 44, 3, cut_short=False),
         ForkSearched(0, "ecash-tokens", 44, 3, cut_short=False),
+        ForkSearched(0, "slp-tokens", 44, 3, cut_short=False),
     )
     assert result.not_checked == tuple(
         Skipped(0, "bitcoin", purpose, NO_WITNESS) for purpose in (49, 84, 86)
@@ -461,6 +465,7 @@ def test_a_chain_s_xpub_off_the_curve_is_refused(abandon: str) -> None:
         "m/44h/236h/1h",
         "m/44h/899h/1h",
         "m/44h/1899h/1h",
+        "m/44h/245h/1h",
         "m/44h/0h/1h",
     ],
 )

@@ -17,11 +17,12 @@ shares.
 Given an address the user knows, it compares the address's script with
 those of every Bitcoin account it wrote, within a bound written beside
 the result. A base58 address is also compared with those of each
-account at Bitcoin Cash's, Bitcoin SV's and eCash's coin types, since it
-spells the same script on each of these chains; a match names the coin
-of the path it is at. An address of another network is not searched,
-and the bundle says so; a text that is no Bitcoin address is not written
-either, since a key typed by mistake would otherwise land in the bundle.
+account at Bitcoin Cash's, Bitcoin SV's, eCash's and SLP's coin types,
+since it spells the same script on each of these chains; a match names
+the coin of the path it is at. An address of another network is not
+searched, and the bundle says so; a text that is no Bitcoin address is
+not written either, since a key typed by mistake would otherwise land in
+the bundle.
 
 Nothing here opens a connection: `seed_scan.cli` refuses one for the
 whole run. What leaves this module is `seed_scan.bundle`'s objects,
@@ -120,6 +121,28 @@ class Coin:
 #   tokens and is called by its tests alone,
 #   https://github.com/satoshilabs/slips/blob/7a2abdd1e823f5180e0997434250eda88b57cb75/slip-0044.md?plain=1#L1136
 #   https://github.com/Bitcoin-ABC/bitcoin-abc/blob/988b903deb04311b12ba067734dab3ff9f5411a7/electrum/electrumabc/keystore.py#L855-L857
+# - SLP tokens 44: Electron Cash SLP, which derives a new or restored
+#   BIP39 wallet at m/44h/245h/0h by default, and offers that path for
+#   SLP addresses,
+#   https://github.com/simpleledger/Electron-Cash-SLP/blob/c7ffb8916df18f9d4943e8ba5a768a8027c343cc/electroncash/keystore.py#L755-L756
+#   https://github.com/simpleledger/Electron-Cash-SLP/blob/c7ffb8916df18f9d4943e8ba5a768a8027c343cc/electroncash/keystore.py#L788
+#   https://github.com/simpleledger/Electron-Cash-SLP/blob/c7ffb8916df18f9d4943e8ba5a768a8027c343cc/electroncash/base_wizard.py#L367-L369
+#   https://github.com/simpleledger/Electron-Cash-SLP/blob/c7ffb8916df18f9d4943e8ba5a768a8027c343cc/electroncash/base_wizard.py#L460-L463
+#   https://github.com/simpleledger/Electron-Cash-SLP/blob/c7ffb8916df18f9d4943e8ba5a768a8027c343cc/electroncash/base_wizard.py#L309
+#   Paytaca, whose SLP wallet is at m/44h/245h/0h, and Badger's mobile
+#   wallet, whose SLP address is at m/44h/245h,
+#   https://github.com/paytaca/paytaca-app/blob/1ee50a2b8d1981fbff40d84079da80903e8fb302/src/wallet/index.js#L72-L78
+#   https://github.com/badger-cash/badger-mobile/blob/c30ef30efc631fdce10df6ac6bca12d1ce9195a3/data/accounts/actions.ts#L43-L60
+#   https://github.com/badger-cash/badger-mobile/blob/c30ef30efc631fdce10df6ac6bca12d1ce9195a3/utils/account-utils.ts#L11-L23
+#   Electrum ABC's scan of derivation paths, offered where a BIP39 wallet
+#   is restored, reads m/44h/245h/0h,
+#   https://github.com/Bitcoin-ABC/bitcoin-abc/blob/988b903deb04311b12ba067734dab3ff9f5411a7/electrum/electrumabc/base_wizard.py#L505
+#   https://github.com/Bitcoin-ABC/bitcoin-abc/blob/988b903deb04311b12ba067734dab3ff9f5411a7/electrum/electrumabc/base_wizard.py#L601-L606
+#   https://github.com/Bitcoin-ABC/bitcoin-abc/blob/988b903deb04311b12ba067734dab3ff9f5411a7/electrum/electrumabc_gui/qt/installwizard.py#L864-L865
+#   The name follows SLIP-0044, which registers 245 as SLP, the Simple
+#   Ledger Protocol, and Electron Cash SLP, Paytaca and Badger, which
+#   name that path for SLP,
+#   https://github.com/satoshilabs/slips/blob/7a2abdd1e823f5180e0997434250eda88b57cb75/slip-0044.md?plain=1#L278
 # - Dogecoin 44: Trezor Suite, Ledger Live and wallet-core,
 #   https://github.com/trezor/trezor-suite/blob/c861929418c13919b335061d65a169de5aa869f3/networks/bitcoin/network-bitcoin-suite-common/src/networkConfig.ts#L178-L197
 #   https://github.com/trustwallet/wallet-core/blob/7a21615fad32edd8dc0b040d845de3973cde2c5a/registry.json#L95-L105
@@ -148,6 +171,7 @@ COINS = (
     Coin("bitcoin-sv", 236, (44,)),
     Coin("ecash", 899, (44,)),
     Coin("ecash-tokens", 1899, (44,)),
+    Coin("slp-tokens", 245, (44,)),
     Coin("litecoin", 2, (44, 49, 84)),
     Coin("dogecoin", 3, (44,)),
 )
@@ -166,7 +190,7 @@ _BASE58 = ("p2pkh", "p2sh")
 
 # the coins forked from Bitcoin whose accounts a base58 address is
 # searched in
-_FORKS = ("bitcoin-cash", "bitcoin-sv", "ecash", "ecash-tokens")
+_FORKS = ("bitcoin-cash", "bitcoin-sv", "ecash", "ecash-tokens", "slp-tokens")
 
 # what each scheme the words may claim and no reading covers is
 # reported as
@@ -473,8 +497,9 @@ def identify(
     `accounts` is how many accounts of each coin and purpose are written,
     from account 0. Where `address` is given, the receive and change
     branches of each Bitcoin account written, and of each account at
-    Bitcoin Cash's, Bitcoin SV's and eCash's coin types where it is a
-    base58 address, are searched for it, from index 0 to `indexes` - 1.
+    Bitcoin Cash's, Bitcoin SV's, eCash's and SLP's coin types where it
+    is a base58 address, are searched for it, from index 0 to
+    `indexes` - 1.
 
     A refusal names no secret: the words and the passphrases are never
     quoted.

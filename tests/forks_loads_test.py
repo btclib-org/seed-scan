@@ -109,6 +109,7 @@ def test_a_result_of_each_chain_reads_back_each_coin(bundle: str, chain: str) ->
         "m/44h/236h/0h",
         "m/44h/899h/0h",
         "m/44h/1899h/0h",
+        "m/44h/245h/0h",
     )
     paid = pay(1, *((p2pkh(f"{path}/0/0"), 1) for path in paths))
     result = forks_dumps(
@@ -122,6 +123,7 @@ def test_a_result_of_each_chain_reads_back_each_coin(bundle: str, chain: str) ->
         ("bitcoin-sv", "m/44h/236h/0h"),
         ("ecash", "m/44h/899h/0h"),
         ("ecash-tokens", "m/44h/1899h/0h"),
+        ("slp-tokens", "m/44h/245h/0h"),
     ]
 
 
