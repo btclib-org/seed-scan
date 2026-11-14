@@ -376,8 +376,8 @@ def _scripts(account: Account) -> tuple[str, ...]:
 def _p2pkh(account: Account) -> tuple[str, ...]:
     """Return what gives the scripts of an account `forks` reads: its xpub.
 
-    `forks` reads every account as P2PKH over its xpub's receive and change
-    branches, whatever its coin.
+    Each account a forks result lists is read as P2PKH over its xpub's
+    receive and change branches, whatever its coin.
     """
     return (account.xpub,)
 

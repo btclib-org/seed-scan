@@ -479,7 +479,7 @@ def _held_at_fork(document: dict[str, Any], found: UsedAccount, height: int) -> 
     if not _bounded(at_fork, 0):
         raise SeedScanValueError(f"forks result: {_OUTSIDE}")
     before = (t.height for t in found.transactions if t.height is not None)
-    if at_fork and not any(h < height for h in before):
+    if at_fork and all(h >= height for h in before):
         err_msg = "forks result: a balance at the fork no transaction listed gives"
         raise SeedScanValueError(err_msg)
     return at_fork
