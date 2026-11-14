@@ -317,6 +317,9 @@ VALUE_ERRORS = [
     (deleter("server"), "missing member 'server'"),
     (setter("bundle", PLANTED), "made from another bundle"),
     (setter("server", f"{PLANTED} :1"), "member 'server' is not host:port"),
+    (setter("server", f"{PLANTED}\x1b:1"), "member 'server' is not host:port"),
+    (setter("server", "h:0"), "member 'server': the port is not 1 to 65535"),
+    (setter("server", f"h:{'9' * 5000}"), "member 'server': the port is not 1"),
     (setter("gap_limit", 0), "member 'gap_limit' is below 1"),
     (first("searched", setter("reading", 1)), "a search reads no account"),
     (first("searched", setter("accounts", 3)), "a search reads no account"),
@@ -494,6 +497,19 @@ def test_offsetting_mempool_changes_need_a_mempool_transaction(bundle: str) -> N
     err_msg = "a balance or a use no transaction listed gives"
     with pytest.raises(SeedScanValueError, match=err_msg):
         loads(json.dumps(document), bundle)
+
+
+@pytest.mark.parametrize(
+    "server", ["host.example:050002", "bücher.example:50002", f"{'a' * 300}:1"]
+)
+def test_a_server_scan_takes_reads_back(bundle: str, server: str) -> None:
+    """Leading zeros, a host that is not ASCII, a long host: as `scan` wrote it.
+
+    :param bundle: the bundle.
+    :param server: the server named.
+    """
+    text = scan_dumps(scan(bundle, Chain(), server=server))
+    assert loads(text, bundle).server == server
 
 
 def test_a_bitcoin_address_past_the_gap_limit_is_refused(

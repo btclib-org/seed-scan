@@ -71,7 +71,7 @@ from seed_scan.bundle import dumps
 from seed_scan.evm import Node
 from seed_scan.exceptions import SeedScanException, SeedScanValueError
 from seed_scan.report import report
-from seed_scan.scan import ACCOUNT_GAP, GAP_LIMIT, scan
+from seed_scan.scan import ACCOUNT_GAP, GAP_LIMIT, parse_server, scan
 from seed_scan.scan import dumps as scan_dumps
 
 if TYPE_CHECKING:
@@ -111,8 +111,6 @@ _PROBE = "seed_scan.guard"
 class _InPlace(Exception):  # noqa: N818 -- a signal, never a failure raised out
     """The hook's answer to the guard's own event, carrying its token back."""
 
-
-_MAX_PORT = 65535
 
 # what a backend raises where its tip moved during a read, which
 # `HistoryReader` says the caller asks again. A text and not a class:
@@ -271,18 +269,6 @@ def _scan_summary(result: ScanResult) -> str:
     return "\n".join(lines) + "\n"
 
 
-def _server(text: str) -> tuple[str, int]:
-    """Return the host and port of ``host:port``, an IPv6 host in brackets."""
-    host, colon, port = text.rpartition(":")
-    if host.startswith("[") and host.endswith("]"):
-        host = host[1:-1]
-    if not (colon and host and port.isascii() and port.isdigit()):
-        raise SeedScanValueError("--server is not host:port")
-    if not 0 < int(port) <= _MAX_PORT:
-        raise SeedScanValueError("--server: the port is not 1 to 65535")
-    return host, int(port)
-
-
 def _tls_context(cafile: str | None) -> ssl.SSLContext:
     """Return the context a server's certificate is verified against.
 
@@ -383,7 +369,7 @@ def _electrum(
     connect: Callable[[str, int, ssl.SSLContext], LineTransport],
 ) -> _Mainnet:
     """Return the reader of the Electrum server --server names."""
-    host, port = _server(args.server)
+    host, port = parse_server(args.server, "--server")
     context = _tls_context(args.cafile)
     transport = None
     # the transport quotes a host it refuses, and the refusal says none

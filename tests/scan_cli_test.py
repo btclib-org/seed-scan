@@ -469,6 +469,10 @@ def test_an_error_the_server_answers_is_a_refusal(
         ("h:", "--server is not host:port"),
         ("h:0", "--server: the port is not 1 to 65535"),
         ("h:65536", "--server: the port is not 1 to 65535"),
+        ("h:0065536", "--server: the port is not 1 to 65535"),
+        (f"h:{'9' * 5000}", "--server: the port is not 1 to 65535"),
+        ("two words:1", "--server is not host:port"),
+        ("h\x1b:1", "--server is not host:port"),
     ],
 )
 def test_a_server_that_is_not_host_and_port_is_refused(
@@ -495,6 +499,16 @@ def test_an_ipv6_host_is_in_brackets(
     run(capsys, [bundle, "--server", "[::1]:50002"], connect)
     ((host, port, _),) = connect.made
     assert (host, port) == ("::1", 50002)
+
+
+def test_a_port_with_leading_zeros_is_its_number(
+    capsys: pytest.CaptureFixture[str], bundle: str
+) -> None:
+    """The result names the server as typed; the connection, the port."""
+    connect = Connections(Electrum())
+    run(capsys, [bundle, "--server", "bücher.example:050002"], connect)
+    ((host, port, _),) = connect.made
+    assert (host, port) == ("bücher.example", 50002)
 
 
 def test_a_host_the_transport_refuses_is_not_quoted(

@@ -743,6 +743,12 @@ def test_ethereum_accounts_not_numbered_from_0_are_refused(abandon: str) -> None
     assert not fake.asked
 
 
+def test_a_server_that_is_not_host_and_port_is_refused(abandon: str) -> None:
+    """`parse_server`'s rule, before the reader is asked."""
+    with pytest.raises(SeedScanValueError, match="^server is not host:port$"):
+        scan(abandon, NEVER, server="no port")
+
+
 @pytest.mark.parametrize(
     "server, said",
     [

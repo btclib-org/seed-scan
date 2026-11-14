@@ -143,6 +143,7 @@ __all__ = [
     "UsedAccount",
     "dumps",
     "loads",
+    "parse_server",
     "scan",
 ]
 
@@ -172,9 +173,9 @@ NO_NODE = "no Ethereum node was named"
 #: The ``reason`` every other coin is not checked for.
 NOT_READ = "scan reads Bitcoin and Ethereum alone in this version"
 
-# a server as the result names it: printable ASCII with no space, then
-# a colon and a port
-_SERVER = re.compile(r"[!-~]{1,260}:[0-9]{1,5}")
+# the last port, and the digits it takes, leading zeros aside
+_MAX_PORT = 65535
+_PORT_DIGITS = 5
 # the first hardened index
 _HARDENED = 0x80000000
 # a transaction or a block id, as hex
@@ -607,6 +608,8 @@ def _backends(
     """Refuse a server named without its reader, and a scan of nothing."""
     if reader is not None and not isinstance(server, str):
         raise SeedScanTypeError(f"invalid server type: {type(server).__name__}")
+    if isinstance(server, str):
+        parse_server(server, "server")
     if reader is None and server is not None:
         raise SeedScanValueError("a server is named, and no reader asks it")
     if reader is None and node is None:
@@ -632,7 +635,8 @@ def scan(
     `seed_scan.bundle.loads` refuses it: text that is not a bundle.
     Refused as a `SeedScanValueError` too: a descriptor that does not
     parse, as one whose key is no point of the curve, an extended public
-    key that does not decode, and accounts not numbered from 0. A bound
+    key that does not decode, accounts not numbered from 0, and a
+    `server` that `parse_server` refuses. A bound
     below 1 is refused, and one that is no integer is a
     `SeedScanTypeError`, as is a `server` that is no string beside a
     `reader`. Refused once `reader` is asked: an account whose history
@@ -692,6 +696,36 @@ def _scan_evm(
             searched.append(done)
             used += found
     return EvmScan(node.name, chain_id, block, tuple(searched), tuple(used))
+
+
+def parse_server(text: str, name: str) -> tuple[str, int]:
+    """Return the host and port of an Electrum server named ``host:port``.
+
+    The one rule ``seed-scan scan --server`` takes a server by and `loads`
+    reads ``server`` by, so that every result `scan` writes reads back.
+    The host is not empty, and holds no space and no character that does
+    not print; an IPv6 host is in brackets, which are dropped. The port
+    is ASCII digits naming 1 to 65535, leading zeros allowed. Anything
+    else is refused, as a `SeedScanValueError` opening with `name` and
+    quoting nothing.
+    """
+    host, colon, port = text.rpartition(":")
+    if host.startswith("[") and host.endswith("]"):
+        host = host[1:-1]
+    if not (
+        colon
+        and host
+        and host.isprintable()
+        and not any(c.isspace() for c in host)
+        and port.isascii()
+        and port.isdigit()
+    ):
+        raise SeedScanValueError(f"{name} is not host:port")
+    # checked before `int`, which refuses a string of too many digits
+    digits = port.lstrip("0")
+    if len(digits) > _PORT_DIGITS or not 0 < int(digits or "0") <= _MAX_PORT:
+        raise SeedScanValueError(f"{name}: the port is not 1 to 65535")
+    return host, int(digits)
 
 
 def _member(document: dict[str, Any], key: str, kind: type | tuple[type, ...]) -> Any:
@@ -1094,11 +1128,11 @@ def loads(text: str, bundle: str) -> ScanResult:
     member, never its value.
 
     A reader echoes the text members, so each holds only what the format
-    defines: a ``server`` of printable ASCII with no space, ending in a
-    colon and a port; a ``node`` that `seed_scan.evm.Node` takes, and
-    names as it is written; ids of 64 hex characters; a balance in wei of
-    decimal digits, below 2**256; a ``reason`` that is the one `scan`
-    gives that coin, for a coin of that reading it did not read. What the
+    defines: a ``server`` that `parse_server` takes; a ``node`` that
+    `seed_scan.evm.Node` takes, and names as it is written; ids of 64 hex
+    characters; a balance in wei of decimal digits, below 2**256; a
+    ``reason`` that is the one `scan` gives that coin, for a coin of that
+    reading it did not read. What the
     result says of the bundle is checked against it: each search and each
     used account names accounts of the bundle of its coin, a used account
     one its search read, its ``path`` the bundle's, each address the one
@@ -1125,8 +1159,8 @@ def loads(text: str, bundle: str) -> ScanResult:
     if _member(document, "bundle", str) != digest:
         raise SeedScanValueError("scan result: made from another bundle")
     server: str | None = _member(document, "server", (str, type(None)))
-    if server is not None and not _SERVER.fullmatch(server):
-        raise SeedScanValueError("scan result: member 'server' is not host:port")
+    if server is not None:
+        parse_server(server, "scan result: member 'server'")
     gap_limit = _count(document, "gap_limit", 1)
     account_gap = _count(document, "account_gap", 1)
     accounts = _held(read, _BITCOIN)
