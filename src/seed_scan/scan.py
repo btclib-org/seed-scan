@@ -393,23 +393,30 @@ def _owned_outputs(
     }
 
 
-def _balance(history: ScriptHistory, scripts: frozenset[bytes]) -> tuple[int, int]:
-    """Return the confirmed balance of `scripts`, and the mempool's change.
+def _balances(
+    history: ScriptHistory, scripts: frozenset[bytes]
+) -> dict[bytes, tuple[int, int]]:
+    """Return the confirmed balance of each script, and the mempool's change.
 
-    General, so it goes to btclib-wallet with btclib-org/btclib-wallet#860.
+    The history is read once for every script. General, so it goes to
+    btclib-wallet with btclib-org/btclib-wallet#860.
     """
-    owned = _owned_outputs(history, scripts)
     spent_confirmed = {
         tx_in.prev_out for entry in history.txs if entry.block for tx_in in entry.tx.vin
     }
     spent = {tx_in.prev_out for entry in history.txs for tx_in in entry.tx.vin}
-    confirmed = sum(
-        out.value
-        for point, (out, in_block) in owned.items()
-        if in_block and point not in spent_confirmed
-    )
-    total = sum(out.value for point, (out, _) in owned.items() if point not in spent)
-    return confirmed, total - confirmed
+    confirmed = dict.fromkeys(scripts, 0)
+    total = dict.fromkeys(scripts, 0)
+    for point, (out, in_block) in _owned_outputs(history, scripts).items():
+        script = out.script_pub_key.script
+        if in_block and point not in spent_confirmed:
+            confirmed[script] += out.value
+        if point not in spent:
+            total[script] += out.value
+    return {
+        script: (confirmed[script], total[script] - confirmed[script])
+        for script in scripts
+    }
 
 
 def _spends_one_output_twice(history: ScriptHistory) -> bool:
@@ -478,18 +485,19 @@ def _read_account(
 def _used_account(reading: int, account: Account, use: AccountUse) -> UsedAccount:
     """Return what an account's discovery found, as public data."""
     history = use.history
-    addresses: list[Address] = []
-    scripts: set[bytes] = set()
-    for branch, indexes in enumerate(use.used):
-        for index in indexes:
-            for script_pub_key in use.descriptors[branch].script_pub_keys(index):
-                script = script_pub_key.script
-                scripts.add(script)
-                balance = _balance(history, frozenset({script}))
-                addresses.append(
-                    Address(branch, index, script_pub_key.address, *balance)
-                )
-    confirmed, unconfirmed = _balance(history, frozenset(scripts))
+    positions = [
+        (branch, index, script_pub_key)
+        for branch, indexes in enumerate(use.used)
+        for index in indexes
+        for script_pub_key in use.descriptors[branch].script_pub_keys(index)
+    ]
+    balances = _balances(history, frozenset(s.script for _, _, s in positions))
+    addresses = [
+        Address(branch, index, s.address, *balances[s.script])
+        for branch, index, s in positions
+    ]
+    confirmed = sum(c for c, _ in balances.values())
+    unconfirmed = sum(u for _, u in balances.values())
     return UsedAccount(
         reading=reading,
         purpose=account.purpose,
@@ -995,7 +1003,7 @@ def _check_searches(
         numbers = {
             u.account for u in used if (u.reading, u.purpose) == (reading, purpose)
         }
-        held = sum(1 for r, p, _ in accounts if (r, p) == (reading, purpose))
+        held = sum((r, p) == (reading, purpose) for r, p, _ in accounts)
         if not _agrees(done, numbers, held, account_gap):
             err_msg = "scan result: a search's accounts and 'cut_short' do not agree"
             raise SeedScanValueError(err_msg)
