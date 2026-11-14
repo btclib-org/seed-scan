@@ -17,10 +17,10 @@ shares.
 Given an address the user knows, it compares the address's script with
 those of every Bitcoin account it wrote, within a bound written beside
 the result. A base58 address is also compared with those of each
-Bitcoin Cash and Bitcoin SV account, since it spells the same script on
-each of these chains; a match names the coin of the path it is at. An
-address of another network is not searched, and the bundle says so; a
-text that is no Bitcoin address is not written either, since a key
+Bitcoin Cash, Bitcoin SV and eCash account, since it spells the same
+script on each of these chains; a match names the coin of the path it is
+at. An address of another network is not searched, and the bundle says
+so; a text that is no Bitcoin address is not written either, since a key
 typed by mistake would otherwise land in the bundle.
 
 Nothing here opens a connection: `seed_scan.cli` refuses one for the
@@ -97,6 +97,21 @@ class Coin:
 #   ElectrumSV derives at m/44h/0h, Bitcoin's own, and offers
 #   m/44h/145h, Bitcoin Cash's,
 #   https://github.com/electrumsv/electrumsv/blob/7ab1c7ceaaaa0f8079da21356989d9b250e874b4/electrumsv/gui/qt/account_wizard.py#L60-L63
+# - eCash 44: Electrum ABC, which derives a BIP39 or SLIP-0039 wallet at
+#   m/44h/899h by default, Trezor's firmware and wallet-core,
+#   https://github.com/Bitcoin-ABC/bitcoin-abc/blob/988b903deb04311b12ba067734dab3ff9f5411a7/electrum/electrumabc/keystore.py#L849-L852
+#   https://github.com/Bitcoin-ABC/bitcoin-abc/blob/988b903deb04311b12ba067734dab3ff9f5411a7/electrum/electrumabc/keystore.py#L886-L893
+#   https://github.com/trezor/trezor-firmware/blob/433075c0a0e643d3a07364226fed40a7bbc717a8/common/defs/bitcoin/ecash.json#L24
+#   https://github.com/trustwallet/wallet-core/blob/7a21615fad32edd8dc0b040d845de3973cde2c5a/registry.json#L3699-L3712
+#   Electrum ABC also offers m/44h/0h, Bitcoin's own, and m/44h/145h,
+#   Bitcoin Cash's, which it takes by default for a hardware wallet
+#   whose plugin does not derive at eCash's coin type,
+#   https://github.com/Bitcoin-ABC/bitcoin-abc/blob/988b903deb04311b12ba067734dab3ff9f5411a7/electrum/electrumabc/base_wizard.py#L445-L448
+#   https://github.com/Bitcoin-ABC/bitcoin-abc/blob/988b903deb04311b12ba067734dab3ff9f5411a7/electrum/electrumabc/base_wizard.py#L482-L497
+#   Cashtab derives one address, at m/44h/1899h/0h/0/0, a coin type the
+#   bundle does not declare, btclib-org/seed-scan#40,
+#   https://github.com/Bitcoin-ABC/bitcoin-abc/blob/988b903deb04311b12ba067734dab3ff9f5411a7/cashtab/src/config/app.ts#L49
+#   https://github.com/Bitcoin-ABC/bitcoin-abc/blob/988b903deb04311b12ba067734dab3ff9f5411a7/cashtab/src/wallet/index.ts#L269-L270
 # - Dogecoin 44: Trezor Suite, Ledger Live and wallet-core,
 #   https://github.com/trezor/trezor-suite/blob/c861929418c13919b335061d65a169de5aa869f3/networks/bitcoin/network-bitcoin-suite-common/src/networkConfig.ts#L178-L197
 #   https://github.com/trustwallet/wallet-core/blob/7a21615fad32edd8dc0b040d845de3973cde2c5a/registry.json#L95-L105
@@ -107,10 +122,11 @@ class Coin:
 #   https://github.com/trustwallet/wallet-core/blob/7a21615fad32edd8dc0b040d845de3973cde2c5a/registry.json#L481-L491
 # Trezor's firmware takes 49 and 84 where a coin's definition sets
 # "segwit", 86 where it sets "taproot"; Litecoin's sets segwit alone,
-# Bitcoin Cash's and Dogecoin's neither:
+# Bitcoin Cash's, eCash's and Dogecoin's neither:
 #   https://github.com/trezor/trezor-firmware/blob/433075c0a0e643d3a07364226fed40a7bbc717a8/core/src/apps/bitcoin/keychain.py#L130-L153
 #   https://github.com/trezor/trezor-firmware/blob/433075c0a0e643d3a07364226fed40a7bbc717a8/common/defs/bitcoin/litecoin.json#L25-L26
 #   https://github.com/trezor/trezor-firmware/blob/433075c0a0e643d3a07364226fed40a7bbc717a8/common/defs/bitcoin/bcash.json#L25-L26
+#   https://github.com/trezor/trezor-firmware/blob/433075c0a0e643d3a07364226fed40a7bbc717a8/common/defs/bitcoin/ecash.json#L25-L26
 #   https://github.com/trezor/trezor-firmware/blob/433075c0a0e643d3a07364226fed40a7bbc717a8/common/defs/bitcoin/dogecoin.json#L25-L26
 
 #: The coins and purposes a bundle declares, the order they are written
@@ -122,6 +138,7 @@ COINS = (
     Coin("ethereum", 60, (44,)),
     Coin("bitcoin-cash", 145, (44,)),
     Coin("bitcoin-sv", 236, (44,)),
+    Coin("ecash", 899, (44,)),
     Coin("litecoin", 2, (44, 49, 84)),
     Coin("dogecoin", 3, (44,)),
 )
@@ -140,7 +157,7 @@ _BASE58 = ("p2pkh", "p2sh")
 
 # the coins forked from Bitcoin whose accounts a base58 address is
 # searched in
-_FORKS = ("bitcoin-cash", "bitcoin-sv")
+_FORKS = ("bitcoin-cash", "bitcoin-sv", "ecash")
 
 # what each scheme the words may claim and no reading covers is
 # reported as
@@ -446,9 +463,9 @@ def identify(
 
     `accounts` is how many accounts of each coin and purpose are written,
     from account 0. Where `address` is given, the receive and change
-    branches of each Bitcoin account written, and of each Bitcoin Cash and
-    Bitcoin SV one where it is a base58 address, are searched for it,
-    from index 0 to `indexes` - 1.
+    branches of each Bitcoin account written, and of each Bitcoin Cash,
+    Bitcoin SV and eCash one where it is a base58 address, are searched
+    for it, from index 0 to `indexes` - 1.
 
     A refusal names no secret: the words and the passphrases are never
     quoted.

@@ -42,18 +42,17 @@ The object's members:
   a key typed by mistake is not written; ``checked``, false where the
   search did not run, and then ``reason`` says why; ``accounts`` and
   ``indexes``, the bound (accounts ``0`` to ``accounts - 1`` of each
-  Bitcoin purpose, of Bitcoin Cash's and Bitcoin SV's for a base58
-  address, and the one account of an Electrum reading, receive and
-  change branches, indexes
-  ``0`` to ``indexes - 1``); ``searched``, how many positions were
-  compared; and ``matches``, each the position of a reading in
-  ``readings``, the ``coin`` of the account the address is in, and the
-  full derivation path of the address.
+  Bitcoin purpose, of Bitcoin Cash's, Bitcoin SV's and eCash's for a
+  base58 address, and the one account of an Electrum reading, receive
+  and change branches, indexes ``0`` to ``indexes - 1``); ``searched``,
+  how many positions were compared; and ``matches``, each the position
+  of a reading in ``readings``, the ``coin`` of the account the address
+  is in, and the full derivation path of the address.
 
 An account object holds:
 
 - ``coin``: ``"bitcoin"``, ``"ethereum"``, ``"bitcoin-cash"``,
-  ``"bitcoin-sv"``, ``"litecoin"`` or ``"dogecoin"``;
+  ``"bitcoin-sv"``, ``"ecash"``, ``"litecoin"`` or ``"dogecoin"``;
 - ``coin_type``: its SLIP-0044 number, from ``0``;
 - ``purpose``: the BIP43 purpose, or ``null`` for Electrum's layouts,
   which have none;
@@ -126,6 +125,7 @@ COIN_NAMES = (
     "ethereum",
     "bitcoin-cash",
     "bitcoin-sv",
+    "ecash",
     "litecoin",
     "dogecoin",
 )
