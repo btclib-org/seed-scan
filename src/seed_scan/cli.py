@@ -25,21 +25,27 @@ as ``host:port``, the Ethereum node the user names by its URL, or both,
 and writes the scan result to standard output and a summary to standard
 error. It reads no secret. README.md's *Scanning a bundle* says why
 there is no default server or node. The Electrum connection is TLS,
-through `btclib_wallet.fetch.transport.TlsLineTransport`; plain TCP
-waits on btclib-org/btclib-wallet#861. The server's certificate is
-verified: it must chain to a certificate the context trusts and name the
-host as given, with TLS 1.2 at least. The context trusts the system's CA
-certificates, or, where ``--cafile`` names a file, the certificates of
-that file alone, which is how a server of one's own with a self-signed
-certificate is reached. The server is asked first for its genesis block,
-then for its block at a height Bitcoin Core pins, and one answering
-another block than Bitcoin's at either is refused. A read of a history
-during which the server's tip moved is read again, a bounded number of
-times. The node is a `seed_scan.evm.Node`, whose docstring says which
-URLs it takes and how its certificate is verified, over one connection
-kept for the whole scan: ``--cafile`` is the Electrum server's alone. A
-failure of the server, the node or the connection is one line of fixed
-text, which names neither the answer nor the addresses asked.
+through `btclib_wallet.fetch.transport.PersistentTlsLineTransport`, kept
+across requests and replaced as README.md's *Scanning a bundle* says.
+The server's certificate is verified: it must chain to a certificate the
+context trusts and name the host as given, with TLS 1.2 at least. The
+context trusts the system's CA certificates, or, where ``--cafile``
+names a file, the certificates of that file alone, which is how a server
+of one's own with a self-signed certificate is reached. With ``--tcp``
+the connection is plain TCP instead, one connection per request, through
+`btclib_wallet.fetch.transport.TcpLineTransport`, and only to a loopback
+address, as `_loopback` says. The server is asked first for its genesis
+block, then for its block at a height Bitcoin Core pins, and one
+answering another block than Bitcoin's at either is refused. A read of a
+history during which the server's tip moved is read again, a bounded
+number of times. The node is a `seed_scan.evm.Node`, whose docstring
+says which URLs it takes and how its certificate is verified:
+``--cafile`` is the Electrum server's alone. Its connection is kept
+across requests, and `SessionTransport` replaces it where data waits on
+it before a request is sent, as when the node closed it, or a request on
+it failed. A failure of the server, the node or the connection is one
+line of fixed text, which names neither the answer nor the addresses
+asked.
 
 ``seed-scan forks`` reads a bundle from the file named, runs
 `seed_scan.forks.forks` on it against the Electrum server the user names
@@ -68,6 +74,8 @@ from __future__ import annotations
 import argparse
 import contextlib
 import getpass
+import ipaddress
+import socket
 import ssl
 import sys
 import warnings
@@ -78,9 +86,11 @@ from btclib.exceptions import BTClibValueError
 from btclib_wallet.exceptions import FetchError, HttpError, RpcError
 from btclib_wallet.fetch.electrum import ElectrumFetcher
 from btclib_wallet.fetch.transport import (
+    DEFAULT_TIMEOUT,
     LineTransport,
+    PersistentTlsLineTransport,
     SessionTransport,
-    TlsLineTransport,
+    TcpLineTransport,
 )
 
 from seed_scan.bundle import dumps
@@ -156,6 +166,9 @@ _CAUSES: tuple[tuple[type[BaseException], str], ...] = (
 _BITCOIN_CHECKPOINTS = (
     (965000, "00000000000000000001595977e6000ce56129f5c9b4073e31ccc30b90b97da9"),
 )
+
+# the addresses plain TCP is accepted to
+_LOOPBACK = (ipaddress.ip_network("127.0.0.0/8"), ipaddress.ip_network("::1/128"))
 
 
 def _refuse_network(event: str, args: tuple[object, ...]) -> None:
@@ -320,9 +333,70 @@ def _tls_context(cafile: str | None) -> ssl.SSLContext:
     return context
 
 
-def _connect(host: str, port: int, context: ssl.SSLContext) -> LineTransport:
-    """Return the TLS transport to a server."""
-    return TlsLineTransport(host, port, context=context)
+def _connect(host: str, port: int, context: ssl.SSLContext | None) -> LineTransport:
+    """Return the transport to a server, over TLS or plain TCP.
+
+    Plain TCP where `context` is None, with a connection per request. The
+    TLS transport keeps its connection across requests, and replaces it as
+    README.md's *Scanning a bundle* says; the command closes it.
+    """
+    if context is None:
+        return TcpLineTransport(host, port)
+    return PersistentTlsLineTransport(host, port, context=context)
+
+
+def _loopback(host: str, port: int) -> list[str]:
+    """Return the addresses a host resolves to, refusing any off loopback.
+
+    The host is resolved here, once, and the connection goes to one of
+    these addresses, never to the name: resolved again at each connection,
+    a name could answer a loopback address here and another one there. An
+    address is loopback in ``127.0.0.0/8`` or as ``::1``; an IPv4 address
+    written in IPv6, as ``::ffff:127.0.0.1``, is refused.
+    """
+    found = None
+    # a name the codec refuses raises a `UnicodeError`, and one that does
+    # not resolve an `OSError`: the refusal is raised outside `suppress`,
+    # so that it chains neither, each quoting the name
+    with contextlib.suppress(OSError, UnicodeError):
+        found = socket.getaddrinfo(host, port, type=socket.SOCK_STREAM)
+    if not found:
+        raise SeedScanValueError(
+            "--tcp: the host --server names resolves to no address"
+        )
+    addresses = [(family, str(sockaddr[0])) for family, _, _, _, sockaddr in found]
+    if not all(_is_loopback(family, address) for family, address in addresses):
+        raise SeedScanValueError(
+            "--tcp is plain TCP, accepted to a loopback address alone,"
+            " 127.0.0.0/8 or ::1: the host --server names resolves to another"
+        )
+    return list(dict.fromkeys(address for _, address in addresses))
+
+
+def _is_loopback(family: int, address: str) -> bool:
+    """Answer whether resolution gave an IP address in `_LOOPBACK`."""
+    if family not in {socket.AF_INET, socket.AF_INET6}:
+        return False
+    return any(ipaddress.ip_address(address) in network for network in _LOOPBACK)
+
+
+def _accepting(addresses: Sequence[str], port: int) -> str:
+    """Return the first of `addresses` that accepts a connection to `port`.
+
+    In resolution's order, as `socket.create_connection` tries a name's:
+    ``localhost`` is ``::1`` first on some systems, and a server may listen
+    on ``127.0.0.1`` alone. A connection made here is closed before
+    anything is sent. The last address is not tried, but returned where
+    none before it accepts: a connection to it that fails then fails in
+    the transport, as any other does.
+    """
+    for address in addresses[:-1]:
+        with (
+            contextlib.suppress(OSError),
+            socket.create_connection((address, port), timeout=DEFAULT_TIMEOUT),
+        ):
+            return address
+    return addresses[-1]
 
 
 class _Mainnet:
@@ -414,18 +488,30 @@ def _read_text(name: str, what: str = "bundle") -> str:
 
 def _electrum(
     args: argparse.Namespace,
-    connect: Callable[[str, int, ssl.SSLContext], LineTransport],
+    connect: Callable[[str, int, ssl.SSLContext | None], LineTransport],
+    stack: contextlib.ExitStack,
     chain: Chain | None = None,
 ) -> _Mainnet:
-    """Return the reader of the Electrum server --server names, on `chain`."""
+    """Return the reader of the Electrum server --server names, on `chain`.
+
+    A transport that is a context manager is closed with `stack`.
+    """
     host, port = parse_server(args.server, "--server")
-    context = _tls_context(args.cafile)
+    context = None
+    if not args.tcp:
+        context = _tls_context(args.cafile)
+    elif args.cafile is not None:
+        raise SeedScanValueError("--cafile is for TLS, and --tcp is plain TCP")
+    else:
+        host = _accepting(_loopback(host, port), port)
     transport = None
     # the transport quotes a host it refuses, and the refusal says none
     with contextlib.suppress(BTClibValueError):
         transport = connect(host, port, context)
     if transport is None:
         raise SeedScanValueError("--server names no host a connection can use")
+    if isinstance(transport, contextlib.AbstractContextManager):
+        stack.enter_context(transport)
     return _Mainnet(ElectrumFetcher(transport=transport, verify_network=False), chain)
 
 
@@ -458,7 +544,7 @@ def _online(
 
 def _scan_command(
     args: argparse.Namespace,
-    connect: Callable[[str, int, ssl.SSLContext], LineTransport],
+    connect: Callable[[str, int, ssl.SSLContext | None], LineTransport],
 ) -> int:
     """Run ``seed-scan scan``; answer its exit status.
 
@@ -471,11 +557,13 @@ def _scan_command(
         if args.server is None and args.node is None:
             err_msg = "name an Electrum --server, an Ethereum --node or both"
             raise SeedScanValueError(err_msg)
-        if args.cafile is not None and args.server is None:
-            raise SeedScanValueError("--cafile is for --server, and none is named")
+        if args.server is None and (args.cafile is not None or args.tcp):
+            option = "--tcp" if args.tcp else "--cafile"
+            raise SeedScanValueError(f"{option} is for --server, and none is named")
         text = _read_text(args.bundle)
-        reader = None if args.server is None else _electrum(args, connect)
-        with SessionTransport() as session:
+        with contextlib.ExitStack() as stack:
+            reader = None if args.server is None else _electrum(args, connect, stack)
+            session = stack.enter_context(SessionTransport())
             if args.node is not None:
                 nodes.append(Node(args.node, transport=session))
             result = scan(
@@ -526,20 +614,21 @@ def _forks_summary(result: ForksResult) -> str:
 
 def _forks_command(
     args: argparse.Namespace,
-    connect: Callable[[str, int, ssl.SSLContext], LineTransport],
+    connect: Callable[[str, int, ssl.SSLContext | None], LineTransport],
 ) -> int:
     """Run ``seed-scan forks``; answer its exit status."""
 
     def run() -> tuple[str, str]:
         text = _read_text(args.bundle)
-        result = forks(
-            text,
-            _electrum(args, connect, CHAINS[args.chain]),
-            chain=args.chain,
-            server=args.server,
-            gap_limit=args.gap_limit,
-            account_gap=args.account_gap,
-        )
+        with contextlib.ExitStack() as stack:
+            result = forks(
+                text,
+                _electrum(args, connect, stack, CHAINS[args.chain]),
+                chain=args.chain,
+                server=args.server,
+                gap_limit=args.gap_limit,
+                account_gap=args.account_gap,
+            )
         return forks_dumps(result), _forks_summary(result)
 
     return _online("forks", run, lambda: "server")
@@ -672,12 +761,9 @@ def _parser() -> argparse.ArgumentParser:
     scan_parser.add_argument("bundle", help="the bundle file identify wrote")
     scan_parser.add_argument(
         "--server",
-        help="the Electrum server to ask, as host:port, over TLS",
+        help="the Electrum server to ask, as host:port, over TLS unless --tcp",
     )
-    scan_parser.add_argument(
-        "--cafile",
-        help="trust the certificates of this file alone for the server",
-    )
+    _add_transport(scan_parser)
     scan_parser.add_argument(
         "--node",
         help=(
@@ -706,12 +792,9 @@ def _parser() -> argparse.ArgumentParser:
     forks_parser.add_argument(
         "--server",
         required=True,
-        help="the chain's Electrum server to ask, as host:port, over TLS",
+        help="the chain's Electrum server to ask, as host:port, over TLS unless --tcp",
     )
-    forks_parser.add_argument(
-        "--cafile",
-        help="trust the certificates of this file alone for the server",
-    )
+    _add_transport(forks_parser)
     _add_bounds(forks_parser)
     report_parser = commands.add_parser(
         "report",
@@ -730,6 +813,22 @@ def _parser() -> argparse.ArgumentParser:
         help="the result scan wrote for that bundle; without it, nothing is checked",
     )
     return parser
+
+
+def _add_transport(parser: argparse.ArgumentParser) -> None:
+    """Add the options of how a command reaches its Electrum server."""
+    parser.add_argument(
+        "--cafile",
+        help="trust the certificates of this file alone for the server",
+    )
+    parser.add_argument(
+        "--tcp",
+        action="store_true",
+        help=(
+            "ask the server over plain TCP, unencrypted, where its host resolves"
+            " to loopback addresses alone: 127.0.0.0/8 or ::1"
+        ),
+    )
 
 
 def _add_bounds(parser: argparse.ArgumentParser) -> None:
@@ -753,13 +852,14 @@ def main(
     *,
     prompt: Callable[[str], str] = _hidden,
     forbid_network: Callable[[], None] = _forbid_network,
-    connect: Callable[[str, int, ssl.SSLContext], LineTransport] = _connect,
+    connect: Callable[[str, int, ssl.SSLContext | None], LineTransport] = _connect,
 ) -> int:
     """Run the command; answer its exit status.
 
     `prompt`, `forbid_network` and `connect` are what a test replaces:
     the hidden prompt, the refusal of every socket and new process that
-    ``identify`` and ``report`` install, and the transport to a server.
+    ``identify`` and ``report`` install, and the transport to a server,
+    which `_connect` says.
     """
     args = _parser().parse_args(argv)
     if args.command == "scan":

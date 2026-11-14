@@ -57,13 +57,29 @@ standard output and what it found to standard error. Name either or
 both. Each learns every address it is asked about, so name your own:
 there is no default.
 
-The Electrum connection is TLS, and the server's certificate is verified
-against the system's CA certificates, or against those of the file
-`--cafile` names, which is how a server with a self-signed certificate
-is reached. Before any address is asked, the server's genesis block and
-its block at a height Bitcoin Core pins are compared with Bitcoin's.
-SECURITY.md's *Limitations, not vulnerabilities* says which servers that
-refuses, and what it does not prove.
+The Electrum connection is TLS, and the server's certificate is
+verified against the system's CA certificates, or against those of the
+file `--cafile` names, which is how a server with a self-signed
+certificate is reached.
+
+The connection is kept from one request to the next. A new one, with a
+new handshake, replaces it after a request on it fails, where data
+waits on it before a request is sent, as when the server closed it or
+pushed a notification, for a request whose id it already carried, and
+once it has carried as many request ids as btclib-wallet's
+`PersistentTlsLineTransport` allows. The command closes the one open
+when it ends.
+
+`--tcp` asks a server on your own machine over plain TCP instead. Its
+host must resolve to loopback addresses alone, `127.0.0.0/8` or `::1`,
+and any other is refused. The connection is not encrypted or
+authenticated: SECURITY.md's *Limitations, not vulnerabilities* says
+what that exposes.
+
+Before any address is asked, the server's genesis block and its block
+at a height Bitcoin Core pins are compared with Bitcoin's. SECURITY.md's
+*Limitations, not vulnerabilities* says which servers that refuses, and
+what it does not prove.
 
 The node is an execution client's JSON-RPC, at an `https` URL, or an
 `http` one on a loopback address such as `http://127.0.0.1:8545`.
@@ -92,12 +108,13 @@ the forks result to standard output and what it found to standard
 error. Bitcoin Cash is the chain it reads. How it reads an output that
 also carries CashTokens is in `seed_scan.forks`.
 
-The server is the user's own, and its certificate is verified as
-*Scanning a bundle* says. Before any address is asked, its blocks at the
-chain's checkpoints are compared with the chain's, so that a server of a
-chain whose blocks differ there, as one of Bitcoin's, is refused. That
-shows which chain the server says it serves, not that the histories it
-answers are that chain's: the server is trusted for what it answers, as
+The server is the user's own, reached as *Scanning a bundle* says, over
+TLS or, with `--tcp`, over loopback. Before any address is asked, its
+blocks at the chain's checkpoints are compared with the chain's, so that
+a server of a chain whose blocks differ there, as one of Bitcoin's, is
+refused. That shows which chain the server says it serves, not that the
+histories it answers are that chain's: the server is trusted for what it
+answers, as
 SECURITY.md's *Limitations, not vulnerabilities* says, and proving each
 history against the chain is
 [btclib-org/seed-scan#34](https://github.com/btclib-org/seed-scan/issues/34).

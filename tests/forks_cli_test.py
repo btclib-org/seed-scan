@@ -17,7 +17,7 @@ from __future__ import annotations
 import json
 import subprocess
 import sys
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Self
 
 import pytest
 from btclib.block.block_header import BlockHeader
@@ -29,7 +29,15 @@ from seed_scan.forks import BITCOIN_CASH
 from seed_scan.identify import identify
 
 from .identify_test import ABANDON, SEGWIT, STANDARD, legacy_address, no_share
-from .scan_cli_test import GENESIS, Connections, Electrum, Failing, caused, pay
+from .scan_cli_test import (
+    GENESIS,
+    OFF_LOOPBACK,
+    Connections,
+    Electrum,
+    Failing,
+    caused,
+    pay,
+)
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -240,6 +248,71 @@ def test_a_failure_is_one_line_of_fixed_text(
     )
     assert (status, out) == (1, "")
     assert err == f"seed-scan forks: {said}\n"
+
+
+class Closing(Forked):
+    """A `Forked` that is a context manager, as the TLS transport is."""
+
+    closed = False
+
+    def __enter__(self) -> Self:
+        """Return this server.
+
+        :returns: the server.
+        """
+        return self
+
+    def __exit__(self, *_: object) -> None:
+        """Record that the command closed it."""
+        self.closed = True
+
+
+def test_the_transport_is_closed_once_forks_is_done(
+    capsys: pytest.CaptureFixture[str], bundle: str
+) -> None:
+    """The command closes a transport that is a context manager."""
+    server = Closing()
+    assert run(capsys, [bundle, "--server", "h:1"], Connections(server))[0] == 0
+    assert server.closed
+
+
+def test_tcp_reaches_a_loopback_address(
+    capsys: pytest.CaptureFixture[str], bundle: str
+) -> None:
+    """``--tcp`` is the command's too: plain TCP, with no TLS context."""
+    connect = Connections(Forked())
+    argv = [bundle, "--server", "127.0.0.1:50001", "--tcp"]
+    assert run(capsys, argv, connect)[0] == 0
+    assert connect.made == [("127.0.0.1", 50001, None)]
+
+
+@pytest.mark.parametrize(
+    "options, said",
+    [
+        (
+            ["--server", "192.0.2.1:50001", "--tcp"],
+            OFF_LOOPBACK,
+        ),
+        (
+            ["--server", "127.0.0.1:50001", "--tcp", "--cafile", "ca.pem"],
+            "--cafile is for TLS, and --tcp is plain TCP",
+        ),
+    ],
+)
+def test_tcp_is_refused_as_scan_refuses_it(
+    capsys: pytest.CaptureFixture[str], bundle: str, options: list[str], said: str
+) -> None:
+    """Off loopback, and beside a CA file: refused before any connection.
+
+    :param capsys: pytest's capture of the standard streams.
+    :param bundle: the bundle's file.
+    :param options: the options after the bundle.
+    :param said: the line written.
+    """
+    connect = Connections(Forked())
+    status, out, err = run(capsys, [bundle, *options], connect)
+    assert (status, out, err) == (1, "", f"seed-scan forks: {said}\n")
+    assert not connect.made
 
 
 def test_a_file_that_is_no_bundle_is_refused_before_any_connection(
