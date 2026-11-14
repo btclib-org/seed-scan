@@ -75,15 +75,15 @@ asked, so an address that only ever received tokens reads as unused.
 `--evm-chain` names the chain the node serves, Ethereum where it is not
 given; `seed-scan scan --help` lists the chains. A key gives the same
 address on each, so Ethereum's accounts are read on every chain: those
-at `m/44h/60h/<n>h`, and the legacy addresses Ledger Live and
-MyEtherWallet derive at `m/44h/60h/0h/<n>`. On Ethereum Classic its own
-are read too: those at `m/44h/61h/<n>h`, where its wallets derive, and
-the legacy ones at `m/44h/60h/160720h/0h/<n>`. On BNB Smart Chain, BNB's
-are read too: those at `m/44h/714h/<n>h`, where Trust Wallet's "Smart
-Chain Legacy" derives. Before any address is asked, the node's chain id
-is compared with the chain's. SECURITY.md's *Limitations, not
-vulnerabilities* says which nodes that refuses, and what it does not
-prove.
+at `m/44h/60h/<n>h`, the legacy addresses Ledger Live and MyEtherWallet
+derive at `m/44h/60h/0h/<n>`, and those MyEtherWallet derives from a
+mnemonic at `m/44h/60h/<n>`. On Ethereum Classic its own are read too:
+those at `m/44h/61h/<n>h`, where its wallets derive, and the legacy ones
+at `m/44h/60h/160720h/0h/<n>`. On BNB Smart Chain, BNB's are read too:
+those at `m/44h/714h/<n>h`, where Trust Wallet's "Smart Chain Legacy"
+derives. Before any address is asked, the node's chain id is compared
+with the chain's. SECURITY.md's *Limitations, not vulnerabilities* says
+which nodes that refuses, and what it does not prove.
 
 A coin with no server or node named, every coin but Bitcoin and those
 an EVM chain reads, and the accounts of a coin one chain alone reads on

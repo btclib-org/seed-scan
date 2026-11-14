@@ -58,7 +58,8 @@ An account object holds:
   none: Electrum's, and the legacy layouts of an EVM coin, whose
   addresses are the key's own children, as `seed_scan.identify`'s
   ``COINS`` says;
-- ``account``: the account number, from ``0``;
+- ``account``: the account number, from ``0``; a coin's legacy layouts
+  are numbered apart, from ``0`` too;
 - ``path``: the derivation path of the key, hardened levels written
   with ``h``;
 - ``xpub``: the extended public key at ``path``, in BIP32's mainnet

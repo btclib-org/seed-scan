@@ -156,7 +156,8 @@ def test_bip39_account_keys_are_bip84s_and_bip86s() -> None:
 def test_the_coins_declared_are_written_in_order() -> None:
     """Each coin, purpose and account of `COINS`, Bitcoin's with descriptors.
 
-    Each coin's legacy layouts follow its purposes, one account each.
+    Each coin's legacy layouts follow its purposes, one account each,
+    numbered from 0.
     """
     bundle = identify(ABANDON, [""], no_share, accounts=2)
     (reading,) = bundle.readings
@@ -169,7 +170,7 @@ def test_the_coins_declared_are_written_in_order() -> None:
                 for p in coin.purposes
                 for n in range(2)
             ),
-            *((None, 0, path) for path in coin.legacy),
+            *((None, n, path) for n, path in enumerate(coin.legacy)),
         ]
     ]
     assert [
@@ -186,6 +187,7 @@ def test_the_coins_declared_are_written_in_order() -> None:
     legacy = [a for a in reading.accounts if a.purpose is None]
     assert [(a.coin, a.xpub) for a in legacy] == [
         ("ethereum", ethereum.xpub),
+        ("ethereum", master.derive("m/44h/60h").xpub.b58encode()),
         ("ethereum-classic", master.derive("m/44h/60h/160720h/0h").xpub.b58encode()),
     ]
 
@@ -214,7 +216,7 @@ def test_each_legacy_layout_is_one_its_wallets_derive_at() -> None:
     pin moves with that comment.
     """
     assert {coin.name: coin.legacy for coin in COINS if coin.legacy} == {
-        "ethereum": ("m/44h/60h/0h",),
+        "ethereum": ("m/44h/60h/0h", "m/44h/60h"),
         "ethereum-classic": ("m/44h/60h/160720h/0h",),
     }
 

@@ -910,12 +910,13 @@ def test_the_node_alone_is_scanned(
 ) -> None:
     """The result's ``evm``, and a summary naming the node and the bound.
 
-    The legacy layout's account, below the key of account 0, is named
-    apart from it.
+    The first legacy layout's account, below the key of account 0, is
+    named apart from it, and so is MyEtherWallet's, below m/44h/60h.
     """
     address = eth_address(bundle_text, "m/44h/60h/0h", 0)
     legacy = eth_address(bundle_text, "m/44h/60h/0h", 1, legacy=True)
-    with serve(serving(Ethereum({address: 5, legacy: 2}))) as node:
+    mew = eth_address(bundle_text, "m/44h/60h", 2, legacy=True)
+    with serve(serving(Ethereum({address: 5, legacy: 2, mew: 3}))) as node:
         argv = [bundle, "--node", node.url()]
         status, out, err = run(capsys, argv, Connections(Electrum()))
     assert status == 0
@@ -932,6 +933,7 @@ def test_the_node_alone_is_scanned(
     assert [u["addresses"] for u in evm["used"]] == [
         [{"index": 0, "address": address, "balance": "5", "nonce": 0}],
         [{"index": 1, "address": legacy, "balance": "2", "nonce": 0}],
+        [{"index": 2, "address": mew, "balance": "3", "nonce": 0}],
     ]
     elsewhere = "scan reads Bitcoin and the EVM chains' coins alone in this version"
     assert err.splitlines() == [
@@ -942,9 +944,10 @@ def test_the_node_alone_is_scanned(
             "reading 0, ethereum purpose 44: accounts read: 1, cut short:"
             " the bundle's accounts end before the account gap"
         ),
-        "reading 0, ethereum legacy: accounts read: 1",
+        "reading 0, ethereum legacy: accounts read: 2",
         "used: reading 0, m/44h/60h/0h: 1 addresses, 5 wei of ETH",
         "used: reading 0, m/44h/60h/0h, legacy: 1 addresses, 2 wei of ETH",
+        "used: reading 0, m/44h/60h, legacy: 1 addresses, 3 wei of ETH",
         "not checked: reading 0, bitcoin: no Electrum server was named",
         f"not checked: reading 0, ethereum-classic: {OTHER_CHAIN['ethereum-classic']}",
         f"not checked: reading 0, bnb: {OTHER_CHAIN['bnb']}",

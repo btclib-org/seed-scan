@@ -35,13 +35,13 @@ read the same way as Bitcoin's, purpose by purpose and with the same two
 bounds, on the receive branch alone: the addresses of an account are
 those of the keys ``0/0``, ``0/1`` and on below its ``xpub``, as
 `coin_addresses.evm` writes them. A legacy layout, of purpose ``null``,
-is one account, read alone as an Electrum reading's is, and on no
-branch: its addresses are those of the keys ``0``, ``1`` and on below
-its ``xpub``. An address is used where the node answers a balance or a
-nonce other than zero, each at the block tag ``latest``. That is the
-chain's native asset alone: an address that only ever received tokens
-has neither, and reads as unused, as no token balance is asked in this
-version.
+is one account, read on no branch: its addresses are those of the keys
+``0``, ``1`` and on below its ``xpub``. A coin's legacy layouts are
+each read, whatever ``account_gap``, and are never cut short. An
+address is used where the node answers a balance or a nonce other than
+zero, each at the block tag ``latest``. That is the chain's native
+asset alone: an address that only ever received tokens has neither, and
+reads as unused, as no token balance is asked in this version.
 
 The balance of an account is read off the history discovery returns: an
 output paying one of its used scripts counts until a transaction of that
@@ -396,15 +396,17 @@ def _key(account: Account, where: str) -> BIP32KeyData:
 _Purposes = dict[int | None, list[tuple[Account, _T]]]
 
 
-def _numbered(position: int, purposes: _Purposes[_T]) -> None:
+def _numbered(position: int, purposes: _Purposes[_T], *, electrum: bool = True) -> None:
     """Refuse a purpose whose accounts are not numbered from 0 with no gap.
 
-    That is how `identify` writes them, and a layout of purpose ``None``,
-    Electrum's or an EVM coin's legacy one, has one.
+    That is how `identify` writes them, an EVM coin's legacy layouts, of
+    purpose ``None``, included. Where `electrum`, the accounts of purpose
+    ``None`` are an Electrum reading's, which has one.
     """
     for purpose, accounts in purposes.items():
         numbers = [account.account for account, _ in accounts]
-        if numbers != list(range(len(numbers))) or (purpose is None and numbers != [0]):
+        one = electrum and purpose is None
+        if numbers != list(range(1 if one else len(numbers))):
             err_msg = f"bundle: reading {position}: accounts not numbered from 0"
             raise SeedScanValueError(err_msg)
 
@@ -434,7 +436,7 @@ def _plan(position: int, reading: Reading) -> _Plan:
             others.append(account.coin)
     _numbered(position, bitcoin)
     for purposes in evm.values():
-        _numbered(position, purposes)
+        _numbered(position, purposes, electrum=False)
     return bitcoin, evm, others
 
 
@@ -671,11 +673,13 @@ def _discover(
     `discover_accounts` reads Bitcoin's accounts the same way, and
     refuses a purpose whose accounts end before the gap, dropping what it
     found (btclib-org/btclib-wallet#859): here that purpose is cut short.
+    The accounts of purpose None are each a layout of its own, so each
+    is read, and none is cut short.
     """
     used: list[_U] = []
     unused = done = 0
     for account, what in accounts:
-        if unused == account_gap:
+        if purpose is not None and unused == account_gap:
             break
         found = read(account, what)
         done += 1
@@ -1130,11 +1134,11 @@ def _agrees(done: Searched, used: set[int], held: int, account_gap: int) -> bool
 
     `scan` reads a purpose's accounts from 0 and stops once `account_gap`
     of them in a row are unused, or once the bundle's `held` accounts run
-    out: then, and only then, the purpose is cut short. The one account
-    of a layout of purpose None is read alone and never cut short.
+    out: then, and only then, the purpose is cut short. The accounts of
+    purpose None are each read, whatever the gap, and never cut short.
     """
     if done.purpose is None:
-        return not done.cut_short
+        return not done.cut_short and done.accounts == held
     unused = 0
     for number in range(done.accounts):
         if unused == account_gap:

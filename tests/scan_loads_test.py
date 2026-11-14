@@ -154,26 +154,41 @@ def test_a_bnb_smart_chain_result_reads_back(bundle: str) -> None:
 def test_a_legacy_layout_result_reads_back(bundle: str) -> None:
     """Each coin's legacy account, its addresses below its key itself.
 
-    Ethereum's shares the key of its account 0, whose receive branch
-    gives other addresses: one of them listed for the legacy account is
-    refused.
+    Ethereum's first shares the key of its account 0, whose receive
+    branch gives other addresses: one of them listed for the legacy
+    account is refused. Ethereum's two are each read, so a search that
+    reads one alone is refused too.
     """
     ethereum = eth_address(bundle, "m/44h/60h/0h", 3, legacy=True)
+    mew = eth_address(bundle, "m/44h/60h", 4, legacy=True)
     classic = eth_address(bundle, "m/44h/60h/160720h/0h", 0, legacy=True)
-    fake = Ethereum({ethereum: 1, classic: 2}, chain_id=61)
+    fake = Ethereum({ethereum: 1, mew: 5, classic: 2}, chain_id=61)
     text = scan_dumps(scan(bundle, None, node=node(fake), evm_chain="ethereum-classic"))
     read = loads(text, bundle)
     assert scan_dumps(read) == text
     assert read.evm is not None
-    assert [(u.coin, u.purpose, u.path) for u in read.evm.used] == [
-        ("ethereum", None, "m/44h/60h/0h"),
-        ("ethereum-classic", None, "m/44h/60h/160720h/0h"),
+    assert [(u.coin, u.purpose, u.account, u.path) for u in read.evm.used] == [
+        ("ethereum", None, 0, "m/44h/60h/0h"),
+        ("ethereum", None, 1, "m/44h/60h"),
+        ("ethereum-classic", None, 0, "m/44h/60h/160720h/0h"),
     ]
     document = json.loads(text)
     document["evm"]["used"][0]["addresses"][0]["address"] = eth_address(
         bundle, "m/44h/60h/0h", 3
     )
     with pytest.raises(SeedScanValueError, match="not the bundle's at its position"):
+        loads(json.dumps(document), bundle)
+    document = json.loads(text)
+    (legacy,) = [
+        s
+        for s in document["evm"]["searched"]
+        if (s["coin"], s["purpose"]) == ("ethereum", None)
+    ]
+    legacy["accounts"] = 1
+    document["evm"]["used"] = [
+        u for u in document["evm"]["used"] if u["path"] != "m/44h/60h"
+    ]
+    with pytest.raises(SeedScanValueError, match=DISAGREE):
         loads(json.dumps(document), bundle)
 
 

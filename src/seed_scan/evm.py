@@ -51,8 +51,8 @@ login is refused, and so is one that is not printable ASCII.
 its ``eth_chainId`` answers and the coins of a bundle whose accounts are
 read on it; the comment above it cites each chain. A key gives the same
 address on each, so the bundle's Ethereum accounts, at m/44h/60h and
-its legacy layout, are read on every one: what such an account held on
-Ethereum when Ethereum Classic parted from it is on that chain too.
+its legacy layouts, are read on every one: what such an account held
+on Ethereum when Ethereum Classic parted from it is on that chain too.
 Ethereum Classic's, at m/44h/61h, its SLIP-0044 coin type, and at its
 legacy layout, are read on Ethereum Classic alone, where its own
 wallets derive them, and BNB's, at m/44h/714h, on BNB Smart Chain

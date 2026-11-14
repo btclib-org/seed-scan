@@ -69,7 +69,8 @@ class Coin:
 
     `legacy` holds the paths of the keys of its legacy layouts, of no
     BIP43 purpose: each key's own children are the addresses, and the
-    bundle writes it as one account of purpose None.
+    bundle writes it as one account of purpose None, numbered from 0 in
+    this order.
     """
 
     name: str
@@ -135,16 +136,21 @@ class Coin:
 #   https://github.com/LedgerHQ/ledger-live/blob/91056c17c325bf042f6449c3ed74412adcb84899/libs/ledger-wallet-framework/src/derivation.ts#L256-L257
 # and MyEtherWallet's, which offers both paths for a Ledger, the first
 # also for a mnemonic typed in, and derives the n-th address of each as
-# the path's child n:
+# the path's child n. For a mnemonic it also offers m/44h/60h, which it
+# labels "Ethereum - Ledger Live", and derives its n-th address the same
+# way, at m/44h/60h/<n>:
 #   https://github.com/MyEtherWallet/MyEtherWallet/blob/3ea79d775b2dc3b530c19753192e1061e50f16e8/src/modules/access-wallet/hardware/handlers/configs/configPaths.js#L94-L105
 #   https://github.com/MyEtherWallet/MyEtherWallet/blob/3ea79d775b2dc3b530c19753192e1061e50f16e8/src/modules/access-wallet/hardware/handlers/bip44/ledgerPaths.js#L14-L18
 #   https://github.com/MyEtherWallet/MyEtherWallet/blob/3ea79d775b2dc3b530c19753192e1061e50f16e8/src/modules/access-wallet/hardware/handlers/hardwares/ledger/index.js#L100-L115
-#   https://github.com/MyEtherWallet/MyEtherWallet/blob/3ea79d775b2dc3b530c19753192e1061e50f16e8/src/modules/access-wallet/hardware/handlers/bip44/mnemonicPaths.js#L36-L43
+#   https://github.com/MyEtherWallet/MyEtherWallet/blob/3ea79d775b2dc3b530c19753192e1061e50f16e8/src/modules/access-wallet/hardware/handlers/bip44/mnemonicPaths.js#L36-L44
 #   https://github.com/MyEtherWallet/MyEtherWallet/blob/3ea79d775b2dc3b530c19753192e1061e50f16e8/src/modules/access-wallet/software/handlers/mnemonic/index.js#L46-L47
-# m/44h/60h/0h is declared under Ethereum alone: an Ethereum account is
-# read on Ethereum Classic too, as `seed_scan.evm` says. Its key is
-# Ethereum's account 0 as well, whose addresses are on its receive
-# branch instead.
+# A Ledger behind MyEtherWallet takes m/44h/60h as the parent of
+# Ethereum's accounts instead, which purpose 44 reads:
+#   https://github.com/MyEtherWallet/MyEtherWallet/blob/3ea79d775b2dc3b530c19753192e1061e50f16e8/src/modules/access-wallet/hardware/handlers/hardwares/ledger/index.js#L53
+# m/44h/60h/0h and m/44h/60h are declared under Ethereum alone: an
+# Ethereum account is read on Ethereum Classic too, as `seed_scan.evm`
+# says. The key at m/44h/60h/0h is Ethereum's account 0 as well, whose
+# addresses are on its receive branch instead.
 
 #: The coins and purposes a bundle declares, the order they are written
 #: in. Bitcoin's are the four `btclib_wallet.bip44` maps to an address
@@ -153,7 +159,7 @@ class Coin:
 #: above citing them.
 COINS = (
     Coin("bitcoin", 0, (44, 49, 84, 86)),
-    Coin("ethereum", 60, (44,), ("m/44h/60h/0h",)),
+    Coin("ethereum", 60, (44,), ("m/44h/60h/0h", "m/44h/60h")),
     Coin("ethereum-classic", 61, (44,), ("m/44h/60h/160720h/0h",)),
     Coin("bnb", 714, (44,)),
     Coin("bitcoin-cash", 145, (44,)),
@@ -242,9 +248,9 @@ def _accounts(
                         descriptors,
                     )
                 )
-        for path in coin.legacy:
+        for number, path in enumerate(coin.legacy):
             xpub = root.derive(path).xpub.b58encode()
-            legacy = Account(coin.name, coin.coin_type, None, 0, path, xpub, ())
+            legacy = Account(coin.name, coin.coin_type, None, number, path, xpub, ())
             found.append((legacy, ()))
     return found
 

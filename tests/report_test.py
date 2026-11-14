@@ -108,8 +108,9 @@ def result(abandon: str) -> str:
 def evm_result(abandon: str) -> str:
     """Return the result of a node alone: ether at one address, a nonce at one.
 
-    The legacy layout's third address, below account 0's key, holds wei
-    too.
+    The first legacy layout's third address, below account 0's key, holds
+    wei too, and so does the second address of MyEtherWallet's, below
+    m/44h/60h.
 
     :param abandon: the bundle.
     :returns: its text.
@@ -117,7 +118,8 @@ def evm_result(abandon: str) -> str:
     first = eth_address(abandon, "m/44h/60h/0h", 0)
     sixth = eth_address(abandon, "m/44h/60h/0h", 5)
     legacy = eth_address(abandon, "m/44h/60h/0h", 2, legacy=True)
-    fake = Ethereum({first: 10**18, legacy: 3}, {sixth: 4})
+    mew = eth_address(abandon, "m/44h/60h", 1, legacy=True)
+    fake = Ethereum({first: 10**18, legacy: 3, mew: 5}, {sixth: 4})
     return scan_module.dumps(scan_module.scan(abandon, None, node=node(fake)))
 
 
@@ -182,12 +184,13 @@ def test_the_report_of_a_scanned_bundle(abandon: str, result: str) -> None:
 def test_the_report_of_an_ethereum_scan(abandon: str, evm_result: str) -> None:
     """The node, the tokens not asked, each used address, the total.
 
-    The legacy account shares account 0's key, and not its addresses: the
-    total counts both.
+    The first legacy account shares account 0's key, and not its
+    addresses: the total counts both, and the second legacy account.
     """
     first = eth_address(abandon, "m/44h/60h/0h", 0)
     sixth = eth_address(abandon, "m/44h/60h/0h", 5)
     legacy = eth_address(abandon, "m/44h/60h/0h", 2, legacy=True)
+    mew = eth_address(abandon, "m/44h/60h", 1, legacy=True)
     lines = report(abandon, evm_result).splitlines()
     assert lines[3:7] == [
         "server: none",
@@ -200,7 +203,7 @@ def test_the_report_of_an_ethereum_scan(abandon: str, evm_result: str) -> None:
     ]
     (opening,) = [n for n, line in enumerate(lines) if line.startswith("reading")]
     classic = OTHER_CHAIN["ethereum-classic"]
-    assert lines[opening + 1 : opening + 16] == [
+    assert lines[opening + 1 : opening + 18] == [
         *(
             f"  bitcoin, purpose {purpose}: not checked: {NO_SERVER}"
             for purpose in (44, 49, 84, 86)
@@ -209,16 +212,18 @@ def test_the_report_of_an_ethereum_scan(abandon: str, evm_result: str) -> None:
         f"    account 0, m/44h/60h/0h: {10**18} wei at latest",
         f"      receive m/44h/60h/0h/0/0 {first}: {10**18} wei, nonce 0",
         f"      receive m/44h/60h/0h/0/5 {sixth}: 0 wei, nonce 4",
-        "  ethereum, legacy account, on Ethereum: accounts 0 to 0 read, 1 used",
+        "  ethereum, legacy account, on Ethereum: accounts 0 to 1 read, 2 used",
         "    account 0, m/44h/60h/0h: 3 wei at latest",
         f"      address m/44h/60h/0h/2 {legacy}: 3 wei, nonce 0",
+        "    account 1, m/44h/60h: 5 wei at latest",
+        f"      address m/44h/60h/1 {mew}: 5 wei, nonce 0",
         f"  ethereum-classic, purpose 44: not checked: {classic}",
         f"  ethereum-classic, legacy account: not checked: {classic}",
         f"  bnb, purpose 44: not checked: {OTHER_CHAIN['bnb']}",
         f"  bitcoin-cash, purpose 44: not checked: {NOT_READ}",
     ]
     assert lines[-2] == (
-        f"total: ethereum, {10**18 + 3} wei of ETH, 2 used accounts, each account"
+        f"total: ethereum, {10**18 + 8} wei of ETH, 3 used accounts, each account"
         " key once"
     )
     assert not [line for line in lines if line.startswith("total: bitcoin")]
@@ -488,8 +493,8 @@ def test_every_line_naming_a_defined_word_has_a_shape(
         f"\n  ethereum-classic, purpose 44: not checked: {classic}\n",
         "\nreading 0, purpose 86: accounts read: 1, cut short: ",
         ", of Bitcoin Cash's for a base58 address, ",
-        "\n  ethereum, legacy account, on Ethereum: accounts 0 to 0 read, 1 used\n",
-        "\nreading 0, ethereum legacy: accounts read: 1\n",
+        "\n  ethereum, legacy account, on Ethereum: accounts 0 to 1 read, 2 used\n",
+        "\nreading 0, ethereum legacy: accounts read: 2\n",
         "\n  ethereum-classic, legacy account, on Ethereum Classic: accounts 0 to ",
         f"\n  bnb, purpose 44: not checked: {OTHER_CHAIN['bnb']}\n",
         "\n  bnb, purpose 44, on BNB Smart Chain: accounts 0 to ",
@@ -531,7 +536,7 @@ def test_the_report_of_an_ethereum_classic_scan(abandon: str) -> None:
     assert read == [
         "  ethereum, purpose 44, on Ethereum Classic: accounts 0 to 3 read, 1 used",
         (
-            "  ethereum, legacy account, on Ethereum Classic: accounts 0 to 0 read,"
+            "  ethereum, legacy account, on Ethereum Classic: accounts 0 to 1 read,"
             " 0 used"
         ),
         (

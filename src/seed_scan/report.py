@@ -40,7 +40,7 @@ every other character is literal.
   of a BIP39 reading. Then, two spaces in, per coin and purpose of its
   accounts, in the bundle's order, ``<coin>, purpose <n>`` or, for
   Electrum's layout, ``<coin>, Electrum account``, or, for an EVM coin's
-  legacy layout, ``<coin>, legacy account``, with ``, on <chain>`` after
+  legacy layouts, ``<coin>, legacy account``, with ``, on <chain>`` after
   a coin the node's chain reads, followed by:
 
   - ``: not checked: <reason>``, where the scan result does not read

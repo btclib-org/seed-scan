@@ -713,7 +713,7 @@ def test_an_ethereum_address_with_a_balance_or_a_nonce_is_used(abandon: str) -> 
     assert (third_account.account, third_account.balance) == (2, "1")
     assert evm.searched == (
         EvmSearched(0, "ethereum", 44, 5, cut_short=True),
-        EvmSearched(0, "ethereum", None, 1, cut_short=False),
+        EvmSearched(0, "ethereum", None, 2, cut_short=False),
     )
     assert fake.asked[:2] == ["eth_chainId", "eth_blockNumber"]
     assert result.server is None
@@ -731,7 +731,7 @@ def test_the_ethereum_bounds_are_the_bitcoin_ones(abandon: str) -> None:
     assert not evm.used
     assert evm.searched == (
         EvmSearched(0, "ethereum", 44, 3, cut_short=False),
-        EvmSearched(0, "ethereum", None, 1, cut_short=False),
+        EvmSearched(0, "ethereum", None, 2, cut_short=False),
     )
     evm = scan(abandon, None, node=node(fake), gap_limit=4, account_gap=4).evm
     assert evm is not None
@@ -739,8 +739,43 @@ def test_the_ethereum_bounds_are_the_bitcoin_ones(abandon: str) -> None:
     nothing = Ethereum()
     scan(abandon, None, node=node(nothing))
     # two requests ahead, then two per address: three accounts of 20,
-    # and the legacy layout's 20
-    assert len(nothing.asked) == 2 + 2 * 20 * (3 + 1)
+    # and each legacy layout's 20
+    assert len(nothing.asked) == 2 + 2 * 20 * (3 + 2)
+
+
+def test_mews_mnemonic_addresses_are_read_below_m_44h_60h(abandon: str) -> None:
+    """MyEtherWallet's n-th address of a mnemonic is m/44h/60h/<n>.
+
+    Derived here from the seed by BIP32 alone: unhardened children of the
+    key at m/44h/60h, read on no branch, which no account of a purpose
+    reaches.
+    """
+    master = BIP32KeyData.from_seed(bip39.seed_from_mnemonic(ABANDON, ""))
+    second = address_from_pub_key(master.derive("m/44h/60h/1").sec)
+    evm = scan(abandon, None, node=node(Ethereum({second: 7}))).evm
+    assert evm is not None
+    (used,) = evm.used
+    assert (used.coin, used.purpose, used.account, used.path) == (
+        "ethereum",
+        None,
+        1,
+        "m/44h/60h",
+    )
+    assert used.addresses == (EvmAddress(1, second, "7", 0),)
+
+
+def test_each_legacy_layout_is_read_whatever_the_account_gap(abandon: str) -> None:
+    """Each is a layout of its own: one unused does not end the next.
+
+    With an account gap of 1, the unused first layout is no reason to
+    leave MyEtherWallet's unread.
+    """
+    mew = eth_address(abandon, "m/44h/60h", 0, legacy=True)
+    fake = Ethereum({mew: 1})
+    evm = scan(abandon, None, node=node(fake), account_gap=1).evm
+    assert evm is not None
+    assert [(u.path, u.account) for u in evm.used] == [("m/44h/60h", 1)]
+    assert evm.searched[-1] == EvmSearched(0, "ethereum", None, 2, cut_short=False)
 
 
 def test_without_a_server_bitcoin_is_not_checked(abandon: str) -> None:
@@ -855,10 +890,23 @@ def test_an_ethereum_xpub_that_does_not_decode_is_refused(abandon: str) -> None:
     assert not fake.asked
 
 
-def test_ethereum_accounts_not_numbered_from_0_are_refused(abandon: str) -> None:
-    """The same rule as Bitcoin's, before the node is asked."""
+@pytest.mark.parametrize(
+    "path, number", [("m/44h/60h/1h", 3), ("m/44h/60h", 0), ("m/44h/60h", 2)]
+)
+def test_ethereum_accounts_not_numbered_from_0_are_refused(
+    abandon: str, path: str, number: int
+) -> None:
+    """The same rule as Bitcoin's, before the node is asked.
+
+    A coin's legacy layouts are numbered from 0 too, apart from its
+    accounts of a purpose.
+
+    :param abandon: the bundle.
+    :param path: the account renumbered.
+    :param number: its number.
+    """
     fake = Ethereum()
-    text = edited(abandon, "m/44h/60h/1h", account=3)
+    text = edited(abandon, path, account=number)
     with pytest.raises(SeedScanValueError, match="accounts not numbered from 0"):
         scan(text, None, node=node(fake))
     assert not fake.asked
