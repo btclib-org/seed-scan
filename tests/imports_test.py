@@ -130,6 +130,7 @@ def test_the_tests_package_imports_no_submodule() -> None:
 # `sys.stdlib_module_names`: the standard library's directory holds
 # modules the list does not name, as the `_sysconfigdata_*` module,
 # named after the platform, that the probe's own `sysconfig` call loads
+# on POSIX
 _INSTALLED = """
 import sys, sysconfig
 from pathlib import Path
