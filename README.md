@@ -69,8 +69,12 @@ The node is an execution client's JSON-RPC, at an `https` URL, or an
 `http` one on a loopback address such as `http://127.0.0.1:8545`.
 `--cafile` is the Electrum server's alone: `seed_scan.evm` says what the
 node's certificate is verified against. An address is used where it
-holds the chain's native asset or has a nonce: token balances are not
-asked, so an address that only ever received tokens reads as unused.
+holds the chain's native asset, has a nonce or holds one of the ERC-20
+tokens `seed_scan.evm` lists for the chain, a few stablecoins and
+wrapped assets. Any other token is not asked: an address with no
+native balance, zero nonce and no listed token balance reads as unused,
+whatever other tokens it holds. The result and the report list the
+tokens checked.
 
 `--evm-chain` names the chain the node serves, Ethereum where it is not
 given; `seed-scan scan --help` lists the chains. A key gives the same

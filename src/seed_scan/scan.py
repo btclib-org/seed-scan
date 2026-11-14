@@ -33,11 +33,17 @@ Classic; an Ethereum Classic account is listed as not checked on any
 other. Each coin's accounts are read the same way as Bitcoin's, purpose
 by purpose and with the same two bounds, on the receive branch alone:
 the addresses of an account are those of the keys ``0/0``, ``0/1`` and
-on below its ``xpub``, as `coin_addresses.evm` writes them. An address
-is used where the node answers a balance or a nonce other than zero,
-each at the block tag ``latest``. That is the chain's native asset
-alone: an address that only ever received tokens has neither, and reads
-as unused, as no token balance is asked in this version.
+on below its ``xpub``, as `coin_addresses.evm` writes them. Each
+address is asked its balance, its nonce and its balance of each ERC-20
+token the chain's `seed_scan.evm.EvmChain` lists, all at one block, the
+latest when its read begins. It is used where any of them is not zero.
+
+A token balance counts as use, so that an address that only received a
+token, and so has a nonce of zero and no balance of the native asset,
+is found, and so is its account: a recovery would rather over-search,
+at one request per token for each address read. An address with no
+native balance, zero nonce and no listed token balance reads as unused,
+whatever other tokens it holds.
 
 The balance of an account is read off the history discovery returns: an
 output paying one of its used scripts counts until a transaction of that
@@ -91,17 +97,25 @@ only. Its members:
   or query; ``chain``, the chain read, a key of
   `seed_scan.evm.EVM_CHAINS`; ``chain_id``, as the node answered it,
   which is that chain's; ``block``, the latest block's number, asked
-  before the first address; ``searched``, as above, with ``coin`` after
-  ``reading``, for the accounts of each coin read; and ``used``, one
-  object per account with a used address: ``coin``, ``reading``,
-  ``purpose``, ``account`` and ``path``, as the bundle has them;
-  ``addresses``, each used address as ``index``, on the receive branch,
-  ``address``, ``balance`` and ``nonce``; and ``balance``, the sum of
-  the addresses' balances.
+  before the first address; ``tokens``, the ERC-20 tokens read, each
+  ``contract``, ``symbol`` and ``decimals`` as the chain's
+  `seed_scan.evm.EvmChain` lists them, any other token being not
+  checked; ``searched``, as above, with ``coin`` after ``reading``, for
+  the accounts of each coin read; and ``used``, one object per account
+  with a used address: ``coin``, ``reading``, ``purpose``, ``account``
+  and ``path``, as the bundle has them; ``addresses``, each used address
+  as ``index``, on the receive branch, ``address``, ``balance``,
+  ``nonce``, ``block``, the block they were read at, and ``tokens``, its
+  token balances; ``balance``, the sum of the addresses' balances; and
+  ``tokens``, the sum of their balances of each token.
 
 A balance in ``evm`` is in wei, 10**-18 of the chain's native asset,
 written as a string of decimal digits: RFC 8259's section 6 holds an
-integer past 2**53 to be one JSON readers may not agree on.
+integer past 2**53 to be one JSON readers may not agree on. A token
+balance is ``contract``, ``symbol`` and ``decimals``, as the token is
+listed, and ``balance``, in units of 10**-``decimals`` of the token,
+written the same way; a token is listed where its balance is not zero,
+in the order of ``tokens``.
 
 `loads` reads a result back, against the text of the bundle it was made
 from.
@@ -127,7 +141,7 @@ from coin_addresses.evm import address_from_pub_key
 
 from seed_scan.bundle import Account, Bundle, Reading
 from seed_scan.bundle import loads as bundle_loads
-from seed_scan.evm import EVM_CHAINS, EvmChain, Node
+from seed_scan.evm import EVM_CHAINS, EvmChain, EvmToken, Node
 from seed_scan.exceptions import SeedScanTypeError, SeedScanValueError
 
 if TYPE_CHECKING:
@@ -147,6 +161,7 @@ __all__ = [
     "EvmAddress",
     "EvmScan",
     "EvmSearched",
+    "EvmTokenBalance",
     "NotRead",
     "ScanResult",
     "Searched",
@@ -277,13 +292,29 @@ class NotRead:
 
 
 @dataclass(frozen=True)
+class EvmTokenBalance:
+    """A balance other than zero of an ERC-20 token the chain reads.
+
+    `contract`, `symbol` and `decimals` are those of the token's
+    `seed_scan.evm.EvmToken`, and `balance` counts 10**-`decimals` of it.
+    """
+
+    contract: str
+    symbol: str
+    decimals: int
+    balance: str
+
+
+@dataclass(frozen=True)
 class EvmAddress:
-    """A used EVM address: its index, its balance in wei, its nonce."""
+    """A used EVM address: its index, what it holds, and the block read."""
 
     index: int
     address: str
     balance: str
     nonce: int
+    block: int
+    tokens: tuple[EvmTokenBalance, ...]
 
 
 @dataclass(frozen=True)
@@ -299,7 +330,7 @@ class EvmSearched:
 
 @dataclass(frozen=True)
 class EvmAccount:
-    """An account with a used address on the EVM chain, its balance in wei."""
+    """An account with a used address on the EVM chain, and what it holds."""
 
     coin: str
     reading: int
@@ -308,6 +339,7 @@ class EvmAccount:
     path: str
     addresses: tuple[EvmAddress, ...]
     balance: str
+    tokens: tuple[EvmTokenBalance, ...]
 
 
 @dataclass(frozen=True)
@@ -318,6 +350,7 @@ class EvmScan:
     chain: str
     chain_id: int
     block: int
+    tokens: tuple[EvmToken, ...]
     searched: tuple[EvmSearched, ...]
     used: tuple[EvmAccount, ...]
 
@@ -603,25 +636,80 @@ def _bitcoin_account(
     return None if use is None else _used_account(reading, account, use, where)
 
 
+def _evm_address(
+    node: Node, tokens: Sequence[EvmToken], index: int, address: str
+) -> EvmAddress | None:
+    """Return what an address holds, or None where it is unused.
+
+    Its balance, its nonce and its balance of each of `tokens` are read
+    at one block, the latest when its read begins; it is used where any
+    of them is not zero.
+    """
+    block = node.block_number()
+    balance, nonce = node.balance(address, block), node.nonce(address, block)
+    held: list[EvmTokenBalance] = []
+    for token in tokens:
+        units = node.token_balance(token.contract, address, block)
+        if units:
+            held.append(
+                EvmTokenBalance(
+                    token.contract, token.symbol, token.decimals, str(units)
+                )
+            )
+    if not (balance or nonce or held):
+        return None
+    return EvmAddress(index, address, str(balance), nonce, block, tuple(held))
+
+
+def _token_sums(
+    addresses: Sequence[EvmAddress], tokens: Sequence[EvmToken]
+) -> tuple[EvmTokenBalance, ...]:
+    """Return each token's balance summed over the addresses, where not zero.
+
+    The sums are in the order of `tokens`.
+    """
+    sums: list[EvmTokenBalance] = []
+    for token in tokens:
+        units = sum(
+            int(held.balance)
+            for found in addresses
+            for held in found.tokens
+            if held.contract == token.contract
+        )
+        if units:
+            sums.append(
+                EvmTokenBalance(
+                    token.contract, token.symbol, token.decimals, str(units)
+                )
+            )
+    return tuple(sums)
+
+
 def _evm_account(
-    reading: int, account: Account, key: BIP32KeyData, *, node: Node, gap_limit: int
+    reading: int,
+    account: Account,
+    key: BIP32KeyData,
+    *,
+    node: Node,
+    tokens: Sequence[EvmToken],
+    gap_limit: int,
 ) -> EvmAccount | None:
     """Return an EVM account's used addresses, or None where none is.
 
     The receive branch is read from index 0 until `gap_limit` indexes in
-    a row are unused.
+    a row are unused, each address as `_evm_address` reads it.
     """
     branch = key.derive(0)
     addresses: list[EvmAddress] = []
     index = unused = 0
     while unused < gap_limit:
         address = address_from_pub_key(branch.derive(index).sec)
-        balance, nonce = node.balance(address), node.nonce(address)
-        if balance or nonce:
-            addresses.append(EvmAddress(index, address, str(balance), nonce))
-            unused = 0
-        else:
+        found = _evm_address(node, tokens, index, address)
+        if found is None:
             unused += 1
+        else:
+            addresses.append(found)
+            unused = 0
         index += 1
     if not addresses:
         return None
@@ -633,6 +721,7 @@ def _evm_account(
         path=account.path,
         addresses=tuple(addresses),
         balance=str(sum(int(found.balance) for found in addresses)),
+        tokens=_token_sums(addresses, tokens),
     )
 
 
@@ -780,7 +869,9 @@ def _scan_evm(
     searched: list[EvmSearched] = []
     used: list[EvmAccount] = []
     for n, (_, evm_coins, _) in enumerate(plans):
-        read = partial(_evm_account, n, node=node, gap_limit=gap_limit)
+        read = partial(
+            _evm_account, n, node=node, tokens=chain.tokens, gap_limit=gap_limit
+        )
         for coin, purposes in evm_coins.items():
             if coin not in chain.coins:
                 continue
@@ -790,7 +881,15 @@ def _scan_evm(
                     EvmSearched(n, coin, purpose, done.accounts, done.cut_short)
                 )
                 used += found
-    return EvmScan(node.name, chain.name, chain_id, block, tuple(searched), tuple(used))
+    return EvmScan(
+        node.name,
+        chain.name,
+        chain_id,
+        block,
+        chain.tokens,
+        tuple(searched),
+        tuple(used),
+    )
 
 
 def parse_server(text: str, name: str) -> tuple[str, int]:
@@ -862,11 +961,15 @@ def _id(document: dict[str, Any], key: str) -> str:
     return value
 
 
-def _wei(document: dict[str, Any], key: str) -> str:
-    """Return a member that is a balance in wei, as `dumps` writes one."""
+def _wei(document: dict[str, Any], key: str, what: str = "a wei balance") -> str:
+    """Return a member that is a balance in wei, as `dumps` writes one.
+
+    A token balance is written the same way, in the token's units, and
+    `what` names it in the refusal.
+    """
     value: str = _member(document, key, str)
     if not _WEI.fullmatch(value) or int(value) >= _WORD:
-        raise SeedScanValueError(f"scan result: member {key!r} is not a wei balance")
+        raise SeedScanValueError(f"scan result: member {key!r} is not {what}")
     return value
 
 
@@ -1045,12 +1148,45 @@ def _used(
     )
 
 
+def _token_balances(
+    document: dict[str, Any], tokens: Sequence[EvmToken]
+) -> tuple[EvmTokenBalance, ...]:
+    """Read the ``tokens`` member of a used address.
+
+    Each is one of `tokens`, with its symbol and decimals, listed once
+    and in their order, and its balance is not zero.
+    """
+    order = [token.contract for token in tokens]
+    held: list[EvmTokenBalance] = []
+    for item in _objects(document, "tokens"):
+        found = EvmTokenBalance(
+            _member(item, "contract", str),
+            _member(item, "symbol", str),
+            _count(item, "decimals"),
+            _wei(item, "balance", "a token balance"),
+        )
+        token = EvmToken(found.contract, found.symbol, found.decimals)
+        if token not in tokens:
+            raise SeedScanValueError("scan result: a token the chain does not read")
+        if held and order.index(held[-1].contract) >= order.index(found.contract):
+            raise SeedScanValueError("scan result: tokens not in the chain's order")
+        if found.balance == "0":
+            raise SeedScanValueError("scan result: a token balance of zero")
+        held.append(found)
+    return tuple(held)
+
+
 def _evm_addresses(
-    document: dict[str, Any], account: Account, gap_limit: int
+    document: dict[str, Any],
+    account: Account,
+    gap_limit: int,
+    tokens: Sequence[EvmToken],
+    block: int,
 ) -> tuple[EvmAddress, ...]:
     """Read an EVM account's used addresses, each the bundle's there.
 
-    Each holds a balance or a nonce, as `scan` lists no other.
+    Each holds a balance, a nonce or a token balance, as `scan` lists no
+    other, read at `block`, the scan's, or later.
     """
     branch = _key(account, f"account {account.path}").derive(0)
     addresses: list[EvmAddress] = []
@@ -1067,9 +1203,13 @@ def _evm_addresses(
             err_msg = "scan result: an address is not the bundle's at its position"
             raise SeedScanValueError(err_msg)
         balance, nonce = _wei(position, "balance"), _count(position, "nonce")
-        if balance == "0" and nonce == 0:
+        read_at = _count(position, "block")
+        if read_at < block:
+            raise SeedScanValueError("scan result: an address read before the scan")
+        held = _token_balances(position, tokens)
+        if balance == "0" and nonce == 0 and not held:
             raise SeedScanValueError("scan result: an unused address listed as used")
-        addresses.append(EvmAddress(index, address, balance, nonce))
+        addresses.append(EvmAddress(index, address, balance, nonce, read_at, held))
     _gaps({0: [a.index for a in addresses]}, gap_limit)
     return tuple(addresses)
 
@@ -1079,17 +1219,25 @@ def _evm_used(
     accounts: _Held,
     searched: dict[tuple[int, int | None], Searched],
     gap_limit: int,
+    scanned: tuple[Sequence[EvmToken], int],
 ) -> EvmAccount:
     """Read one ``used`` object of ``evm``: an account of its coin it searched.
 
-    `accounts` and `searched` are those of the object's coin.
+    `accounts` and `searched` are those of the object's coin, and
+    `scanned` holds the chain's tokens and the scan's block.
     """
+    tokens, block = scanned
     reading, purpose, account = _account(document, accounts, searched)
-    addresses = _evm_addresses(document, account, gap_limit)
+    addresses = _evm_addresses(document, account, gap_limit, tokens, block)
     if not addresses:
         raise SeedScanValueError("scan result: a used account lists no address")
     balance = str(sum(int(a.balance) for a in addresses))
-    if _member(document, "balance", str) != balance:
+    sums = _token_sums(addresses, tokens)
+    # a sum is checked against its addresses' alone: each answer is a
+    # uint256, and their sum may pass one, as a sum of wei may
+    if _member(document, "balance", str) != balance or (
+        _member(document, "tokens", list) != [asdict(held) for held in sums]
+    ):
         err_msg = "scan result: the addresses' balances are not the account's"
         raise SeedScanValueError(err_msg)
     return EvmAccount(
@@ -1100,6 +1248,7 @@ def _evm_used(
         path=account.path,
         addresses=addresses,
         balance=balance,
+        tokens=sums,
     )
 
 
@@ -1209,12 +1358,25 @@ def _evm(
         raise SeedScanValueError("scan result: member 'chain' is not one scan reads")
     if _count(evm, "chain_id") != chain.chain_id:
         raise SeedScanValueError("scan result: member 'chain_id' is not the chain's")
+    block = _count(evm, "block")
+    tokens = tuple(
+        EvmToken(
+            _member(item, "contract", str),
+            _member(item, "symbol", str),
+            _count(item, "decimals"),
+        )
+        for item in _objects(evm, "tokens")
+    )
+    if tokens != chain.tokens:
+        raise SeedScanValueError("scan result: member 'tokens' is not the chain's")
     searched, in_order = _evm_searches(evm, bundle, chain)
     used: list[EvmAccount] = []
     for item in _objects(evm, "used"):
         coin = _evm_coin(item, chain)
         held = _held(bundle, coin)
-        used.append(_evm_used(item, held, searched.get(coin, {}), gap_limit))
+        used.append(
+            _evm_used(item, held, searched.get(coin, {}), gap_limit, (tokens, block))
+        )
     for coin in chain.coins:
         of_coin = [u for u in used if u.coin == coin]
         _keyed(of_coin)
@@ -1225,7 +1387,8 @@ def _evm(
         node=node,
         chain=chain.name,
         chain_id=chain.chain_id,
-        block=_count(evm, "block"),
+        block=block,
+        tokens=tokens,
         searched=in_order,
         used=tuple(used),
     )
@@ -1275,18 +1438,21 @@ def loads(text: str, bundle: str) -> ScanResult:
     A reader echoes the text members, so each holds only what the format
     defines: a ``server`` that `parse_server` takes; a ``node`` that
     `seed_scan.evm.Node` takes, and names as it is written; a ``chain``
-    of `seed_scan.evm.EVM_CHAINS`, with that chain's ``chain_id``, and a
-    ``coin`` in ``evm`` that the chain reads; ids of 64 hex characters;
-    a balance in wei of decimal digits, below 2**256; a ``reason`` that
-    is the one `scan` gives that coin, for a coin of that reading it did
-    not read. What the result says of the bundle is checked against it:
-    each search and each used account names accounts of the bundle of
-    its coin, a used account one its search read, its ``path`` the
-    bundle's, each address the one the account's keys give at that
-    position, an EVM address with a balance or a nonce, and each
-    account's balance the sum of its addresses'. Each search's
-    ``accounts`` and ``cut_short`` are the ones `scan` gives for the
-    used accounts listed, the bundle's accounts and ``account_gap``.
+    of `seed_scan.evm.EVM_CHAINS`, with that chain's ``chain_id`` and
+    ``tokens``, and a ``coin`` in ``evm`` that the chain reads; a token
+    balance of a token of ``tokens``, as it is listed there, in their
+    order and not zero; ids of 64 hex characters; a balance in wei or in
+    a token's units of decimal digits, an address's below 2**256; a
+    ``reason`` that is the one `scan` gives that coin, for a coin of that
+    reading it did not read. What the result says of the bundle is
+    checked against it: each search and each used account names accounts
+    of the bundle of its coin, a used account one its search read, its
+    ``path`` the bundle's, each address the one the account's keys give
+    at that position, an EVM address with a balance, a nonce or a token
+    balance, read at the scan's ``block`` or later, and each account's
+    balance and token balances the sums of its addresses'. Each search's
+    ``accounts`` and ``cut_short`` are the ones `scan` gives for the used
+    accounts listed, the bundle's accounts and ``account_gap``.
 
     What a used account lists is what `scan` could have found: an
     address at least, each branch's used positions within ``gap_limit``

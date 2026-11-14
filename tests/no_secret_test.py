@@ -44,6 +44,8 @@ from .secret_free import assert_secret_free
 if TYPE_CHECKING:
     from collections.abc import Iterable
 
+    from seed_scan.evm import EvmChain
+
 #: A secret as a run holds it: text, or bytes.
 Secret = str | bytes
 
@@ -129,11 +131,19 @@ _REPORT_REASON = _group(
     _NO_WITNESS,
 )
 
+#: The symbols of the tokens the EVM chains list.
+TOKEN_SYMBOLS = tuple(
+    sorted({token.symbol for chain in EVM_CHAINS.values() for token in chain.tokens})
+)
+_TOKEN = _either(TOKEN_SYMBOLS)
+
 #: The members whose value JSON writes as a defined word, and the words
-#: each may hold, whole: a coin's name, a chain's, or a reason.
+#: each may hold, whole: a coin's name, a chain's, a token's symbol or a
+#: reason.
 DEFINED_VALUES = {
     "coin": re.compile(_COIN),
     "chain": re.compile(_CHAIN),
+    "symbol": re.compile(_TOKEN),
     "reason": re.compile(f"{_BUNDLE_REASON}|{_SCAN_REASON}|{_FORKS_REASON}"),
 }
 
@@ -187,11 +197,32 @@ def assert_json_secret_free(text: str, secrets: list[Secret]) -> None:
 #: dropped.
 _N = r"-?\d+"
 
+_CONTRACT = "0x[0-9A-Fa-f]{40}"
+_MOST_TOKENS = max(len(chain.tokens) for chain in EVM_CHAINS.values())
+
+
+def _listed(chain: EvmChain, *, contracts: bool) -> str:
+    """Return a pattern of the tokens a chain lists, as a line names them.
+
+    Each symbol is a group, followed by its contract where `contracts` is
+    true. A chain that lists no token is ``none``.
+
+    :param chain: an EVM chain.
+    :param contracts: whether each symbol is followed by its contract.
+    :returns: the pattern.
+    """
+    listed = (
+        f"({re.escape(token.symbol)})" + (f" {token.contract}" if contracts else "")
+        for token in chain.tokens
+    )
+    return ", ".join(listed) or "none"
+
+
 #: Lines of `seed_scan.report` and of the summaries of ``identify``,
 #: ``scan`` and ``forks`` that hold a defined word, each whole, as the
 #: code writes it.
 #: Each group is a defined word: a coin's or an asset's name, a chain's
-#: name or title, or a reason.
+#: name or title, a token's symbol, or a reason.
 LINE_SHAPES = tuple(
     re.compile(shape)
     for shape in (
@@ -199,6 +230,11 @@ LINE_SHAPES = tuple(
         (
             rf"node: .*, {_EVM_TITLE}, chain id {_N}, latest block {_N} before"
             " the first address was read"
+        ),
+        *(
+            rf"({re.escape(chain.title)}) tokens checked: "
+            + _listed(chain, contracts=True)
+            for chain in EVM_CHAINS.values()
         ),
         rf"{_EVM_TITLE} tokens: not checked: {_either([report.NO_TOKENS])}",
         rf"chain: {_FORK_TITLE}, forked from (Bitcoin) at height {_N}",
@@ -224,6 +260,11 @@ LINE_SHAPES = tuple(
             rf"total: {_FORK_NAME}, {_N} sat confirmed, {_N} sat unconfirmed,"
             rf" {_N} sat at the fork, {_N} used accounts, each account key once"
         ),
+        rf"        {_TOKEN} {_CONTRACT}: {_N}, {_N} decimals",
+        (
+            rf"total: {_EVM_NAME}, {_TOKEN} {_CONTRACT}: {_N}, {_N} decimals, each"
+            " account key once"
+        ),
         # seed_scan.cli, the summary of identify
         rf"not checked: [^:]+: {_BUNDLE_REASON}",
         rf"address not searched: {_BUNDLE_REASON}",
@@ -236,7 +277,16 @@ LINE_SHAPES = tuple(
         rf"found: reading {_N}, {_COIN}, \S+",
         # seed_scan.cli, the summary of scan
         rf"node: .*, {_EVM_TITLE}, chain id {_N}, block {_N}",
-        rf"{_EVM_TITLE}: \w+ and nonces read, no token balance",
+        *(
+            rf"({re.escape(chain.title)}): {re.escape(chain.symbol)}, nonces and"
+            rf" tokens read: {_listed(chain, contracts=False)}"
+            for chain in EVM_CHAINS.values()
+        ),
+        *(
+            rf"used: reading {_N}, \S+: {_N} addresses, {_N} wei of \w+"
+            + rf", {_N} of {_TOKEN} at {_N} decimals" * count
+            for count in range(1, _MOST_TOKENS + 1)
+        ),
         (
             rf"reading {_N}, {_COIN} (?:purpose {_N}|Electrum): accounts read: {_N}"
             r"(?:, cut short: the bundle's accounts end before the account gap)?"
@@ -255,9 +305,10 @@ LINE_SHAPES = tuple(
     )
 )
 
-#: A coin's name, a chain's name or title, or a reason, wherever it is.
+#: A coin's name, a chain's name or title, a token's symbol, or a reason,
+#: wherever it is.
 _ANY_DEFINED = re.compile(
-    rf"\b(?:{_COIN}|{_CHAIN}|{_TITLE}|{_BUNDLE_REASON}|{_REPORT_REASON}"
+    rf"\b(?:{_COIN}|{_CHAIN}|{_TITLE}|{_TOKEN}|{_BUNDLE_REASON}|{_REPORT_REASON}"
     rf"|{_either([report.NO_TOKENS, report.NO_CASHTOKENS])})\b"
 )
 
@@ -502,6 +553,10 @@ def test_a_planted_secret_is_found(
 #: The search of each format, by name.
 SEARCHES = {"json": assert_json_secret_free, "lines": assert_lines_secret_free}
 
+#: Ethereum's tokens; WETH's symbol holds BIP39's ``wet``.
+ETHEREUM_TOKENS = EVM_CHAINS["ethereum"].tokens
+WETH = next(token for token in ETHEREUM_TOKENS if token.symbol == "WETH")
+
 
 @pytest.mark.parametrize(
     "form, text, secret",
@@ -532,6 +587,17 @@ SEARCHES = {"json": assert_json_secret_free, "lines": assert_lines_secret_free}
             "lines",
             "  bitcoin, purpose 44: not checked: failed: ethereum-classic, try again",
             "class",
+        ),
+        ("json", '{"note": "WETH"}', "wet"),
+        ("json", '{"coin": "WETH"}', "wet"),
+        ("lines", "        WETH: 3, 18 decimals", "wet"),
+        ("lines", f"        WETH2 {WETH.contract}: 3, 18 decimals", "wet"),
+        ("lines", "Ethereum: ETH, nonces and tokens read: WETH", "wet"),
+        ("lines", f"Ethereum Classic tokens checked: WETH {WETH.contract}", "class"),
+        (
+            "lines",
+            "used: reading 0, m/44h/60h/0h: 1 addresses, 5 wei of ETH, 3 of WETH",
+            "wet",
         ),
     ],
 )
@@ -600,6 +666,40 @@ def test_a_defined_word_elsewhere_is_found(
             'node: https://node".example, Ethereum Classic, chain id 61, block 16',
             "class",
         ),
+        ("json", '{"symbol": "WETH"}', "wet"),
+        (
+            "lines",
+            "Ethereum tokens checked: "
+            + ", ".join(
+                f"{token.symbol} {token.contract}" for token in ETHEREUM_TOKENS
+            ),
+            "wet",
+        ),
+        ("lines", "Ethereum Classic tokens checked: none", "class"),
+        ("lines", f"        WETH {WETH.contract}: 3, 18 decimals", "wet"),
+        (
+            "lines",
+            (
+                f"total: ethereum, WETH {WETH.contract}: 3, 18 decimals, each"
+                " account key once"
+            ),
+            "wet",
+        ),
+        (
+            "lines",
+            "Ethereum: ETH, nonces and tokens read: "
+            + ", ".join(token.symbol for token in ETHEREUM_TOKENS),
+            "wet",
+        ),
+        ("lines", "Ethereum Classic: ETC, nonces and tokens read: none", "class"),
+        (
+            "lines",
+            (
+                "used: reading 0, m/44h/60h/0h: 1 addresses, 5 wei of ETH, 7 of"
+                " USDT at 6 decimals, 3 of WETH at 18 decimals"
+            ),
+            "wet",
+        ),
     ],
 )
 def test_a_defined_word_where_the_format_writes_it_is_not_a_leak(
@@ -607,8 +707,9 @@ def test_a_defined_word_where_the_format_writes_it_is_not_a_leak(
 ) -> None:
     """A defined word can hold a word of a mnemonic, and is not searched.
 
-    A name holds SLIP-0039's ``class``, a member name its ``short``, and
-    ``bitcoin`` BIP39's ``coin``. A reason is dropped whole.
+    A name holds SLIP-0039's ``class``, a member name its ``short``,
+    ``bitcoin`` BIP39's ``coin``, and a token's symbol, as WETH, its
+    ``wet``. A reason is dropped whole.
 
     :param form: which search reads the text.
     :param text: what a command wrote.

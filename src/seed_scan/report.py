@@ -28,7 +28,10 @@ every other character is literal.
   ``node: none``, and ``bounds: account gap <n>, gap limit <n>``; or
   ``scan: none`` alone, where no result is given. ``<chain>`` is the
   title of the EVM chain the node serves, and where a node is named,
-  ``<chain> tokens: not checked: <reason>`` follows the node's line.
+  the node's line is followed by ``<chain> tokens checked: <symbol>
+  <contract>, ...``, the ERC-20 tokens the scan read, or ``<chain>
+  tokens checked: none``, then by ``<chain> tokens: not checked:
+  <reason>``, for every other token.
 - per forks result, in the order given, ``forks: sha256 <hex>``, the
   SHA-256 of its text, then ``chain: <title>, forked from Bitcoin at
   height <n>``, ``server: <host:port>`` and ``bounds: account gap <n>,
@@ -60,12 +63,14 @@ every other character is literal.
   height <n>``; and six spaces in, per used address, ``<receive or
   change> <path> <address>: <n> sat confirmed, <n> sat unconfirmed``,
   the path being the address's own. Per used account the node read,
-  ``account <n>, <path>: <n> wei at latest``; and per used address,
-  ``receive <path> <address>: <n> wei, nonce <n>``. Each such balance
-  and nonce is the node's answer at the block tag ``latest`` when that
-  address was read, which may be a later block than the node's line
-  names: that number marks when the EVM scan began, and no state the
-  balances share.
+  ``account <n>, <path>: <n> wei``; six spaces in, per used address,
+  ``receive <path> <address>: <n> wei, nonce <n>, block <n>``; and eight
+  spaces in, per token it holds, ``<symbol> <contract>: <n>, <n>
+  decimals``, the balance in units of 10**-decimals of the token. What
+  an address holds is the node's answer at the block its line names,
+  the latest when that address was read: the addresses of an account
+  may be read at different blocks, so their sum is no state of one
+  block, and the node's line marks when the EVM scan began.
 
   Then, per forks result, two spaces in, per coin and purpose of the
   reading's accounts of Bitcoin and of each coin of
@@ -79,7 +84,9 @@ every other character is literal.
   accounts, each account key once``, where a server is named, and
   ``total: <chain name>, <n> wei of <symbol>, <n> used accounts, each
   account key once``, where a node is, the name and the symbol being
-  those `seed_scan.evm.EVM_CHAINS` gives the node's chain; per forks
+  those `seed_scan.evm.EVM_CHAINS` gives the node's chain, followed by
+  ``total: <chain name>, <symbol> <contract>: <n>, <n> decimals, each
+  account key once`` per token whose total is not zero; per forks
   result, ``total: <chain>, <n> sat confirmed, <n> sat unconfirmed, <n>
   sat at the fork, <n> used accounts, each account key once``. Two
   readings can hold the same account keys, as the same passphrase typed
@@ -108,7 +115,14 @@ from seed_scan.forks import (
     ForksResult,
 )
 from seed_scan.forks import loads as forks_loads
-from seed_scan.scan import EvmAccount, EvmSearched, ScanResult, Searched, UsedAccount
+from seed_scan.scan import (
+    EvmAccount,
+    EvmSearched,
+    EvmTokenBalance,
+    ScanResult,
+    Searched,
+    UsedAccount,
+)
 from seed_scan.scan import loads as scan_loads
 
 if TYPE_CHECKING:
@@ -133,10 +147,11 @@ NO_SCAN = "no scan result was given"
 #: Why an account is not checked where the scan result does not read it.
 NOT_IN_SCAN = "the scan result does not read it"
 
-#: Why an EVM chain's tokens are not checked where the node was asked.
+#: Why an EVM chain's other tokens are not checked where the node was asked.
 NO_TOKENS = (
-    "scan asks the native asset's balances and nonces alone, so an address"
-    " that only received tokens reads as unused"
+    "scan asks the balances of the tokens checked alone, so an address with"
+    " no native balance, zero nonce and no listed token balance reads as"
+    " unused, whatever other tokens it holds"
 )
 
 #: Why an account is not checked where the forks result does not read it.
@@ -207,14 +222,20 @@ def _used(used: UsedAccount | ForkAccount) -> list[str]:
     return lines
 
 
+def _token(held: EvmTokenBalance) -> str:
+    """Return how a line names a token balance."""
+    return f"{held.symbol} {held.contract}: {held.balance}, {held.decimals} decimals"
+
+
 def _evm_used(used: EvmAccount) -> list[str]:
     """Return the lines of a used EVM account and of its used addresses."""
-    lines = [f"    account {used.account}, {used.path}: {used.balance} wei at latest"]
-    lines += [
-        f"      receive {used.path}/0/{a.index} {a.address}: {a.balance} wei,"
-        f" nonce {a.nonce}"
-        for a in used.addresses
-    ]
+    lines = [f"    account {used.account}, {used.path}: {used.balance} wei"]
+    for a in used.addresses:
+        lines.append(
+            f"      receive {used.path}/0/{a.index} {a.address}: {a.balance} wei,"
+            f" nonce {a.nonce}, block {a.block}"
+        )
+        lines += [f"        {_token(held)}" for held in a.tokens]
     return lines
 
 
@@ -350,11 +371,13 @@ def _scanned(result: ScanResult) -> list[str]:
         lines.append("node: none")
     else:
         title = EVM_CHAINS[evm.chain].title
+        checked = ", ".join(f"{t.symbol} {t.contract}" for t in evm.tokens)
         lines += [
             (
                 f"node: {evm.node}, {title}, chain id {evm.chain_id}, latest"
                 f" block {evm.block} before the first address was read"
             ),
+            f"{title} tokens checked: {checked or 'none'}",
             f"{title} tokens: not checked: {NO_TOKENS}",
         ]
     lines.append(
@@ -443,22 +466,37 @@ def _totals(bundle: Bundle, result: ScanResult) -> list[str]:
             f" {len(used)} used accounts, each account key once"
         )
     if result.evm is not None:
-        lines.append(_evm_total(bundle, result.evm.chain, result.evm.used))
+        lines += _evm_totals(bundle, result.evm.chain, result.evm.used)
     return lines
 
 
-def _evm_total(bundle: Bundle, chain: str, used: tuple[EvmAccount, ...]) -> str:
-    """Return the total of the EVM chain the node serves, each key once.
+def _evm_totals(bundle: Bundle, chain: str, used: tuple[EvmAccount, ...]) -> list[str]:
+    """Return the totals of the EVM chain the node serves, each key once.
 
     Whatever its coin: an Ethereum and an Ethereum Classic account of one
-    key are read at the same addresses, on the same chain.
+    key are read at the same addresses, on the same chain. The native
+    asset's total comes first, then each token's that is not zero.
     """
     accounts = _once(bundle, [(u.coin, u) for u in used])
-    return (
+    native = (
         f"total: {chain}, {sum(int(u.balance) for u in accounts)} wei of"
         f" {EVM_CHAINS[chain].symbol}, {len(accounts)} used accounts, each account"
         " key once"
     )
+    lines = [native]
+    for token in EVM_CHAINS[chain].tokens:
+        units = sum(
+            int(held.balance)
+            for account in accounts
+            for held in account.tokens
+            if held.contract == token.contract
+        )
+        if units:
+            total = EvmTokenBalance(
+                token.contract, token.symbol, token.decimals, str(units)
+            )
+            lines.append(f"total: {chain}, {_token(total)}, each account key once")
+    return lines
 
 
 def _forks_total(bundle: Bundle, result: ForksResult) -> str:

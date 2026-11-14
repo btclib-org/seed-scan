@@ -23,6 +23,7 @@ from btclib.script import ScriptPubKey
 from btclib.tx import OutPoint, Tx, TxIn, TxOut
 from btclib_wallet.bip44 import discover_account
 from btclib_wallet.descriptors import add_checksum, parse
+from btclib_wallet.exceptions import FetchError
 from btclib_wallet.fetch.history import (
     BlockRef,
     HistoryTx,
@@ -47,13 +48,14 @@ from seed_scan.scan import (
     Address,
     EvmAddress,
     EvmSearched,
+    EvmTokenBalance,
     NotRead,
     Searched,
     Tip,
     scan,
 )
 
-from .evm_test import Ethereum
+from .evm_test import Ethereum, response
 from .identify_test import (
     ABANDON,
     BIP84_CHANGE,
@@ -72,6 +74,7 @@ from .no_secret_test import (
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Iterator, Sequence
+    from urllib.request import Request
 
     from btclib.alias import Octets
     from btclib_wallet.bip44 import AccountUse
@@ -696,8 +699,8 @@ def test_an_ethereum_address_with_a_balance_or_a_nonce_is_used(abandon: str) -> 
     first_account, third_account = evm.used
     assert first_account.path == "m/44h/60h/0h"
     assert first_account.addresses == (
-        EvmAddress(0, first, str(10**18), 0),
-        EvmAddress(5, sixth, "0", 4),
+        EvmAddress(0, first, str(10**18), 0, 16, ()),
+        EvmAddress(5, sixth, "0", 4, 16, ()),
     )
     assert first_account.balance == str(10**18)
     assert (third_account.account, third_account.balance) == (2, "1")
@@ -722,8 +725,10 @@ def test_the_ethereum_bounds_are_the_bitcoin_ones(abandon: str) -> None:
     assert [u.account for u in evm.used] == [0, 3]
     nothing = Ethereum()
     scan(abandon, None, node=node(nothing))
-    # two requests ahead, then two per address: three accounts of 20
-    assert len(nothing.asked) == 2 + 2 * 20 * 3
+    # two requests ahead, then per address its block, balance and nonce
+    # and one per token: three accounts of 20
+    tokens = len(EVM_CHAINS["ethereum"].tokens)
+    assert len(nothing.asked) == 2 + (3 + tokens) * 20 * 3
 
 
 def test_without_a_server_bitcoin_is_not_checked(abandon: str) -> None:
@@ -741,9 +746,15 @@ def test_without_a_server_bitcoin_is_not_checked(abandon: str) -> None:
         "chain",
         "chain_id",
         "block",
+        "tokens",
         "searched",
         "used",
     ]
+    assert document["evm"]["tokens"][0] == {
+        "contract": "0xdAC17F958D2ee523a2206206994597C13D831ec7",
+        "symbol": "USDT",
+        "decimals": 6,
+    }
 
 
 def test_a_server_and_a_node_are_both_read(abandon: str) -> None:
@@ -948,3 +959,110 @@ def test_a_chain_scan_does_not_read_is_refused(
     assert str(caught.value).startswith(said)
     assert "ethereum-mainnet" not in str(caught.value)
     assert not fake.asked
+
+
+#: Ethereum's USDT and DAI, as `seed_scan.evm.EVM_CHAINS` lists them.
+USDT, DAI = EVM_CHAINS["ethereum"].tokens[0], EVM_CHAINS["ethereum"].tokens[2]
+
+
+def test_an_address_holding_a_listed_token_alone_is_used(abandon: str) -> None:
+    """No nonce, no ether: a token balance is use, and finds its account.
+
+    Account 1's only use is two tokens at index 7, past unused indexes:
+    it reads as used, so discovery reads three accounts past it, where
+    it would stop at account 3 had account 1 read as unused.
+    """
+    first = eth_address(abandon, "m/44h/60h/0h", 0)
+    late = eth_address(abandon, "m/44h/60h/1h", 7)
+    fake = Ethereum(
+        {first: 1},
+        tokens={(DAI.contract, late): 5 * 10**18, (USDT.contract, late): 7},
+    )
+    evm = scan(abandon, None, node=node(fake), account_gap=3).evm
+    assert evm is not None
+    zeroth, one = evm.used
+    assert zeroth.tokens == ()
+    assert one.addresses == (
+        EvmAddress(
+            7,
+            late,
+            "0",
+            0,
+            16,
+            (
+                EvmTokenBalance(USDT.contract, "USDT", 6, "7"),
+                EvmTokenBalance(DAI.contract, "DAI", 18, str(5 * 10**18)),
+            ),
+        ),
+    )
+    assert one.balance == "0"
+    assert one.tokens == one.addresses[0].tokens
+    assert evm.searched == (EvmSearched(0, "ethereum", 44, 5, cut_short=False),)
+    assert evm.tokens == EVM_CHAINS["ethereum"].tokens
+    evm = scan(abandon, None, node=node(Ethereum({first: 1})), account_gap=3).evm
+    assert evm is not None
+    assert evm.searched == (EvmSearched(0, "ethereum", 44, 4, cut_short=False),)
+
+
+def test_an_accounts_token_balances_are_summed(abandon: str) -> None:
+    """Over its addresses, in the order the chain lists its tokens."""
+    first = eth_address(abandon, "m/44h/60h/0h", 0)
+    second = eth_address(abandon, "m/44h/60h/0h", 1)
+    fake = Ethereum(
+        tokens={
+            (DAI.contract, first): 2,
+            (USDT.contract, second): 3,
+            (DAI.contract, second): 4,
+        },
+    )
+    evm = scan(abandon, None, node=node(fake)).evm
+    assert evm is not None
+    (account,) = evm.used
+    assert account.tokens == (
+        EvmTokenBalance(USDT.contract, "USDT", 6, "3"),
+        EvmTokenBalance(DAI.contract, "DAI", 18, "6"),
+    )
+
+
+def test_each_address_is_read_at_one_block(abandon: str) -> None:
+    """Its balance, nonce and tokens at the block asked as its read begins.
+
+    The block moves on between addresses, as a chain's head does.
+    """
+    first = eth_address(abandon, "m/44h/60h/0h", 0)
+    second = eth_address(abandon, "m/44h/60h/0h", 1)
+    fake = Ethereum({first: 1, second: 2})
+    fake.step = 1
+    evm = scan(abandon, None, node=node(fake), gap_limit=1, account_gap=1).evm
+    assert evm is not None
+    assert evm.block == 16
+    (account,) = evm.used
+    assert [(a.index, a.block) for a in account.addresses] == [(0, 17), (1, 18)]
+    per_address = 2 + len(EVM_CHAINS["ethereum"].tokens)
+    assert fake.blocks == [
+        hex(block) for block in (17, 18, 19, 20) for _ in range(per_address)
+    ]
+
+
+def test_a_chain_with_no_token_asks_no_call(abandon: str) -> None:
+    """Ethereum Classic's list is empty: balances and nonces alone."""
+    fake = Ethereum(chain_id=61)
+    evm = scan(abandon, None, node=node(fake), evm_chain="ethereum-classic").evm
+    assert evm is not None
+    assert evm.tokens == ()
+    assert "eth_call" not in fake.asked
+
+
+def test_a_token_answer_that_is_no_word_fails_the_scan(abandon: str) -> None:
+    """Not counted: the node's failure ends the scan, as any other does."""
+    fake = Ethereum()
+
+    def transport(request: Request, timeout: float) -> tuple[int, bytes]:
+        assert isinstance(request.data, bytes)
+        asked = json.loads(request.data)
+        if asked["method"] != "eth_call":
+            return fake(request, timeout)
+        return 200, json.dumps(response(id=asked["id"], result="0x07")).encode()
+
+    with pytest.raises(FetchError, match="eth_call answered no 32-byte word$"):
+        scan(abandon, None, node=Node("https://node.example", transport=transport))

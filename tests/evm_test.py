@@ -4,7 +4,7 @@
 
 """Tests for `seed_scan.evm`: the URL, the framing, the quantities, the policy.
 
-The node is `Ethereum`, a fake kept in memory that answers the four
+The node is `Ethereum`, a fake kept in memory that answers the five
 methods `Node` asks. Some tests hand it to `Node` as its transport; the
 others serve it over HTTP on the loopback interface, with `HttpServer`,
 so that the network policy under test is the one the request meets.
@@ -15,8 +15,10 @@ makes the certificates.
 from __future__ import annotations
 
 import contextlib
+import functools
 import gc
 import json
+import re
 import socket
 import socketserver
 import ssl
@@ -25,15 +27,17 @@ import time
 import traceback
 import warnings
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 from unittest.mock import Mock
 
 import pytest
 from btclib_wallet.exceptions import FetchError, HttpError, RpcError
 from btclib_wallet.fetch.transport import SessionTransport
+from coin_addresses._keccak import keccak_256
+from coin_addresses.evm import is_valid_address
 from typing_extensions import override
 
-from seed_scan.evm import EVM_CHAINS, MAX_ANSWER, Node, quantity
+from seed_scan.evm import EVM_CHAINS, MAX_ANSWER, EvmToken, Node, quantity
 from seed_scan.exceptions import SeedScanTypeError, SeedScanValueError
 
 if TYPE_CHECKING:
@@ -47,40 +51,70 @@ MARK = "node-said-this"
 Exchange = tuple[int, bytes, dict[str, str]]
 
 
+#: The input of a ``balanceOf`` call: its selector, then 12 zero bytes
+#: before the 20 of the address.
+BALANCE_OF = re.compile(r"0x70a08231(?:00){12}(?P<address>[0-9a-f]{40})")
+
+
 class Ethereum:
-    """An Ethereum node kept in memory: balances and nonces by address."""
+    """An EVM node kept in memory: balances, nonces and tokens by address.
+
+    Every state read is answered from the same state, at whichever block
+    it names, and the block each read named is kept in `blocks`.
+    """
 
     def __init__(
         self,
         balances: dict[str, int] | None = None,
         nonces: dict[str, int] | None = None,
         chain_id: int = 1,
+        tokens: dict[tuple[str, str], int] | None = None,
     ) -> None:
         """Hold the state.
 
         :param balances: the wei of each address, zero for any other.
         :param nonces: the nonce of each address, zero for any other.
         :param chain_id: what ``eth_chainId`` answers.
+        :param tokens: the balance of each token contract and address,
+            zero for any other.
         """
         self.balances = {a.lower(): v for a, v in (balances or {}).items()}
         self.nonces = {a.lower(): v for a, v in (nonces or {}).items()}
+        self.tokens = {
+            (c.lower(), a.lower()): v for (c, a), v in (tokens or {}).items()
+        }
         self.chain_id = chain_id
+        self.block = 0x10
+        self.step = 0
         self.asked: list[str] = []
+        self.blocks: list[str] = []
 
-    def result(self, method: str, params: list[str]) -> str:
-        """Return a method's result, a quantity.
+    def result(self, method: str, params: list[Any]) -> str:
+        """Return a method's result: a quantity, or a word for ``eth_call``.
+
+        ``eth_blockNumber`` answers `block`, which then moves by `step`.
 
         :param method: the method asked.
         :param params: its parameters.
-        :returns: the quantity.
+        :returns: the result.
         """
         self.asked.append(method)
         if method == "eth_chainId":
             return hex(self.chain_id)
         if method == "eth_blockNumber":
-            return hex(0x10)
+            self.block += self.step
+            return hex(self.block - self.step)
+        if method == "eth_call":
+            call, block = params
+            assert set(call) == {"to", "input"}
+            matched = BALANCE_OF.fullmatch(call["input"])
+            assert matched is not None
+            self.blocks.append(block)
+            units = self.tokens.get((call["to"].lower(), "0x" + matched["address"]), 0)
+            return f"0x{units:064x}"
         address, block = params
-        assert block == "latest"
+        assert block == "latest" or quantity(block) >= 0
+        self.blocks.append(block)
         state = self.balances if method == "eth_getBalance" else self.nonces
         return hex(state.get(address.lower(), 0))
 
@@ -358,23 +392,44 @@ def test_a_url_that_is_no_string_is_a_type_error() -> None:
         Node(b"https://node.example")  # type: ignore[arg-type]
 
 
+#: An address, and the contract of Ethereum's USDT.
+ADDRESS = "0x9858EfFD232B4033E47d90003D41EC34EcaEda94"
+CONTRACT = "0xdAC17F958D2ee523a2206206994597C13D831ec7"
+
+
 def test_each_method_asks_its_quantity() -> None:
-    """The chain id, the block number, a balance and a nonce."""
-    address = "0x9858EfFD232B4033E47d90003D41EC34EcaEda94"
-    fake = Ethereum({address: 10**18}, {address: 3}, chain_id=11155111)
+    """The chain id, the block number, a balance, a nonce, a token balance.
+
+    Each state read at ``latest``, or at the block numbered.
+    """
+    fake = Ethereum(
+        {ADDRESS: 10**18},
+        {ADDRESS: 3},
+        chain_id=11155111,
+        tokens={(CONTRACT, ADDRESS): 2**256 - 1},
+    )
     node = Node("https://node.example", transport=fake)
     assert node.chain_id() == 11155111
     assert node.block_number() == 0x10
-    assert node.balance(address) == 10**18
-    assert node.nonce(address) == 3
+    assert node.balance(ADDRESS) == 10**18
+    assert node.nonce(ADDRESS) == 3
     assert node.nonce("0x" + "00" * 20) == 0
+    assert node.token_balance(CONTRACT, ADDRESS) == 2**256 - 1
+    assert node.balance(ADDRESS, 0x10) == 10**18
+    assert node.nonce(ADDRESS, 0) == 3
+    assert node.token_balance(CONTRACT, "0x" + "00" * 20, 0x10) == 0
     assert fake.asked == [
         "eth_chainId",
         "eth_blockNumber",
         "eth_getBalance",
         "eth_getTransactionCount",
         "eth_getTransactionCount",
+        "eth_call",
+        "eth_getBalance",
+        "eth_getTransactionCount",
+        "eth_call",
     ]
+    assert fake.blocks == ["latest"] * 4 + ["0x10", "0x0", "0x10"]
     assert node.requests == len(fake.asked)
 
 
@@ -449,13 +504,15 @@ def flipped(address: str, position: int) -> str:
 def test_an_address_that_is_not_one_is_refused_unasked(address: str) -> None:
     """A length, a prefix, a space, a digit not hex, a checksum that fails.
 
-    Refused before the node is asked, and not quoted.
+    Refused before the node is asked, and not quoted, by each method that
+    takes an address.
 
     :param address: the string refused.
     """
     transport = refusing()
     node = Node("https://node.example", transport=transport)
-    for method in (node.balance, node.nonce):
+    token_balance = functools.partial(node.token_balance, CONTRACT)
+    for method in (node.balance, node.nonce, token_balance):
         with pytest.raises(SeedScanValueError) as caught:
             method(address)
         said = "not an address: 0x and 40 hex digits, in one case or EIP-55's"
@@ -483,6 +540,8 @@ def test_any_letter_of_a_checksum_in_the_other_case_is_refused(address: str) -> 
             node.balance(other)
         with pytest.raises(SeedScanValueError):
             node.nonce(other)
+        with pytest.raises(SeedScanValueError):
+            node.token_balance(CONTRACT, other)
     assert node.requests == 0
     transport.assert_not_called()
 
@@ -497,12 +556,83 @@ def test_an_address_that_is_no_string_is_a_type_error(address: object) -> None:
     """
     transport = refusing()
     node = Node("https://node.example", transport=transport)
-    for method in (node.balance, node.nonce):
+    token_balance = functools.partial(node.token_balance, CONTRACT)
+    for method in (node.balance, node.nonce, token_balance):
         with pytest.raises(SeedScanTypeError) as caught:
             method(address)  # type: ignore[arg-type]
         assert str(caught.value) == f"not an address: a {type(address).__name__}"
     assert node.requests == 0
     transport.assert_not_called()
+
+
+def test_a_token_balance_is_balance_of_as_the_abi_encodes_it() -> None:
+    """The selector of ``balanceOf(address)``, then the address in 32 bytes.
+
+    The selector is the first four bytes of the Keccak-256 of the
+    signature, computed here rather than copied.
+    """
+    sent: list[dict[str, Any]] = []
+
+    def transport(request: Request, timeout: float) -> tuple[int, bytes]:
+        assert isinstance(request.data, bytes)
+        sent.append(json.loads(request.data))
+        return 200, json.dumps(response(result=f"0x{7:064x}")).encode()
+
+    node = Node("https://node.example", transport=transport)
+    assert node.token_balance(CONTRACT, ADDRESS, 0x10) == 7
+    selector = keccak_256(b"balanceOf(address)")[:4].hex()
+    (request,) = sent
+    assert request["method"] == "eth_call"
+    assert request["params"] == [
+        {"to": CONTRACT, "input": f"0x{selector}{'00' * 12}{ADDRESS[2:].lower()}"},
+        "0x10",
+    ]
+
+
+@pytest.mark.parametrize(
+    "result",
+    [
+        "0x",
+        "0x" + "00" * 31,
+        "0x" + "00" * 33,
+        "0x" + "AB" * 32,
+        "0X" + "00" * 32,
+        "0x" + "00" * 31 + "0g",
+        " 0x" + "00" * 32,
+        "0x7",
+        7,
+        None,
+        [f"0x{7:064x}"],
+        MARK,
+    ],
+)
+def test_a_token_answer_that_is_no_word_is_refused_unquoted(result: object) -> None:
+    """Not 32 bytes, not lower-case hex, not a string: no balance is read.
+
+    The ``0x`` of an address that holds no code among them, and a
+    quantity, which a balance of the node's own asset would be.
+
+    :param result: what the node answers for the call.
+    """
+    node = Node("https://node.example", transport=answering(response(result=result)))
+    with pytest.raises(FetchError) as caught:
+        node.token_balance(CONTRACT, ADDRESS, 0x10)
+    assert not isinstance(caught.value, (HttpError, RpcError))
+    assert (
+        str(caught.value) == "https://node.example: eth_call answered no 32-byte word"
+    )
+
+
+def test_a_reverted_call_is_an_rpc_error() -> None:
+    """The specification's code 3, kept; its revert data, not."""
+    error = {"code": 3, "message": "execution reverted", "data": MARK}
+    node = Node(
+        "https://node.example", transport=answering(response(result=..., error=error))
+    )
+    with pytest.raises(RpcError) as caught:
+        node.token_balance(CONTRACT, ADDRESS, 0x10)
+    assert caught.value.code == 3
+    assert MARK not in str(caught.value)
 
 
 def response(**members: object) -> dict[str, object]:
@@ -841,6 +971,76 @@ def test_each_chain_is_the_one_its_sources_give() -> None:
         "avalanche-c-chain": (43114, "AVAX"),
     }
     assert all(name == chain.name for name, chain in EVM_CHAINS.items())
+
+
+def test_each_chain_reads_the_tokens_its_sources_give() -> None:
+    """The symbol and decimals of each, as the comment above the table cites.
+
+    A token added or changed is a new reading of those sources, so this
+    pin moves with that comment. Each contract is an EIP-55 address, and
+    a chain lists a contract or a symbol once.
+    """
+    assert {
+        name: [(t.symbol, t.decimals) for t in chain.tokens]
+        for name, chain in EVM_CHAINS.items()
+    } == {
+        "ethereum": [("USDT", 6), ("USDC", 6), ("DAI", 18), ("WETH", 18), ("WBTC", 8)],
+        "ethereum-classic": [],
+        "bnb-smart-chain": [
+            ("USDT", 18),
+            ("USDC", 18),
+            ("DAI", 18),
+            ("WBNB", 18),
+            ("BTCB", 18),
+        ],
+        "polygon-pos": [
+            ("USDT", 6),
+            ("USDC", 6),
+            ("USDC.e", 6),
+            ("DAI", 18),
+            ("WMATIC", 18),
+            ("WBTC", 8),
+        ],
+        "arbitrum-one": [
+            ("USDT", 6),
+            ("USDC", 6),
+            ("USDC.e", 6),
+            ("DAI", 18),
+            ("WETH", 18),
+            ("WBTC", 8),
+        ],
+        "op-mainnet": [
+            ("USDT", 6),
+            ("USDT0", 6),
+            ("USDC", 6),
+            ("USDC.e", 6),
+            ("DAI", 18),
+            ("WETH", 18),
+        ],
+        "base": [
+            ("USDT", 6),
+            ("USDC", 6),
+            ("USDbC", 6),
+            ("DAI", 18),
+            ("WETH", 18),
+            ("cbBTC", 8),
+        ],
+        "avalanche-c-chain": [
+            ("USDt", 6),
+            ("USDT.e", 6),
+            ("USDC", 6),
+            ("USDC.e", 6),
+            ("DAI.e", 18),
+            ("WAVAX", 18),
+            ("WBTC.e", 8),
+        ],
+    }
+    for chain in EVM_CHAINS.values():
+        contracts = [token.contract for token in chain.tokens]
+        assert all(is_valid_address(contract) for contract in contracts)
+        assert len(set(contracts)) == len(contracts)
+        assert len({token.symbol for token in chain.tokens}) == len(contracts)
+    assert EVM_CHAINS["ethereum"].tokens[0] == EvmToken(CONTRACT, "USDT", 6)
 
 
 def test_ethereum_classic_alone_reads_its_coin() -> None:

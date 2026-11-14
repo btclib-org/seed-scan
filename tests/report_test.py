@@ -27,6 +27,7 @@ from seed_scan import forks as forks_module
 from seed_scan import report as report_module
 from seed_scan import scan as scan_module
 from seed_scan.bundle import dumps, loads
+from seed_scan.evm import EVM_CHAINS
 from seed_scan.exceptions import SeedScanTypeError, SeedScanValueError
 from seed_scan.identify import identify
 from seed_scan.report import (
@@ -115,16 +116,30 @@ def result(abandon: str) -> str:
     return scan_module.dumps(scan_module.scan(abandon, chain, server="node.local:1"))
 
 
+#: Ethereum's USDT and DAI, as `seed_scan.evm.EVM_CHAINS` lists them.
+USDT, DAI = EVM_CHAINS["ethereum"].tokens[0], EVM_CHAINS["ethereum"].tokens[2]
+
+
 @pytest.fixture(scope="module")
 def evm_result(abandon: str) -> str:
     """Return the result of a node alone: ether at one address, a nonce at one.
+
+    The first address holds DAI too, and the sixth USDT and DAI.
 
     :param abandon: the bundle.
     :returns: its text.
     """
     first = eth_address(abandon, "m/44h/60h/0h", 0)
     sixth = eth_address(abandon, "m/44h/60h/0h", 5)
-    fake = Ethereum({first: 10**18}, {sixth: 4})
+    fake = Ethereum(
+        {first: 10**18},
+        {sixth: 4},
+        tokens={
+            (DAI.contract, first): 2 * 10**18,
+            (USDT.contract, sixth): 7,
+            (DAI.contract, sixth): 1,
+        },
+    )
     return scan_module.dumps(scan_module.scan(abandon, None, node=node(fake)))
 
 
@@ -471,35 +486,48 @@ def test_a_forks_total_counts_a_key_once() -> None:
 
 
 def test_the_report_of_an_ethereum_scan(abandon: str, evm_result: str) -> None:
-    """The node, the tokens not asked, each used address, the total."""
+    """The node, the tokens checked and not, each used address, the totals."""
     first = eth_address(abandon, "m/44h/60h/0h", 0)
     sixth = eth_address(abandon, "m/44h/60h/0h", 5)
     lines = report(abandon, evm_result).splitlines()
-    assert lines[3:7] == [
+    checked = ", ".join(
+        f"{token.symbol} {token.contract}" for token in EVM_CHAINS["ethereum"].tokens
+    )
+    assert lines[3:8] == [
         "server: none",
         (
             "node: https://node.example, Ethereum, chain id 1, latest block 16"
             " before the first address was read"
         ),
+        f"Ethereum tokens checked: {checked}",
         f"Ethereum tokens: not checked: {NO_TOKENS}",
         "bounds: account gap 3, gap limit 20",
     ]
+    assert checked.startswith(f"USDT {USDT.contract}, USDC 0x")
     (opening,) = [n for n, line in enumerate(lines) if line.startswith("reading")]
-    assert lines[opening + 1 : opening + 11] == [
+    assert lines[opening + 1 : opening + 14] == [
         *(
             f"  bitcoin, purpose {purpose}: not checked: {NO_SERVER}"
             for purpose in (44, 49, 84, 86)
         ),
         "  ethereum, purpose 44, on Ethereum: accounts 0 to 3 read, 1 used",
-        f"    account 0, m/44h/60h/0h: {10**18} wei at latest",
-        f"      receive m/44h/60h/0h/0/0 {first}: {10**18} wei, nonce 0",
-        f"      receive m/44h/60h/0h/0/5 {sixth}: 0 wei, nonce 4",
+        f"    account 0, m/44h/60h/0h: {10**18} wei",
+        f"      receive m/44h/60h/0h/0/0 {first}: {10**18} wei, nonce 0, block 16",
+        f"        DAI {DAI.contract}: {2 * 10**18}, 18 decimals",
+        f"      receive m/44h/60h/0h/0/5 {sixth}: 0 wei, nonce 4, block 16",
+        f"        USDT {USDT.contract}: 7, 6 decimals",
+        f"        DAI {DAI.contract}: 1, 18 decimals",
         f"  ethereum-classic, purpose 44: not checked: {OTHER_CHAIN}",
         f"  bitcoin-cash, purpose 44: not checked: {NOT_READ}",
     ]
-    assert lines[-2] == (
-        f"total: ethereum, {10**18} wei of ETH, 1 used accounts, each account key once"
-    )
+    assert lines[-4:-1] == [
+        f"total: ethereum, {10**18} wei of ETH, 1 used accounts, each account key once",
+        f"total: ethereum, USDT {USDT.contract}: 7, 6 decimals, each account key once",
+        (
+            f"total: ethereum, DAI {DAI.contract}: {2 * 10**18 + 1}, 18 decimals,"
+            " each account key once"
+        ),
+    ]
     assert not [line for line in lines if line.startswith("total: bitcoin")]
 
 
@@ -535,19 +563,21 @@ def test_a_passphrase_typed_twice_is_counted_once() -> None:
     (ethereum,) = [a for a in readings[1].accounts if a.path == "m/44h/60h/0h"]
     key = BIP32KeyData.b58decode(ethereum.xpub).derive("m/0/0")
     chain = Chain(HistoryTx(pay(1, (receive, 9)), BLOCK))
-    fake = Ethereum({address_from_pub_key(key.sec): 5})
+    address = address_from_pub_key(key.sec)
+    fake = Ethereum({address: 5}, tokens={(USDT.contract, address): 3})
     lines = report(
         text,
         scan_module.dumps(scan_module.scan(text, chain, server="s:1", node=node(fake))),
     ).splitlines()
     used = [line for line in lines if line.startswith("    account 0, ")]
     assert len(used) == 4
-    assert lines[-3:-1] == [
+    assert lines[-4:-1] == [
         (
             "total: bitcoin, 9 sat confirmed, 0 sat unconfirmed, 1 used accounts,"
             " each account key once"
         ),
         "total: ethereum, 5 wei of ETH, 1 used accounts, each account key once",
+        f"total: ethereum, USDT {USDT.contract}: 3, 6 decimals, each account key once",
     ]
 
 
@@ -646,6 +676,7 @@ def test_every_documented_line_is_one_a_report_writes(
             report(standard, None, [forked_of(standard)]),
             report(abandon, result),
             report(abandon, evm_result),
+            report(abandon, classic_result(abandon)),
             report(abandon),
             report(one, scan_module.dumps(scan_module.scan(one, chain, server="s:1"))),
             report(dumps(identify(SEGWIT, [""], no_share, accounts=1))),
@@ -694,8 +725,8 @@ def test_every_line_naming_a_defined_word_has_a_shape(
     ``forks``, that names a coin, a chain or a reason is of a shape
     `tests.no_secret_test.LINE_SHAPES` holds. The runs pay, spend before
     a block confirms it, cut a purpose short, read Ethereum's accounts on
-    other chains, read Bitcoin Cash, and refuse a passphrase, an address
-    and a scheme.
+    other chains, find tokens held, read Bitcoin Cash, and refuse a
+    passphrase, an address and a scheme.
     """
     one = dumps(identify(ABANDON, [""], no_share, accounts=1))
     paid = pay(1, (script(one, "m/84h/0h/0h", 0, 0), 10_000))
@@ -785,6 +816,12 @@ def test_every_line_naming_a_defined_word_has_a_shape(
         f"\nnot checked: reading 0, bitcoin purpose 49: {NO_WITNESS}\n",
         "\ntotal: bitcoin-cash, ",
         "\ntotal: bitcoin-sv, ",
+        f"\nEthereum tokens checked: USDT {USDT.contract}, ",
+        f"\n        DAI {DAI.contract}: 2000000000000000000, 18 decimals\n",
+        f"\n        USDT {USDT.contract}: 7, 6 decimals\n",
+        f"\ntotal: ethereum, USDT {USDT.contract}: 7, 6 decimals, each account key",
+        ", 7 of USDT at 6 decimals, ",
+        "\nPolygon PoS: POL, nonces and tokens read: USDT, USDC, USDC.e, DAI, ",
     ):
         assert line in written
     assert not unshaped(written)
@@ -797,10 +834,11 @@ def test_a_result_that_is_no_text_is_refused(abandon: str) -> None:
         report(abandon, b"{}")  # type: ignore[arg-type]
 
 
-def test_the_report_of_an_ethereum_classic_scan(abandon: str) -> None:
-    """The chain is named on the node's line, each coin's and the total.
+def classic_result(abandon: str) -> str:
+    """Return the result of an Ethereum Classic node: one account of each coin.
 
-    Each coin's accounts are counted, an account key of each once.
+    :param abandon: the bundle.
+    :returns: its text.
     """
     ethereum = eth_address(abandon, "m/44h/60h/0h", 0)
     classic = eth_address(abandon, "m/44h/61h/0h", 1)
@@ -808,12 +846,22 @@ def test_the_report_of_an_ethereum_classic_scan(abandon: str) -> None:
     result = scan_module.scan(
         abandon, None, node=node(fake), evm_chain="ethereum-classic"
     )
-    lines = report(abandon, scan_module.dumps(result)).splitlines()
-    assert lines[4:6] == [
+    return scan_module.dumps(result)
+
+
+def test_the_report_of_an_ethereum_classic_scan(abandon: str) -> None:
+    """The chain is named on the node's line, each coin's and the total.
+
+    Each coin's accounts are counted, an account key of each once. The
+    chain lists no token, and the report says none was checked.
+    """
+    lines = report(abandon, classic_result(abandon)).splitlines()
+    assert lines[4:7] == [
         (
             "node: https://node.example, Ethereum Classic, chain id 61, latest"
             " block 16 before the first address was read"
         ),
+        "Ethereum Classic tokens checked: none",
         f"Ethereum Classic tokens: not checked: {NO_TOKENS}",
     ]
     read = [line for line in lines if line.startswith("  ethereum")]
@@ -850,4 +898,19 @@ def test_a_key_read_as_both_coins_is_counted_once(abandon: str) -> None:
     lines = report(text, scan_module.dumps(result)).splitlines()
     assert lines[-2] == (
         "total: ethereum-classic, 7 wei of ETC, 1 used accounts, each account key once"
+    )
+
+
+def test_the_tokens_not_checked_name_every_condition_of_use(abandon: str) -> None:
+    """A nonce alone is use: the reason says so, beside the two balances.
+
+    The address holds no ether and no listed token, and is listed as used.
+    """
+    sixth = eth_address(abandon, "m/44h/60h/0h", 5)
+    result = scan_module.scan(abandon, None, node=node(Ethereum(nonces={sixth: 1})))
+    text = report(abandon, scan_module.dumps(result))
+    assert f"      receive m/44h/60h/0h/0/5 {sixth}: 0 wei, nonce 1, block 16\n" in text
+    assert all(
+        condition in NO_TOKENS
+        for condition in ("no native balance", "zero nonce", "no listed token balance")
     )

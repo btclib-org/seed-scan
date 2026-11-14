@@ -296,11 +296,16 @@ def _scan_summary(result: ScanResult) -> str:
         for u in result.used
     ]
     if evm is not None and chain is not None:
-        lines.append(f"{chain.title}: {chain.symbol} and nonces read, no token balance")
+        tokens = ", ".join(token.symbol for token in evm.tokens) or "none"
+        lines.append(f"{chain.title}: {chain.symbol}, nonces and tokens read: {tokens}")
         lines += [_searched(done, f"{done.coin} ") for done in evm.searched]
         lines += [
             f"used: reading {u.reading}, {u.path}: {len(u.addresses)} addresses,"
             f" {u.balance} wei of {chain.symbol}"
+            + "".join(
+                f", {held.balance} of {held.symbol} at {held.decimals} decimals"
+                for held in u.tokens
+            )
             for u in evm.used
         ]
     if not result.used and (evm is None or not evm.used):
@@ -681,7 +686,8 @@ def _parser() -> argparse.ArgumentParser:
             " Ethereum and Ethereum Classic accounts were on the chain it"
             " serves, and write the scan result to standard output. Each"
             " learns every address asked. The node is asked for the native"
-            " asset and nonces: a token balance is not asked."
+            " asset, nonces and the balances of the chain's listed ERC-20"
+            " tokens: any other token is not asked."
         ),
     )
     scan_parser.add_argument("bundle", help="the bundle file identify wrote")

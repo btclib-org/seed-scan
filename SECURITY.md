@@ -130,10 +130,10 @@ person running `identify` holds the keys to funds:
     chain's. Proving each history against the chain is
     [btclib-org/seed-scan#34](https://github.com/btclib-org/seed-scan/issues/34).
 - **The EVM node is trusted for what it answers.** `scan` takes each
-    balance and nonce as the node the user names answers it, and checks
-    no proof of either. It compares the chain id the node answers with
-    that of the chain the user names: that refuses an honest node of a
-    chain whose chain id differs, as an Ethereum node named for Ethereum
-    Classic, and not one of a chain that answers the same chain id. It
-    does not prove that the balances answered are that chain's, since a
-    node answers whatever chain id it is set to.
+    balance, nonce and token balance as the node the user names answers
+    it, and checks no proof of any. It compares the chain id the node
+    answers with that of the chain the user names: that refuses an
+    honest node of a chain whose chain id differs, as an Ethereum node
+    named for Ethereum Classic, and not one of a chain that answers the
+    same chain id. It does not prove that the balances answered are that
+    chain's, since a node answers whatever chain id it is set to.

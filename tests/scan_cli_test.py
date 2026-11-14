@@ -45,7 +45,7 @@ from btclib_wallet.fetch.transport import SessionTransport
 
 from seed_scan import cli
 from seed_scan.bundle import dumps, loads
-from seed_scan.evm import Node
+from seed_scan.evm import EVM_CHAINS, Node
 from seed_scan.identify import identify
 from seed_scan.scan import OTHER_CHAIN
 
@@ -908,9 +908,14 @@ def test_another_failure_of_a_read_is_not_read_again(
 def test_the_node_alone_is_scanned(
     capsys: pytest.CaptureFixture[str], bundle: str, bundle_text: str
 ) -> None:
-    """The result's ``evm``, and a summary naming the node and the bound."""
+    """The result's ``evm``, and a summary naming the node and the bound.
+
+    The address holds USDT too, which the summary and the result give.
+    """
     address = eth_address(bundle_text, "m/44h/60h/0h", 0)
-    with serve(serving(Ethereum({address: 5}))) as node:
+    usdt = EVM_CHAINS["ethereum"].tokens[0]
+    fake = Ethereum({address: 5}, tokens={(usdt.contract, address): 12})
+    with serve(serving(fake)) as node:
         argv = [bundle, "--node", node.url()]
         status, out, err = run(capsys, argv, Connections(Electrum()))
     assert status == 0
@@ -925,21 +930,34 @@ def test_the_node_alone_is_scanned(
         16,
     )
     (used,) = evm["used"]
+    held = {"contract": usdt.contract, "symbol": "USDT", "decimals": 6, "balance": "12"}
     assert used["addresses"] == [
-        {"index": 0, "address": address, "balance": "5", "nonce": 0}
+        {
+            "index": 0,
+            "address": address,
+            "balance": "5",
+            "nonce": 0,
+            "block": 16,
+            "tokens": [held],
+        }
     ]
+    assert used["tokens"] == [held]
+    symbols = ", ".join(token.symbol for token in EVM_CHAINS["ethereum"].tokens)
     elsewhere = (
         "scan reads Bitcoin, Ethereum and Ethereum Classic alone in this version"
     )
     assert err.splitlines() == [
         f"node: {name}, Ethereum, chain id 1, block 16",
         "bounds: account gap 3, gap limit 20",
-        "Ethereum: ETH and nonces read, no token balance",
+        f"Ethereum: ETH, nonces and tokens read: {symbols}",
         (
             "reading 0, ethereum purpose 44: accounts read: 1, cut short:"
             " the bundle's accounts end before the account gap"
         ),
-        "used: reading 0, m/44h/60h/0h: 1 addresses, 5 wei of ETH",
+        (
+            "used: reading 0, m/44h/60h/0h: 1 addresses, 5 wei of ETH,"
+            " 12 of USDT at 6 decimals"
+        ),
         "not checked: reading 0, bitcoin: no Electrum server was named",
         f"not checked: reading 0, ethereum-classic: {OTHER_CHAIN}",
         f"not checked: reading 0, bitcoin-cash: {elsewhere}",
@@ -969,7 +987,7 @@ def test_the_chain_named_is_read_and_named(
         lines[0]
         == f"node: http://127.0.0.1:{node.port}, Ethereum Classic, chain id 61, block 16"
     )
-    assert "Ethereum Classic: ETC and nonces read, no token balance" in lines
+    assert "Ethereum Classic: ETC, nonces and tokens read: none" in lines
     assert "used: reading 0, m/44h/61h/0h: 1 addresses, 7 wei of ETC" in lines
     assert "ethereum-classic" not in "".join(
         line for line in lines if line.startswith("not checked:")
