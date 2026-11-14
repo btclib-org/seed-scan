@@ -538,12 +538,13 @@ def _search(document: dict[str, Any], readings: int) -> Search:
 def loads(text: str) -> Bundle:
     """Read a bundle back from its JSON text.
 
-    Refused, as a `SeedScanValueError`: text that is not JSON, another
-    ``format``, another ``version``, a missing member, a negative count,
-    a fingerprint that is not 8 lower-case hex characters, or a match
-    naming no reading. A member of the wrong type is a
-    `SeedScanTypeError`. Members this version does not name are ignored.
-    A refusal names the member, never its value.
+    Refused, as a `SeedScanValueError`: text that is not JSON, a number
+    too long for Python to read, another ``format``, another
+    ``version``, a missing member, a negative count, a fingerprint that
+    is not 8 lower-case hex characters, or a match naming no reading. A
+    member of the wrong type is a `SeedScanTypeError`. Members this
+    version does not name are ignored. A refusal names the member, never
+    its value.
 
     A reader echoes the text members, so each holds only what the format
     defines, and a key put in one is refused: a scheme, a language, a
@@ -560,14 +561,17 @@ def loads(text: str) -> Bundle:
     try:
         document = json.loads(text)
     except json.JSONDecodeError as e:
-        where = f"line {e.lineno} column {e.colno}"
+        where = f"not JSON, at line {e.lineno} column {e.colno}"
+    except ValueError:
+        # an integer of more digits than `sys.get_int_max_str_digits`
+        where = "a number too long to read"
     else:
         where = ""
     # raised here and not in the `except`: the decoding error would stay
     # its context, and its `doc` holds the whole text, which a file handed
     # in by mistake fills with a secret. The position alone is said
     if where:
-        raise SeedScanValueError(f"bundle: not JSON, at {where}")
+        raise SeedScanValueError(f"bundle: {where}")
     if not isinstance(document, dict):
         raise SeedScanTypeError(f"bundle: a JSON {type(document).__name__}")
     if _member(document, "format", str) != FORMAT:

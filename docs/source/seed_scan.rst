@@ -39,6 +39,13 @@ seed_scan.identify module
    :members:
    :show-inheritance:
 
+seed_scan.report module
+-----------------------
+
+.. automodule:: seed_scan.report
+   :members:
+   :show-inheritance:
+
 seed_scan.scan module
 ---------------------
 

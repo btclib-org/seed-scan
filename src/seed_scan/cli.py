@@ -39,6 +39,19 @@ URLs it takes and how its certificate is verified, over one connection
 kept for the whole scan: ``--cafile`` is the Electrum server's alone. A
 failure of the server, the node or the connection is one line of fixed
 text, which names neither the answer nor the addresses asked.
+
+``seed-scan report`` reads a bundle from the file named and, where
+``--scan`` names one, the scan result made from it, and writes
+`seed_scan.report.report`'s text to standard output. It reads no secret,
+and refuses every socket and every new process before it reads a file,
+as ``identify`` does. The report goes out as its UTF-8 bytes, with no
+newline translation, so that the file it is redirected to is what its
+last line hashes, on Windows too.
+
+A file the user names is read as its UTF-8 bytes, with no newline
+translation either, so that a digest of its text, as the bundle's in
+scan's result and the report's lines naming each input, is the digest
+of the file.
 """
 
 from __future__ import annotations
@@ -64,7 +77,8 @@ from btclib_wallet.fetch.transport import (
 from seed_scan.bundle import dumps
 from seed_scan.evm import Node
 from seed_scan.exceptions import SeedScanException, SeedScanValueError
-from seed_scan.scan import ACCOUNT_GAP, GAP_LIMIT, scan
+from seed_scan.report import report
+from seed_scan.scan import ACCOUNT_GAP, GAP_LIMIT, parse_server, scan
 from seed_scan.scan import dumps as scan_dumps
 
 if TYPE_CHECKING:
@@ -105,8 +119,6 @@ class _InPlace(Exception):  # noqa: N818 -- a signal, never a failure raised out
     """The hook's answer to the guard's own event, carrying its token back."""
 
 
-_MAX_PORT = 65535
-
 # what a backend raises where its tip moved during a read, which
 # `HistoryReader` says the caller asks again. A text and not a class:
 # btclib-org/btclib-wallet#864 asks for a class of its own
@@ -134,7 +146,7 @@ def _refuse_network(event: str, args: tuple[object, ...]) -> None:
         raise _InPlace(*args)
     if event.startswith(_REFUSED) or event in _REFUSED_EXACTLY:
         raise SeedScanValueError(
-            f"identify opens no connection and starts no process: {event} refused"
+            f"this command opens no connection and starts no process: {event} refused"
         )
 
 
@@ -264,18 +276,6 @@ def _scan_summary(result: ScanResult) -> str:
     return "\n".join(lines) + "\n"
 
 
-def _server(text: str) -> tuple[str, int]:
-    """Return the host and port of ``host:port``, an IPv6 host in brackets."""
-    host, colon, port = text.rpartition(":")
-    if host.startswith("[") and host.endswith("]"):
-        host = host[1:-1]
-    if not (colon and host and port.isascii() and port.isdigit()):
-        raise SeedScanValueError("--server is not host:port")
-    if not 0 < int(port) <= _MAX_PORT:
-        raise SeedScanValueError("--server: the port is not 1 to 65535")
-    return host, int(port)
-
-
 def _tls_context(cafile: str | None) -> ssl.SSLContext:
     """Return the context a server's certificate is verified against.
 
@@ -356,15 +356,18 @@ def _failure(error: FetchError, who: str) -> str:
     return f"no usable answer from the {who}"
 
 
-def _read_bundle(name: str) -> str:
-    """Return the text of the bundle file, refusing one it cannot read."""
+def _read_text(name: str, what: str = "bundle") -> str:
+    """Return the text of a file the user names, refusing one it cannot read.
+
+    `what` is the file's kind, which the refusal names.
+    """
     text = None
     # the refusal is raised outside `suppress`: a decoding error holds the
     # bytes read, which a file handed in by mistake fills with a secret
     with contextlib.suppress(OSError, UnicodeDecodeError):
-        text = Path(name).read_text(encoding="utf-8")
+        text = Path(name).read_bytes().decode("utf-8")
     if text is None:
-        raise SeedScanValueError("the bundle file cannot be read as UTF-8 text")
+        raise SeedScanValueError(f"the {what} file cannot be read as UTF-8 text")
     return text
 
 
@@ -373,7 +376,7 @@ def _electrum(
     connect: Callable[[str, int, ssl.SSLContext], LineTransport],
 ) -> _Mainnet:
     """Return the reader of the Electrum server --server names."""
-    host, port = _server(args.server)
+    host, port = parse_server(args.server, "--server")
     context = _tls_context(args.cafile)
     transport = None
     # the transport quotes a host it refuses, and the refusal says none
@@ -400,7 +403,7 @@ def _scan_command(
             raise SeedScanValueError(err_msg)
         if args.cafile is not None and args.server is None:
             raise SeedScanValueError("--cafile is for --server, and none is named")
-        text = _read_bundle(args.bundle)
+        text = _read_text(args.bundle)
         reader = None if args.server is None else _electrum(args, connect)
         with SessionTransport() as session:
             node = None if args.node is None else Node(args.node, transport=session)
@@ -430,6 +433,28 @@ def _scan_command(
         sys.stderr.write(summary)
         return 0
     sys.stderr.write(f"seed-scan scan: {err_msg}\n")
+    return 1
+
+
+def _report_command(
+    args: argparse.Namespace, forbid_network: Callable[[], None]
+) -> int:
+    """Run ``seed-scan report``; answer its exit status."""
+    try:
+        forbid_network()
+        bundle = _read_text(args.bundle)
+        result = None if args.scan is None else _read_text(args.scan, "scan result")
+        text = report(bundle, result)
+    except SeedScanException as e:
+        err_msg = str(e)
+    else:
+        # the bytes, past the text layer's newline translation, after
+        # anything that layer still holds
+        sys.stdout.flush()
+        sys.stdout.buffer.write(text.encode("utf-8"))
+        sys.stdout.buffer.flush()
+        return 0
+    sys.stderr.write(f"seed-scan report: {err_msg}\n")
     return 1
 
 
@@ -563,6 +588,22 @@ def _parser() -> argparse.ArgumentParser:
         default=ACCOUNT_GAP,
         help=f"unused accounts in a row that end a purpose (default: {ACCOUNT_GAP})",
     )
+    report_parser = commands.add_parser(
+        "report",
+        help="summarize a bundle and its scan result, offline",
+        description=(
+            "Read a public bundle and the scan result made from it, offline,"
+            " and write what they say to standard output: per reading, coin"
+            " and purpose, the used accounts, their balance, addresses and"
+            " paths, and what was not checked and why. seed_scan.report"
+            " documents the layout."
+        ),
+    )
+    report_parser.add_argument("bundle", help="the bundle file identify wrote")
+    report_parser.add_argument(
+        "--scan",
+        help="the result scan wrote for that bundle; without it, nothing is checked",
+    )
     return parser
 
 
@@ -576,10 +617,12 @@ def main(
     """Run the command; answer its exit status.
 
     `prompt`, `forbid_network` and `connect` are what a test replaces:
-    the hidden prompt, the refusal of every socket and new process, and
-    the transport to a server.
+    the hidden prompt, the refusal of every socket and new process that
+    ``identify`` and ``report`` install, and the transport to a server.
     """
     args = _parser().parse_args(argv)
     if args.command == "scan":
         return _scan_command(args, connect)
+    if args.command == "report":
+        return _report_command(args, forbid_network)
     return _identify_command(args, prompt, forbid_network)
