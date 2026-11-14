@@ -16,13 +16,6 @@ on:
     # merge creates a commit the pull request never tested. Tag pushes are
     # the release workflow's
     branches: [main]
-    # a documentation-only commit would otherwise run every job below.
-    # Only on push: "test: every job passed" is a required check, and on
-    # pull_request a filter would produce no run at all, which blocks the
-    # merge instead of passing it. The changes job below is the
-    # pull_request side of the same question
-    paths-ignore:
-      - "*.md"
   pull_request:
     # ready_for_review, so a pull request marked ready gets the run the
     # draft condition below withheld; closed, so that the landing falls in

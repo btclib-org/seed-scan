@@ -15,6 +15,9 @@ user's own wallet moves them.
 [![implementation](https://img.shields.io/pypi/implementation/seed-scan.svg)](https://pypi.org/project/seed-scan/)
 [![wheel](https://img.shields.io/pypi/wheel/seed-scan.svg)](https://pypi.org/project/seed-scan/)
 
+[![OpenSSF Best Practices](https://www.bestpractices.dev/projects/16633/badge)](https://www.bestpractices.dev/projects/16633)
+[![OpenSSF Baseline](https://www.bestpractices.dev/projects/16633/baseline)](https://www.bestpractices.dev/projects/16633)
+
 ## What is here
 
 No release is out yet. `seed-scan identify`, `seed-scan scan`,
