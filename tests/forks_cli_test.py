@@ -319,11 +319,9 @@ def test_forks_loads_no_identify(bundle: str) -> None:
         check=True,
         capture_output=True,
         encoding="utf-8",
-        # a child that hangs fails this test, rather than holding the run.
-        # Measured: 0.20 to 0.22 s over five local runs at a one-minute
-        # load of 42 to 46, and the slowest child interpreter importing
-        # seed_scan.cli on os-windows run 43539193007, in imports_test.py,
-        # took 13.50 s
+        # a child that hangs fails this test, rather than holding the
+        # run until the job's timeout-minutes; the bound is the one
+        # tests/conftest_test.py gives its own child
         timeout=120,
     ).stdout
     assert json.loads(stdout) == [0, False]
