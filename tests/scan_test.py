@@ -463,7 +463,7 @@ def test_the_other_coins_are_not_checked(abandon: str) -> None:
         NotRead(0, "ethereum", "no Ethereum node was named"),
         *(
             NotRead(0, coin, reason)
-            for coin in ("bitcoin-cash", "litecoin", "dogecoin")
+            for coin in ("bitcoin-cash", "bitcoin-sv", "litecoin", "dogecoin")
         ),
     )
     assert result.evm is None

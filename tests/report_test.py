@@ -109,16 +109,15 @@ def evm_result(abandon: str) -> str:
     return scan_module.dumps(scan_module.scan(abandon, None, node=node(fake)))
 
 
-def forked_of(text: str, *entries: HistoryTx) -> str:
-    """Return the forks result of a bundle on Bitcoin Cash.
+def forked_of(text: str, *entries: HistoryTx, chain: str = "bitcoin-cash") -> str:
+    """Return the forks result of a bundle on a chain.
 
     :param text: the bundle.
     :param entries: the chain's transactions and their blocks.
+    :param chain: the chain read.
     :returns: the result's text.
     """
-    result = forks_module.forks(
-        text, Chain(*entries), chain="bitcoin-cash", server="h:1"
-    )
+    result = forks_module.forks(text, Chain(*entries), chain=chain, server="h:1")
     return forks_module.dumps(result)
 
 
@@ -153,6 +152,7 @@ def test_the_report_of_a_scanned_bundle(abandon: str, result: str) -> None:
         f"  {coin}, purpose {purpose}: not checked: {NOT_READ}"
         for coin, purpose in [
             ("bitcoin-cash", 44),
+            ("bitcoin-sv", 44),
             ("litecoin", 44),
             ("litecoin", 49),
             ("litecoin", 84),
@@ -207,7 +207,7 @@ def test_the_report_of_a_forks_result(abandon: str, forked: str) -> None:
     assert lines[2:9] == [
         "scan: none",
         f"forks: sha256 {digest(forked)}",
-        "chain: Bitcoin Cash, its own blocks from height 478559",
+        "chain: Bitcoin Cash, forked from Bitcoin at height 478559",
         "server: h:1",
         "bounds: account gap 3, gap limit 20",
         f"cashtokens: not checked: {NO_CASHTOKENS}",
@@ -239,6 +239,7 @@ def test_the_report_of_a_forks_result(abandon: str, forked: str) -> None:
             f"      change m/44h/145h/0h/1/2 {own}: 7000 sat confirmed,"
             " 5 sat unconfirmed"
         ),
+        "  bitcoin-sv, purpose 44, on Bitcoin Cash: accounts 0 to 2 read, 0 used",
         (
             "total: bitcoin-cash, 11000 sat confirmed, 5 sat unconfirmed,"
             " 10000 sat at the fork, 2 used accounts, each account key once"
@@ -309,6 +310,75 @@ def test_a_forks_purpose_cut_short_names_the_rerun() -> None:
         "  bitcoin-cash, purpose 44, on Bitcoin Cash: accounts 0 to 0 read, 1 used,"
         " cut short: run identify with --accounts above 1, then forks\n"
     ) in report(text, None, [forked])
+
+
+def test_a_bitcoin_sv_result_lists_bitcoin_cash_s_accounts(abandon: str) -> None:
+    """Each coin forks reads is listed on the result's chain, and totalled.
+
+    7000 sat paid since the fork at Bitcoin Cash's coin type, read on
+    Bitcoin SV. The CashTokens line is a Bitcoin Cash result's alone.
+    """
+    own = p2pkh("m/44h/145h/0h/0/0")
+    forked = forked_of(
+        abandon, HistoryTx(pay(1, (own, 7_000)), OWN), chain="bitcoin-sv"
+    )
+    lines = report(abandon, None, [forked]).splitlines()
+    assert lines[3:8] == [
+        f"forks: sha256 {digest(forked)}",
+        "chain: Bitcoin SV, forked from Bitcoin at height 478559",
+        "server: h:1",
+        "bounds: account gap 3, gap limit 20",
+        "claims: bip39",
+    ]
+    read = "  bitcoin-cash, purpose 44, on Bitcoin SV: accounts 0 to 3 read, 1 used"
+    opening = lines.index(read)
+    assert lines[opening:] == [
+        read,
+        (
+            "    account 0, m/44h/145h/0h: 7000 sat confirmed, 0 sat unconfirmed,"
+            " 0 sat at the fork, 1 transactions, read up to height 2"
+        ),
+        (
+            f"      receive m/44h/145h/0h/0/0 {own.address}: 7000 sat confirmed,"
+            " 0 sat unconfirmed"
+        ),
+        "  bitcoin-sv, purpose 44, on Bitcoin SV: accounts 0 to 2 read, 0 used",
+        (
+            "total: bitcoin-sv, 7000 sat confirmed, 0 sat unconfirmed, 0 sat at"
+            " the fork, 1 used accounts, each account key once"
+        ),
+        lines[-1],
+    ]
+
+
+def test_no_total_adds_two_chains(abandon: str, result: str, forked: str) -> None:
+    """Bitcoin's, Bitcoin Cash's and Bitcoin SV's amounts each in its own total.
+
+    The same accounts are read on each chain, and each chain's satoshis
+    are its own coin.
+    """
+    bitcoin = p2pkh("m/44h/0h/0h/0/0")
+    sv = forked_of(
+        abandon,
+        HistoryTx(pay(1, (bitcoin, 300)), SHARED),
+        HistoryTx(pay(2, (p2pkh("m/44h/236h/0h/0/0"), 20)), OWN),
+        chain="bitcoin-sv",
+    )
+    lines = report(abandon, result, [forked, sv]).splitlines()
+    assert lines[-4:-1] == [
+        (
+            "total: bitcoin, 4000 sat confirmed, 2000 sat unconfirmed,"
+            " 1 used accounts, each account key once"
+        ),
+        (
+            "total: bitcoin-cash, 11000 sat confirmed, 5 sat unconfirmed,"
+            " 10000 sat at the fork, 2 used accounts, each account key once"
+        ),
+        (
+            "total: bitcoin-sv, 320 sat confirmed, 0 sat unconfirmed,"
+            " 300 sat at the fork, 2 used accounts, each account key once"
+        ),
+    ]
 
 
 def shared(text: str, path: str, other: str, *, descriptors: bool) -> str:

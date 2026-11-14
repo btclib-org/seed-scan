@@ -89,8 +89,9 @@ chain too, at the same script, and the chain's own wallets may have used
 the key since. `forks` asks the Electrum server named, which serves the
 chain named, which of the bundle's accounts were used there, and writes
 the forks result to standard output and what it found to standard
-error. Bitcoin Cash is the chain it reads. How it reads an output that
-also carries CashTokens is in `seed_scan.forks`.
+error. `seed-scan forks --help` lists the chains it reads. How it reads
+a Bitcoin Cash output that also carries CashTokens is in
+`seed_scan.forks`.
 
 The server is the user's own, and its certificate is verified as
 *Scanning a bundle* says. Before any address is asked, its blocks at the

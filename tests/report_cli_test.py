@@ -115,7 +115,7 @@ def test_each_forks_file_is_reported(
     assert (status, err) == (0, "")
     forked = pathlib.Path(forks_file).read_bytes().decode("utf-8")
     assert out == report(*texts, [forked])
-    assert "\nchain: Bitcoin Cash, its own blocks from height " in out
+    assert "\nchain: Bitcoin Cash, forked from Bitcoin at height " in out
 
 
 def test_two_forks_files_of_one_chain_are_one_line(

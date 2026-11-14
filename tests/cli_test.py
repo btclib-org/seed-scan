@@ -57,7 +57,10 @@ def test_identify_writes_the_bundle_and_a_summary(
     assert "schemes claiming the words: bip39" in err
     assert "reading 1: bip39, passphrase 1" in err
     assert "found: reading 0, bitcoin, m/84h/0h/0h/1/0" in err
-    assert "accounts 0 to 0 of each Bitcoin purpose, of Bitcoin Cash's" in err
+    assert (
+        "accounts 0 to 0 of each Bitcoin purpose, of Bitcoin Cash's and Bitcoin"
+        " SV's for a base58 address"
+    ) in err
 
 
 def test_the_summary_says_what_was_not_found_and_not_checked(

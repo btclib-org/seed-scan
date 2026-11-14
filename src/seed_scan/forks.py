@@ -11,29 +11,36 @@ no secret, as `seed_scan.scan` reads none. `seed_scan.cli` gives it an
 Electrum server the user names for that chain, and refuses one whose
 blocks at the chain's checkpoints are another chain's.
 
-`CHAINS` holds the chains read: Bitcoin Cash, in this version. A key's
-coins at a fork are on both chains, at the same script, and a wallet of
-the new chain may since have used the key at Bitcoin's paths or at a
-coin type of its own: `seed_scan.identify`'s comment on its `COINS`
-cites the Bitcoin Cash wallets that derive at m/44h/145h and at m/44h/0h.
-So the accounts read are those whose script Bitcoin Cash spends with
-the key, P2PKH: each Bitcoin account whose descriptors are ``pkh``, as
-BIP44's purpose and Electrum's standard reading have them, and each
-account of the chain's own coin, whose descriptors are built here as
-`seed_scan.identify` builds them to search an address. Each is read as
-`seed_scan.scan` reads a Bitcoin account, with the same two bounds. A
-Bitcoin account of another script is listed as not checked, with the
-reason: Bitcoin Cash's transactions carry no witness, so a key does not
-sign for a segwit script there. The bundle's other coins are `scan`'s,
-and are not listed.
+`CHAINS` holds the chains read. A key's coins at a fork are on both
+chains, at the same script, and a wallet of the new chain may since have
+used the key at Bitcoin's paths or at a coin type of its own:
+`seed_scan.identify`'s comment on its `COINS` cites the wallets of each
+chain and the paths they derive at. Bitcoin SV parted from Bitcoin Cash
+after Bitcoin Cash parted from Bitcoin, so it also holds what a key held
+on Bitcoin Cash at that later split. And a base58 address spells the
+same script on each of these chains, so a payment made on one chain to
+an address of another chain's wallet is at that wallet's path.
+
+So the accounts read, on whichever chain, are those whose script the
+chain spends with the key, P2PKH: each Bitcoin account whose descriptors
+are ``pkh``, as BIP44's purpose and Electrum's standard reading have
+them, and each account of a coin of `CHAINS`, P2PKH over its xpub. Each
+is read as `seed_scan.scan` reads a Bitcoin account, with the same two
+bounds. A Bitcoin account of another script is listed as not checked,
+with the reason: the chain's transactions carry no witness, so a key
+does not sign for a segwit script there. The bundle's other coins are
+`scan`'s, and are not listed.
 
 The balance of an account is read as `seed_scan.scan` reads it, off the
 history the server answers for the chain. ``at_fork`` is read off the
 same history, from the transactions confirmed below the chain's
 `Chain.fork_height`, which Bitcoin's history holds too: what the account
-held when the chains parted. An output carrying CashTokens holds the
-token prefix before its script, in the same length field, as the
-CashTokens specification's *Token Encoding* says
+held when the chain parted from Bitcoin, which for Bitcoin SV is Bitcoin
+Cash's fork, not its own later split from Bitcoin Cash.
+
+On Bitcoin Cash, an output carrying CashTokens holds the token prefix
+before its script, in the same length field, as the CashTokens
+specification's *Token Encoding* says
 (https://github.com/cashtokens/cashtokens/blob/41d2444c17bbfb456d4061953a3ed0e32161571b/readme.md#token-encoding):
 it is not read as paying the script, so its satoshis are not counted,
 and an account paid only through such outputs reads as unused.
@@ -47,7 +54,8 @@ only. Its members:
 - ``bundle``: the SHA-256 of the bundle's text, UTF-8 encoded, as hex.
 - ``chain``: the chain read, a key of `CHAINS`.
 - ``server``: the server asked, as the user named it.
-- ``fork_height``: the height of the chain's first block of its own.
+- ``fork_height``: the height of the chain's first block that is not
+  Bitcoin's.
 - ``gap_limit`` and ``account_gap``: the bound of the search, as in
   `seed_scan.scan`'s result.
 - ``searched``: one object per reading, coin and purpose read:
@@ -56,7 +64,7 @@ only. Its members:
 - ``used``: one object per account with history on the chain, in the
   order read: ``coin``; the members of an item of `seed_scan.scan`'s
   ``used``, each address in Bitcoin's legacy format, which spells the
-  same script on Bitcoin Cash; and ``at_fork``, in satoshis.
+  same script on each chain of `CHAINS`; and ``at_fork``, in satoshis.
 - ``not_checked``: one object per reading, coin and purpose not read,
   with ``reading``, ``coin``, ``purpose`` and ``reason``.
 
@@ -114,6 +122,7 @@ from seed_scan.scan import (
 
 __all__ = [
     "BITCOIN_CASH",
+    "BITCOIN_SV",
     "CHAINS",
     "FORMAT",
     "VERSION",
@@ -136,12 +145,6 @@ VERSION = 1
 #: The coin whose accounts a chain forked from Bitcoin shares.
 _BITCOIN = "bitcoin"
 
-#: Why a Bitcoin account of a segwit script is not read.
-_NO_WITNESS = (
-    "a segwit script: Bitcoin Cash's transactions carry no witness, so a key"
-    " does not sign for it there"
-)
-
 
 @dataclass(frozen=True)
 class Chain:
@@ -149,7 +152,8 @@ class Chain:
 
     `name` is how the command and the result name it, and the coin of its
     own accounts in a bundle. `title` is how a summary and a refusal name
-    it. `fork_height` is the height of its first block of its own.
+    it. `fork_height` is the height of its first block that is not
+    Bitcoin's.
     `checkpoints` are heights and the id of the chain's block at each, as
     hex in display order: a server answering another block at one of them
     serves another chain, though it shares Bitcoin's genesis block.
@@ -179,8 +183,26 @@ BITCOIN_CASH = Chain(
     ),
 )
 
-#: The chains `forks` reads, by name.
-CHAINS = MappingProxyType({BITCOIN_CASH.name: BITCOIN_CASH})
+#: Bitcoin SV, which holds Bitcoin Cash's blocks up to their own split.
+#: Its checkpoints are the fork block from Bitcoin, which ElectrumSV pins,
+#: and ElectrumSV's checkpoint after the split, which tells it from Bitcoin
+#: Cash. None of the Bitcoin SV node's checkpoints does: its list ends at
+#: 530359, whose id Bitcoin Cash Node's list holds too. The sources:
+#: https://github.com/electrumsv/electrumsv/blob/7ab1c7ceaaaa0f8079da21356989d9b250e874b4/electrumsv/networks.py#L62-L74
+#: https://github.com/bitcoin-sv/bitcoin-sv/blob/6504a3aff65ba97c0f6c80962b033e35ecbfed4b/src/chainparams.cpp#L1157-L1159
+#: https://gitlab.com/bitcoin-cash-node/bitcoin-cash-node/-/blob/e13b48e37b3005dca9a316f75aea456697a5dfd6/src/chainparams.cpp#L275-277
+BITCOIN_SV = Chain(
+    name="bitcoin-sv",
+    title="Bitcoin SV",
+    fork_height=478559,
+    checkpoints=(
+        (478559, "000000000000000000651ef99cb9fcbe0dadde1d424bd9f15ff20136191a5eec"),
+        (773040, "000000000000000007a8838b1ead3b288c504de5eee26f3189fdbcd0b1a006ac"),
+    ),
+)
+
+#: The chains `forks` reads, by name, in the order their accounts are read.
+CHAINS = MappingProxyType({chain.name: chain for chain in (BITCOIN_CASH, BITCOIN_SV)})
 
 
 @dataclass(frozen=True)
@@ -243,7 +265,7 @@ def dumps(result: ForksResult) -> str:
 
 
 def _own_texts(reading: Reading, account: Account) -> tuple[str, ...]:
-    """Return the receive and change descriptors of an account of the chain.
+    """Return the receive and change descriptors of an account of `CHAINS`.
 
     P2PKH over the account's xpub, with its key origin, as text.
     """
@@ -278,30 +300,35 @@ def _plan(
 ) -> tuple[tuple[tuple[str, _Accounts], ...], list[Skipped]]:
     """Return a reading's accounts the chain spends, by coin and purpose.
 
-    Bitcoin's first, then the chain's own; beside them, the Bitcoin
-    accounts of a segwit script, one item per purpose. The accounts of
-    each coin are numbered as `seed_scan.scan` holds them to be.
+    Bitcoin's first, then each coin of `CHAINS`, in its order; beside
+    them, the Bitcoin accounts of a segwit script, one item per purpose.
+    The accounts of each coin are numbered as `seed_scan.scan` holds them
+    to be.
     """
-    bitcoin: _Accounts = {}
-    own: _Accounts = {}
+    coins: dict[str, _Accounts] = {coin: {} for coin in (_BITCOIN, *CHAINS)}
+    no_witness = (
+        f"a segwit script: {chain.title}'s transactions carry no witness, so a"
+        " key does not sign for it there"
+    )
     skipped: list[Skipped] = []
     for number, account in enumerate(reading.accounts):
         where = f"reading {position}, account {number}"
-        if account.coin == chain.name:
+        if account.coin in CHAINS:
             descriptors = _own_descriptors(reading, account, where)
-            own.setdefault(account.purpose, []).append((account, descriptors))
         elif account.coin != _BITCOIN:
             continue
         elif all(text.startswith("pkh(") for text in account.descriptors):
             descriptors = _descriptors(account, where)
-            bitcoin.setdefault(account.purpose, []).append((account, descriptors))
         else:
-            skip = Skipped(position, account.coin, account.purpose, _NO_WITNESS)
+            skip = Skipped(position, account.coin, account.purpose, no_witness)
             if skip not in skipped:
                 skipped.append(skip)
-    _numbered(position, bitcoin)
-    _numbered(position, own)
-    return ((_BITCOIN, bitcoin), (chain.name, own)), skipped
+            continue
+        purposes = coins[account.coin]
+        purposes.setdefault(account.purpose, []).append((account, descriptors))
+    for purposes in coins.values():
+        _numbered(position, purposes)
+    return tuple(coins.items()), skipped
 
 
 def _at_fork(use: AccountUse, fork_height: int) -> int:
@@ -499,11 +526,11 @@ def _skip(document: dict[str, Any], skipped: list[Skipped]) -> Skipped:
 def _held(bundle: Bundle, chain: Chain) -> tuple[dict[str, _Held], list[Skipped]]:
     """Return the accounts `forks` reads, by coin, and those it does not.
 
-    The bundle is refused as `forks` refuses it. An account of the chain's
-    own coin holds no descriptor in the bundle, and is given here the ones
+    The bundle is refused as `forks` refuses it. An account of a coin of
+    `CHAINS` holds no descriptor in the bundle, and is given here the ones
     `forks` reads it with.
     """
-    held: dict[str, _Held] = {_BITCOIN: {}, chain.name: {}}
+    held: dict[str, _Held] = {coin: {} for coin in (_BITCOIN, *CHAINS)}
     skipped: list[Skipped] = []
     for n, reading in enumerate(bundle.readings):
         coins, skips = _plan(n, reading, chain)
@@ -512,7 +539,7 @@ def _held(bundle: Bundle, chain: Chain) -> tuple[dict[str, _Held], list[Skipped]
             for purpose, accounts in purposes.items():
                 for account, _ in accounts:
                     texts = account.descriptors
-                    if coin == chain.name:
+                    if coin in CHAINS:
                         texts = _own_texts(reading, account)
                     held[coin][n, purpose, account.account] = replace(
                         account, descriptors=texts

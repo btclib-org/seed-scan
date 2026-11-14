@@ -42,8 +42,9 @@ The object's members:
   a key typed by mistake is not written; ``checked``, false where the
   search did not run, and then ``reason`` says why; ``accounts`` and
   ``indexes``, the bound (accounts ``0`` to ``accounts - 1`` of each
-  Bitcoin purpose, of Bitcoin Cash's for a base58 address, and the one
-  account of an Electrum reading, receive and change branches, indexes
+  Bitcoin purpose, of Bitcoin Cash's and Bitcoin SV's for a base58
+  address, and the one account of an Electrum reading, receive and
+  change branches, indexes
   ``0`` to ``indexes - 1``); ``searched``, how many positions were
   compared; and ``matches``, each the position of a reading in
   ``readings``, the ``coin`` of the account the address is in, and the
@@ -52,7 +53,7 @@ The object's members:
 An account object holds:
 
 - ``coin``: ``"bitcoin"``, ``"ethereum"``, ``"bitcoin-cash"``,
-  ``"litecoin"`` or ``"dogecoin"``;
+  ``"bitcoin-sv"``, ``"litecoin"`` or ``"dogecoin"``;
 - ``coin_type``: its SLIP-0044 number, from ``0``;
 - ``purpose``: the BIP43 purpose, or ``null`` for Electrum's layouts,
   which have none;
@@ -120,7 +121,14 @@ READ_SCHEMES = ("bip39", "slip39", "electrum_standard", "electrum_segwit")
 LANGUAGES = ("cs", "en", "es", "fr", "it", "ja", "ko", "pt", "ru", "tr", "zh", "zh_tw")
 
 #: The coins an account names.
-COIN_NAMES = ("bitcoin", "ethereum", "bitcoin-cash", "litecoin", "dogecoin")
+COIN_NAMES = (
+    "bitcoin",
+    "ethereum",
+    "bitcoin-cash",
+    "bitcoin-sv",
+    "litecoin",
+    "dogecoin",
+)
 
 #: Each reason a scheme is not checked, or an address not searched, by
 #: name. A passphrase SLIP-0039 refuses is the one reason with a number

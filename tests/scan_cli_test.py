@@ -934,6 +934,7 @@ def test_the_node_alone_is_scanned(
         "used: reading 0, m/44h/60h/0h: 1 addresses, 5 wei",
         "not checked: reading 0, bitcoin: no Electrum server was named",
         f"not checked: reading 0, bitcoin-cash: {elsewhere}",
+        f"not checked: reading 0, bitcoin-sv: {elsewhere}",
         f"not checked: reading 0, litecoin: {elsewhere}",
         f"not checked: reading 0, dogecoin: {elsewhere}",
     ]
