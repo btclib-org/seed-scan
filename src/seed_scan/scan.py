@@ -40,8 +40,15 @@ alone is one more such account, whose ``index`` names the one child of
 its ``xpub`` read. A coin's legacy layouts and addresses alone are each
 read, whatever ``account_gap``, and are never cut short. Each address
 is asked its balance, its nonce and its balance of each ERC-20 token
-the chain's `seed_scan.evm.EvmChain` lists, all at one block, the
-latest when its read begins. It is used where any of them is not zero.
+the chain's `seed_scan.evm.EvmChain` lists, all at the scan's block,
+the latest block, asked once before the first address. It is used where
+any of them is not zero.
+
+One block for every address keeps a node whose backends answer from
+different heights from listing an address at a block before the scan's,
+which `loads` refuses. A node that answers a read at that block with an
+error, as a backend that has not reached the block may, fails the scan
+as any failure of the node does.
 
 A token balance counts as use, so that an address that only received a
 token, and so has a nonce of zero and no balance of the native asset,
@@ -661,15 +668,13 @@ def _bitcoin_account(
 
 
 def _evm_address(
-    node: Node, tokens: Sequence[EvmToken], index: int, address: str
+    node: Node, tokens: Sequence[EvmToken], block: int, index: int, address: str
 ) -> EvmAddress | None:
     """Return what an address holds, or None where it is unused.
 
     Its balance, its nonce and its balance of each of `tokens` are read
-    at one block, the latest when its read begins; it is used where any
-    of them is not zero.
+    at `block`, the scan's; it is used where any of them is not zero.
     """
-    block = node.block_number()
     balance, nonce = node.balance(address, block), node.nonce(address, block)
     held = [
         EvmTokenBalance(token.contract, token.symbol, token.decimals, str(units))
@@ -709,6 +714,7 @@ def _evm_account(
     *,
     node: Node,
     tokens: Sequence[EvmToken],
+    block: int,
     gap_limit: int,
 ) -> EvmAccount | None:
     """Return an EVM account's used addresses, or None where none is.
@@ -720,10 +726,10 @@ def _evm_account(
     """
     branch = _branch(account, key)
     if account.index is None:
-        addresses = _evm_branch(node, tokens, branch, gap_limit)
+        addresses = _evm_branch(node, tokens, block, branch, gap_limit)
     else:
         address = address_from_pub_key(branch.derive(account.index).sec)
-        alone = _evm_address(node, tokens, account.index, address)
+        alone = _evm_address(node, tokens, block, account.index, address)
         addresses = [] if alone is None else [alone]
     if not addresses:
         return None
@@ -740,7 +746,11 @@ def _evm_account(
 
 
 def _evm_branch(
-    node: Node, tokens: Sequence[EvmToken], branch: BIP32KeyData, gap_limit: int
+    node: Node,
+    tokens: Sequence[EvmToken],
+    block: int,
+    branch: BIP32KeyData,
+    gap_limit: int,
 ) -> list[EvmAddress]:
     """Return a branch's used addresses.
 
@@ -751,7 +761,7 @@ def _evm_branch(
     index = unused = 0
     while unused < gap_limit:
         address = address_from_pub_key(branch.derive(index).sec)
-        found = _evm_address(node, tokens, index, address)
+        found = _evm_address(node, tokens, block, index, address)
         if found is None:
             unused += 1
         else:
@@ -905,8 +915,9 @@ def _scan_evm(
     """Ask the node its chain id and latest block, then read the accounts.
 
     A node whose chain id is not `chain`'s is refused before its latest
-    block is asked, without quoting the chain id it answered. `bounds`
-    are ``gap_limit`` and ``account_gap``.
+    block is asked, without quoting the chain id it answered. Every
+    address is read at that block. `bounds` are ``gap_limit`` and
+    ``account_gap``.
     """
     gap_limit, account_gap = bounds
     chain_id = node.chain_id()
@@ -917,7 +928,12 @@ def _scan_evm(
     used: list[EvmAccount] = []
     for n, (_, evm_coins, _) in enumerate(plans):
         read = partial(
-            _evm_account, n, node=node, tokens=chain.tokens, gap_limit=gap_limit
+            _evm_account,
+            n,
+            node=node,
+            tokens=chain.tokens,
+            block=block,
+            gap_limit=gap_limit,
         )
         for coin, purposes in evm_coins.items():
             if coin not in chain.coins:
