@@ -18,7 +18,7 @@ from hashlib import sha256
 import pytest
 from bip32_descriptors.bip32 import BIP32KeyData
 from bip39_slip39 import bip39
-from btclib_wallet.descriptors import parse
+from btclib_wallet.descriptors import add_checksum, parse
 from btclib_wallet.fetch.history import HistoryTx
 from coin_addresses.evm import address_from_pub_key
 
@@ -597,6 +597,71 @@ def test_an_address_alone_is_counted_apart_from_its_keys_children(
     lines = report(text, scan_module.dumps(result)).splitlines()
     assert lines[-2] == (
         "total: bnb-smart-chain, 5 wei of BNB, 2 used accounts, each account key once"
+    )
+
+
+def test_an_address_two_keys_list_is_counted_once(abandon: str) -> None:
+    """The Stable Account edited to MyEtherWallet's key at index 0.
+
+    Two accounts of two keys, "legacy" and "index 0", each list the one
+    address that holds wei: the total counts its balance once.
+    """
+    document = json.loads(abandon)
+    accounts = document["readings"][0]["accounts"]
+    (mew,) = [a for a in accounts if a["path"] == "m/44h/60h"]
+    (stable,) = [a for a in accounts if a["index"] is not None]
+    stable.update(xpub=mew["xpub"], index=0)
+    text = json.dumps(document)
+    first = eth_address(text, "m/44h/60h", 0, legacy=True)
+    fake = Ethereum({first: 7}, chain_id=56)
+    result = scan_module.scan(text, None, node=node(fake), evm_chain="bnb-smart-chain")
+    assert result.evm is not None
+    assert [(u.path, u.balance) for u in result.evm.used] == [
+        ("m/44h/60h", "7"),
+        ("m/44h/60h/9172h/3604", "7"),
+    ]
+    lines = report(text, scan_module.dumps(result)).splitlines()
+    assert lines[-2] == (
+        "total: bnb-smart-chain, 7 wei of BNB, 2 used accounts, each account key once"
+    )
+
+
+def test_a_bitcoin_address_two_keys_list_is_counted_once(abandon: str) -> None:
+    """Account 1's key edited to account 0's, at another depth.
+
+    The two xpubs differ as text and give the same scripts, so both
+    accounts list the address paid: the total counts its balance once.
+    """
+    document = json.loads(abandon)
+    accounts = document["readings"][0]["accounts"]
+    (zero,) = [a for a in accounts if a["path"] == "m/84h/0h/0h"]
+    (one,) = [a for a in accounts if a["path"] == "m/84h/0h/1h"]
+    key = BIP32KeyData.b58decode(zero["xpub"])
+    deeper = BIP32KeyData(
+        key.version,
+        key.depth + 1,
+        key.parent_fingerprint,
+        key.index,
+        key.chain_code,
+        key.key,
+    ).b58encode()
+    one["descriptors"] = [
+        add_checksum(d.split("#")[0].replace(zero["xpub"], deeper))
+        for d in zero["descriptors"]
+    ]
+    one["xpub"] = deeper
+    text = json.dumps(document)
+    paid = script(text, "m/84h/0h/0h", 0, 0)
+    chain = Chain(HistoryTx(pay(1, (paid, 9)), BLOCK))
+    result = scan_module.scan(text, chain, server="s:1")
+    assert [(u.path, u.confirmed) for u in result.used] == [
+        ("m/84h/0h/0h", 9),
+        ("m/84h/0h/1h", 9),
+    ]
+    lines = report(text, scan_module.dumps(result)).splitlines()
+    assert lines[-2] == (
+        "total: bitcoin, 9 sat confirmed, 0 sat unconfirmed, 2 used accounts,"
+        " each account key once"
     )
 
 

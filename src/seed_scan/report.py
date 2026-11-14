@@ -67,8 +67,10 @@ every other character is literal.
   account key once``, where a node is, the name and the symbol being
   those `seed_scan.evm.EVM_CHAINS` gives the node's chain. Two readings
   can hold the same account keys, as the same passphrase typed twice
-  gives: each is listed with its accounts, and a total counts the funds
-  of a key once.
+  gives: each is listed with its accounts, and a total counts a key's
+  accounts once. Two accounts of different keys can still list one
+  address, so a total sums the balance of each address once, as the
+  first used account listing it has it.
 - ``digest: sha256 <hex>``: the SHA-256 of every line above it, so that
   ``sed '$d' report.txt | shasum -a 256`` gives it back.
 """
@@ -297,7 +299,7 @@ def _once(
     """Return the used accounts, the first of each `key`.
 
     `used` pairs each account with its coin. Two accounts of one `key`
-    hold the same funds, which a total counts once.
+    are one account, which a total counts once.
     """
     accounts = {
         (account.coin, n, account.purpose, account.account): account
@@ -312,13 +314,21 @@ def _once(
 
 
 def _totals(bundle: Bundle, result: ScanResult) -> list[str]:
-    """Return the total of each coin the result reads, each key once."""
+    """Return the total of each coin the result reads.
+
+    The accounts are counted each key once, and the funds each address
+    once.
+    """
     lines = []
     if result.server is not None:
         used = _once(bundle, [("bitcoin", u) for u in result.used])
+        held: dict[str, tuple[int, int]] = {}
+        for account in result.used:
+            for a in account.addresses:
+                held.setdefault(a.address, (a.confirmed, a.unconfirmed))
         lines.append(
-            f"total: bitcoin, {sum(u.confirmed for u in used)} sat confirmed,"
-            f" {sum(u.unconfirmed for u in used)} sat unconfirmed,"
+            f"total: bitcoin, {sum(c for c, _ in held.values())} sat confirmed,"
+            f" {sum(u for _, u in held.values())} sat unconfirmed,"
             f" {len(used)} used accounts, each account key once"
         )
     if result.evm is not None:
@@ -327,14 +337,19 @@ def _totals(bundle: Bundle, result: ScanResult) -> list[str]:
 
 
 def _evm_total(bundle: Bundle, chain: str, used: tuple[EvmAccount, ...]) -> str:
-    """Return the total of the EVM chain the node serves, each key once.
+    """Return the total of the EVM chain the node serves.
 
-    Whatever its coin: an Ethereum and an Ethereum Classic account of one
-    key are read at the same addresses, on the same chain.
+    The accounts are counted each key once, and the funds each address
+    once, whatever its coin: an Ethereum and an Ethereum Classic account
+    of one key are read at the same addresses, on the same chain.
     """
     accounts = _once(bundle, [(u.coin, u) for u in used])
+    held: dict[str, str] = {}
+    for account in used:
+        for a in account.addresses:
+            held.setdefault(a.address, a.balance)
     return (
-        f"total: {chain}, {sum(int(u.balance) for u in accounts)} wei of"
+        f"total: {chain}, {sum(int(b) for b in held.values())} wei of"
         f" {EVM_CHAINS[chain].symbol}, {len(accounts)} used accounts, each account"
         " key once"
     )
