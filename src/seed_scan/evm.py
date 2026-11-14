@@ -151,6 +151,13 @@ class EvmChain:
     coins: tuple[str, ...]
 
 
+# The chains read are Ethereum's forks and the chains where an
+# m/44h/60h key controls the same address. A fork is read only where
+# what 1 ETH held at the fork yields today is worth at least 1 USD:
+# Ethereum Classic is, EthereumPoW is not, by the maintainer's scope on
+# ISS btclib-org/seed-scan#43:
+#   https://github.com/btclib-org/seed-scan/issues/43#issuecomment-6877000751
+#
 # Each chain's id, its native asset's symbol, and 18 decimals of that
 # asset, are those of its entry in the ethereum-lists registry, read at
 # the commit linked, which takes `eip155-<chain id>.json` as its name:
