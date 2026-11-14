@@ -14,7 +14,7 @@ from __future__ import annotations
 import dataclasses
 import json
 from hashlib import sha256
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import pytest
 from bip32_descriptors.bip32 import BIP32KeyData, xpub_from_xprv
@@ -44,6 +44,7 @@ from seed_scan.scan import (
     NotRead,
     Searched,
     Tip,
+    parse_server,
     scan,
 )
 
@@ -799,6 +800,22 @@ def test_a_server_that_is_not_host_and_port_is_refused(abandon: str) -> None:
     """`parse_server`'s rule, before the reader is asked."""
     with pytest.raises(SeedScanValueError, match="^server is not host:port$"):
         scan(abandon, NEVER, server="no port")
+
+
+@pytest.mark.parametrize(
+    "text, name, said",
+    [
+        ("s:1", None, "invalid name type: NoneType"),
+        (None, "server", "invalid server type: NoneType"),
+    ],
+)
+def test_parse_server_refuses_a_text_or_a_name_of_a_wrong_type(
+    text: Any, name: Any, said: str
+) -> None:
+    """Each argument on its own, the other valid."""
+    with pytest.raises(SeedScanTypeError) as caught:
+        parse_server(text, name)
+    assert str(caught.value) == said
 
 
 @pytest.mark.parametrize(

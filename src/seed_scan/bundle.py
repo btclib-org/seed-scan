@@ -181,10 +181,18 @@ _GENERATOR = (0xF5DEE51989, 0xA9FDCA3312, 0x1BAB10E32D, 0x3706B1677A, 0x644D626F
 def slip39_passphrase(number: int) -> str:
     """Return the reason a passphrase SLIP-0039 refuses is not checked.
 
+    A number that is no `int`, `bool` included, is a `SeedScanTypeError`,
+    and one whose reason `loads` would refuse is a `SeedScanValueError`.
+
     :param number: the passphrase's number, never the passphrase.
     :returns: the reason.
     """
-    return f"passphrase {number}: not one SLIP-0039 accepts"
+    if isinstance(number, bool) or not isinstance(number, int):
+        raise SeedScanTypeError(f"invalid number type: {type(number).__name__}")
+    reason = f"passphrase {number}: not one SLIP-0039 accepts"
+    if not _SLIP39_PASSPHRASE.fullmatch(reason):
+        raise SeedScanValueError("passphrase number: outside what the format writes")
+    return reason
 
 
 @dataclass(frozen=True)
@@ -252,7 +260,12 @@ class Bundle:
 
 
 def dumps(bundle: Bundle) -> str:
-    """Return the JSON text of a bundle, members in a fixed order."""
+    """Return the JSON text of a bundle, members in a fixed order.
+
+    Anything but a `Bundle` is a `SeedScanTypeError`.
+    """
+    if not isinstance(bundle, Bundle):
+        raise SeedScanTypeError(f"invalid bundle type: {type(bundle).__name__}")
     document = {"format": FORMAT, "version": VERSION, **asdict(bundle)}
     return json.dumps(document, indent=2) + "\n"
 

@@ -303,7 +303,12 @@ class ScanResult:
 
 
 def dumps(result: ScanResult) -> str:
-    """Return the JSON text of a scan result, members in a fixed order."""
+    """Return the JSON text of a scan result, members in a fixed order.
+
+    Anything but a `ScanResult` is a `SeedScanTypeError`.
+    """
+    if not isinstance(result, ScanResult):
+        raise SeedScanTypeError(f"invalid scan result type: {type(result).__name__}")
     document = {"format": FORMAT, "version": VERSION, **asdict(result)}
     return json.dumps(document, indent=2) + "\n"
 
@@ -731,8 +736,13 @@ def parse_server(text: str, name: str) -> tuple[str, int]:
     not print; an IPv6 host is in brackets, which are dropped. The port
     is ASCII digits naming 1 to 65535, leading zeros allowed. Anything
     else is refused, as a `SeedScanValueError` opening with `name` and
-    quoting nothing.
+    quoting nothing; a `text` or a `name` that is no string, as a
+    `SeedScanTypeError`.
     """
+    if not isinstance(name, str):
+        raise SeedScanTypeError(f"invalid name type: {type(name).__name__}")
+    if not isinstance(text, str):
+        raise SeedScanTypeError(f"invalid {name} type: {type(text).__name__}")
     host, colon, port = text.rpartition(":")
     if host.startswith("[") and host.endswith("]"):
         host = host[1:-1]

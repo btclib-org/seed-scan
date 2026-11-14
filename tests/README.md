@@ -40,11 +40,15 @@ is true.
 | the documentation | `docs_test.py` |
 | the import graph | `imports_test.py` |
 | the changelog | `release_notes_test.py` |
+| the calling convention | `calling_convention_test.py` |
+| input validation | `input_validation_test.py` |
 
-Not tested here: the build system; the calling convention; input
-validation; the suite opens no socket.
+Not tested here: the build system; the suite opens no socket.
 
-The calling convention and input validation are not tested yet:
-btclib-org/seed-scan#3 tracks their tests.
+`calling_convention_test.py` tests the calling convention's rules that a
+keyword-only parameter stays keyword-only and that a name's prefix
+promises what the call answers. Its rule that a private function
+carries no default is not tested yet: private functions here carry one,
+and btclib-org/seed-scan#41 tracks them.
 
 [std]: https://github.com/btclib-org/.github/blob/main/README.md

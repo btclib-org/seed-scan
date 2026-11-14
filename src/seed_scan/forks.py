@@ -259,7 +259,12 @@ class ForksResult:
 
 
 def dumps(result: ForksResult) -> str:
-    """Return the JSON text of a forks result, members in a fixed order."""
+    """Return the JSON text of a forks result, members in a fixed order.
+
+    Anything but a `ForksResult` is a `SeedScanTypeError`.
+    """
+    if not isinstance(result, ForksResult):
+        raise SeedScanTypeError(f"invalid forks result type: {type(result).__name__}")
     document = {"format": FORMAT, "version": VERSION, **asdict(result)}
     return json.dumps(document, indent=2) + "\n"
 
