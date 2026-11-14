@@ -14,14 +14,17 @@ Bitcoin Cash's hash to the ids `seed_scan.forks.BITCOIN_CASH` names.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import subprocess
 import sys
-from typing import TYPE_CHECKING, Self
+from typing import TYPE_CHECKING
 
 import pytest
+from bitcoin_core_rpc import FetchError as RpcFetchError
 from btclib.block.block_header import BlockHeader
 from btclib.script import ScriptPubKey
+from typing_extensions import override
 
 from seed_scan import cli
 from seed_scan.bundle import dumps
@@ -250,21 +253,26 @@ def test_a_failure_is_one_line_of_fixed_text(
     assert err == f"seed-scan forks: {said}\n"
 
 
-class Closing(Forked):
-    """A `Forked` that is a context manager, as the TLS transport is."""
+class Closing(Forked, contextlib.AbstractContextManager[object]):
+    """A `Forked` that is a context manager, as the TLS transport is.
+
+    The base's ``__enter__`` returns it; the command calls only
+    ``__exit__``.
+    """
 
     closed = False
+    #: what closing it raises, if anything
+    failure: Exception | None = None
 
-    def __enter__(self) -> Self:
-        """Return this server.
-
-        :returns: the server.
-        """
-        return self
-
+    @override
     def __exit__(self, *_: object) -> None:
-        """Record that the command closed it."""
+        """Record that the command closed it, then raise `failure`.
+
+        :raises Exception: `failure`, where it is set.
+        """
         self.closed = True
+        if self.failure is not None:
+            raise self.failure
 
 
 def test_the_transport_is_closed_once_forks_is_done(
@@ -273,6 +281,47 @@ def test_the_transport_is_closed_once_forks_is_done(
     """The command closes a transport that is a context manager."""
     server = Closing()
     assert run(capsys, [bundle, "--server", "h:1"], Connections(server))[0] == 0
+    assert server.closed
+
+
+#: What closing the TLS transport raises where its socket's close fails.
+CLOSE_FAILURES = [RpcFetchError(f"closing h:1: {ABANDON}"), OSError(ABANDON)]
+
+
+@pytest.mark.parametrize("failure", CLOSE_FAILURES)
+def test_a_failure_to_close_leaves_the_result_written(
+    capsys: pytest.CaptureFixture[str], bundle: str, failure: Exception
+) -> None:
+    """Every answer is read by then: the result and the summary are written.
+
+    :param capsys: pytest's capture of the standard streams.
+    :param bundle: the bundle's file.
+    :param failure: what closing the transport raises.
+    """
+    server = Closing()
+    server.failure = failure
+    status, out, err = run(capsys, [bundle, "--server", "h:1"], Connections(server))
+    assert status == 0
+    assert json.loads(out)["chain"] == "bitcoin-cash"
+    assert err.startswith("server: h:1\n")
+    assert server.closed
+
+
+@pytest.mark.parametrize("failure", CLOSE_FAILURES)
+def test_a_failure_to_close_leaves_the_command_s_own_failure_said(
+    capsys: pytest.CaptureFixture[str], bundle: str, failure: Exception
+) -> None:
+    """A server of another chain, refused: that refusal is the line written.
+
+    :param capsys: pytest's capture of the standard streams.
+    :param bundle: the bundle's file.
+    :param failure: what closing the transport raises.
+    """
+    server = Closing(headers={})
+    server.failure = failure
+    status, out, err = run(capsys, [bundle, "--server", "h:1"], Connections(server))
+    assert (status, out) == (1, "")
+    assert err == "seed-scan forks: the server does not serve Bitcoin Cash\n"
     assert server.closed
 
 

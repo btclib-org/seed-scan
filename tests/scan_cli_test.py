@@ -932,6 +932,40 @@ def test_one_tls_connection_serves_a_short_scan(
     assert tls_server.connections == 1
 
 
+def test_a_failure_to_close_the_tls_connection_leaves_the_result_written(
+    capsys: pytest.CaptureFixture[str],
+    bundle: str,
+    tls_server: LineServer,
+    tls: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The client's socket fails to close once the scan is done: dropped.
+
+    The transport raises `bitcoin_core_rpc`'s `FetchError` for it, which
+    no `except` of the command's catches: unhandled, it would end the
+    command with a traceback and no result.
+    """
+    closing = ssl.SSLSocket.close
+
+    def failing(self: ssl.SSLSocket) -> None:
+        closing(self)
+        if not self.server_side:
+            raise OSError(ABANDON)
+
+    monkeypatch.setattr(ssl.SSLSocket, "close", failing)
+    connect = Recording()
+    argv = ["scan", bundle, "--server", f"127.0.0.1:{tls_server.port}"]
+    argv += ["--cafile", str(tls / "ca.pem"), "--gap-limit", "2"]
+    assert cli.main(argv, connect=connect) == 0
+    out, err = capsys.readouterr()
+    (used,) = json.loads(out)["used"]
+    assert used["unconfirmed"] == 9
+    assert err.startswith(f"server: 127.0.0.1:{tls_server.port}\n")
+    ((_, transport),) = connect.made
+    assert isinstance(transport, PersistentTlsLineTransport)
+    assert not transport.is_open
+
+
 def test_tcp_scans_a_server_on_a_loopback_address(
     capsys: pytest.CaptureFixture[str], bundle: str, tcp_server: LineServer
 ) -> None:

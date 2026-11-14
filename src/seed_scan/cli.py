@@ -85,6 +85,7 @@ from typing import TYPE_CHECKING, NoReturn
 from btclib.exceptions import BTClibValueError
 from btclib_wallet.exceptions import FetchError, HttpError, RpcError
 from btclib_wallet.fetch.electrum import ElectrumFetcher
+from btclib_wallet.fetch.fetcher import client_errors
 from btclib_wallet.fetch.transport import (
     DEFAULT_TIMEOUT,
     LineTransport,
@@ -486,6 +487,20 @@ def _read_text(name: str, what: str = "bundle") -> str:
     return text
 
 
+def _close(transport: contextlib.AbstractContextManager[object]) -> None:
+    """Close a transport kept across requests, dropping a failure to close.
+
+    It is closed once every answer the command reads from it has been read,
+    so a failure then changes nothing the command writes: a complete result
+    is still written, rather than dropped and asked again of the server.
+    Where the command already failed, its own failure is the one said. A
+    failure to close is `bitcoin_core_rpc`'s `FetchError`, which
+    `client_errors` translates, or an `OSError` from the socket.
+    """
+    with contextlib.suppress(FetchError, OSError), client_errors():
+        transport.__exit__(None, None, None)
+
+
 def _electrum(
     args: argparse.Namespace,
     connect: Callable[[str, int, ssl.SSLContext | None], LineTransport],
@@ -494,7 +509,8 @@ def _electrum(
 ) -> _Mainnet:
     """Return the reader of the Electrum server --server names, on `chain`.
 
-    A transport that is a context manager is closed with `stack`.
+    A transport that is a context manager is closed with `stack`, as
+    `_close` says.
     """
     host, port = parse_server(args.server, "--server")
     context = None
@@ -510,8 +526,11 @@ def _electrum(
         transport = connect(host, port, context)
     if transport is None:
         raise SeedScanValueError("--server names no host a connection can use")
-    if isinstance(transport, contextlib.AbstractContextManager):
-        stack.enter_context(transport)
+    # as an `object`: mypy reads a `LineTransport`, a `Callable`, as never
+    # a context manager, and the branch below as unreachable
+    kept: object = transport
+    if isinstance(kept, contextlib.AbstractContextManager):
+        stack.callback(_close, kept)
     return _Mainnet(ElectrumFetcher(transport=transport, verify_network=False), chain)
 
 
@@ -563,7 +582,8 @@ def _scan_command(
         text = _read_text(args.bundle)
         with contextlib.ExitStack() as stack:
             reader = None if args.server is None else _electrum(args, connect, stack)
-            session = stack.enter_context(SessionTransport())
+            session = SessionTransport()
+            stack.callback(_close, session)
             if args.node is not None:
                 nodes.append(Node(args.node, transport=session))
             result = scan(
