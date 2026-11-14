@@ -22,8 +22,8 @@ from btclib_wallet.fetch.history import HistoryTx
 
 from seed_scan.bundle import dumps
 from seed_scan.exceptions import SeedScanTypeError, SeedScanValueError
+from seed_scan.forks import CHAINS, forks, loads
 from seed_scan.forks import dumps as forks_dumps
-from seed_scan.forks import forks, loads
 from seed_scan.identify import identify
 
 from .forks_test import OWN, SHARED, p2pkh
@@ -94,6 +94,27 @@ def test_a_result_reads_back_as_forks_wrote_it(bundle: str, result: str) -> None
         ("bitcoin", 84),
         ("bitcoin", 86),
     }
+
+
+@pytest.mark.parametrize("chain", list(CHAINS))
+def test_a_result_of_each_chain_reads_back_each_coin(bundle: str, chain: str) -> None:
+    """A used account of Bitcoin and of each coin of `CHAINS`, on each chain.
+
+    :param bundle: the bundle.
+    :param chain: the chain read.
+    """
+    paths = ("m/44h/0h/0h", "m/44h/145h/0h", "m/44h/236h/0h")
+    paid = pay(1, *((p2pkh(f"{path}/0/0"), 1) for path in paths))
+    result = forks_dumps(
+        forks(bundle, Chain(HistoryTx(paid, SHARED)), chain=chain, server="h:1")
+    )
+    read = loads(result, bundle)
+    assert forks_dumps(read) == result
+    assert [(u.coin, u.path) for u in read.used] == [
+        ("bitcoin", "m/44h/0h/0h"),
+        ("bitcoin-cash", "m/44h/145h/0h"),
+        ("bitcoin-sv", "m/44h/236h/0h"),
+    ]
 
 
 def test_an_electrum_result_reads_back() -> None:

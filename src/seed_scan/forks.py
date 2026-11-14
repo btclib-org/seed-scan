@@ -526,11 +526,11 @@ def _skip(document: dict[str, Any], skipped: list[Skipped]) -> Skipped:
 def _held(bundle: Bundle, chain: Chain) -> tuple[dict[str, _Held], list[Skipped]]:
     """Return the accounts `forks` reads, by coin, and those it does not.
 
-    The bundle is refused as `forks` refuses it. An account of the chain's
-    own coin holds no descriptor in the bundle, and is given here the ones
+    The bundle is refused as `forks` refuses it. An account of a coin of
+    `CHAINS` holds no descriptor in the bundle, and is given here the ones
     `forks` reads it with.
     """
-    held: dict[str, _Held] = {_BITCOIN: {}, chain.name: {}}
+    held: dict[str, _Held] = {coin: {} for coin in (_BITCOIN, *CHAINS)}
     skipped: list[Skipped] = []
     for n, reading in enumerate(bundle.readings):
         coins, skips = _plan(n, reading, chain)
@@ -539,7 +539,7 @@ def _held(bundle: Bundle, chain: Chain) -> tuple[dict[str, _Held], list[Skipped]
             for purpose, accounts in purposes.items():
                 for account, _ in accounts:
                     texts = account.descriptors
-                    if coin == chain.name:
+                    if coin in CHAINS:
                         texts = _own_texts(reading, account)
                     held[coin][n, purpose, account.account] = replace(
                         account, descriptors=texts

@@ -29,10 +29,10 @@ every other character is literal.
   none`` alone, where no result is given. Where a node is named,
   ``ethereum tokens: not checked: <reason>`` follows the node's line.
 - per forks result, in the order given, ``forks: sha256 <hex>``, the
-  SHA-256 of its text, then ``chain: <title>, its own blocks from height
-  <n>``, ``server: <host:port>``, ``bounds: account gap <n>, gap limit
-  <n>`` and ``cashtokens: not checked: <reason>``; or ``forks: none``
-  alone, where none is given.
+  SHA-256 of its text, then ``chain: <title>, forked from Bitcoin at
+  height <n>``, ``server: <host:port>`` and ``bounds: account gap <n>,
+  gap limit <n>``, and for a Bitcoin Cash result ``cashtokens: not
+  checked: <reason>``; or ``forks: none`` alone, where none is given.
 - ``claims: <scheme>, ...``: the schemes that claim the words, or
   ``claims: none``.
 - ``not derived: <scheme>: <reason>``: one line per scheme the words
@@ -66,13 +66,13 @@ every other character is literal.
   and no state the balances share.
 
   Then, per forks result, two spaces in, per coin and purpose of the
-  reading's accounts of Bitcoin and of the chain's own coin, ``<coin>,
-  purpose <n>, on <title>`` or ``<coin>, Electrum account, on
-  <title>``, followed by what was read or not checked as above, the
-  rerun ending ``, then forks``. Four spaces in, per used account,
-  ``account <n>, <path>: <n> sat confirmed, <n> sat unconfirmed, <n> sat
-  at the fork, <n> transactions, read up to height <n>``, then its used
-  addresses as a Bitcoin account's.
+  reading's accounts of Bitcoin and of each coin of
+  `seed_scan.forks.CHAINS`, ``<coin>, purpose <n>, on <title>`` or
+  ``<coin>, Electrum account, on <title>``, followed by what was read or
+  not checked as above, the rerun ending ``, then forks``. Four spaces
+  in, per used account, ``account <n>, <path>: <n> sat confirmed, <n>
+  sat unconfirmed, <n> sat at the fork, <n> transactions, read up to
+  height <n>``, then its used addresses as a Bitcoin account's.
 - ``total: bitcoin, <n> sat confirmed, <n> sat unconfirmed, <n> used
   accounts, each account key once``, where a server is named, and
   ``total: ethereum, <n> wei, <n> used accounts, each account key
@@ -95,7 +95,13 @@ from typing import TYPE_CHECKING, TypeVar
 from seed_scan.bundle import Account, Bundle, Reading, Search
 from seed_scan.bundle import loads as bundle_loads
 from seed_scan.exceptions import SeedScanTypeError, SeedScanValueError
-from seed_scan.forks import CHAINS, ForkAccount, ForkSearched, ForksResult
+from seed_scan.forks import (
+    BITCOIN_CASH,
+    CHAINS,
+    ForkAccount,
+    ForkSearched,
+    ForksResult,
+)
 from seed_scan.forks import loads as forks_loads
 from seed_scan.scan import EvmAccount, ScanResult, Searched, UsedAccount
 from seed_scan.scan import loads as scan_loads
@@ -131,7 +137,7 @@ NO_TOKENS = (
 #: Why an account is not checked where the forks result does not read it.
 NOT_IN_FORKS = "the forks result does not read it"
 
-#: Why CashTokens are not checked where a forks result is given.
+#: Why CashTokens are not checked where a Bitcoin Cash forks result is given.
 NO_CASHTOKENS = (
     "forks does not read an output carrying them as paying its script, so its"
     " satoshis are not counted, and an account paid only through such outputs"
@@ -268,7 +274,7 @@ def _forked(n: int, reading: Reading, result: ForksResult) -> list[str]:
     }
     lines: list[str] = []
     for (coin, purpose), held in _groups(reading).items():
-        if coin not in {"bitcoin", result.chain}:
+        if coin not in {"bitcoin", *CHAINS}:
             continue
         line = f"  {coin}, {_kind(purpose)}, on {title}"
         done = searched.get((coin, purpose))
@@ -341,16 +347,18 @@ def _scanned(result: ScanResult) -> list[str]:
 
 def _forks(result: ForksResult, text: str) -> list[str]:
     """Return the lines naming a forks result, what it asked and its bounds."""
-    return [
+    lines = [
         f"forks: sha256 {_digest(text)}",
         (
-            f"chain: {CHAINS[result.chain].title}, its own blocks from height"
+            f"chain: {CHAINS[result.chain].title}, forked from Bitcoin at height"
             f" {result.fork_height}"
         ),
         f"server: {result.server}",
         f"bounds: account gap {result.account_gap}, gap limit {result.gap_limit}",
-        f"cashtokens: not checked: {NO_CASHTOKENS}",
     ]
+    if result.chain == BITCOIN_CASH.name:
+        lines.append(f"cashtokens: not checked: {NO_CASHTOKENS}")
+    return lines
 
 
 _Used = TypeVar("_Used", UsedAccount, EvmAccount, ForkAccount)
