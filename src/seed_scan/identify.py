@@ -116,6 +116,11 @@ class Coin:
 #   Ethereum's own,
 #   https://github.com/LedgerHQ/ledger-live/blob/91056c17c325bf042f6449c3ed74412adcb84899/libs/ledger-wallet-framework/src/derivation.ts#L52-L57
 #   https://github.com/LedgerHQ/ledger-live/blob/91056c17c325bf042f6449c3ed74412adcb84899/libs/ledger-wallet-framework/src/derivation.ts#L257
+# - BNB 44, at its SLIP-0044 coin type, in Trust Wallet's "Smart Chain
+#   Legacy", whose BNB Smart Chain addresses wallet-core derives there
+#   and which its registry marks deprecated,
+#   https://github.com/satoshilabs/slips/blob/7a2abdd1e823f5180e0997434250eda88b57cb75/slip-0044.md#L747
+#   https://github.com/trustwallet/wallet-core/blob/7a21615fad32edd8dc0b040d845de3973cde2c5a/registry.json#L3060-L3093
 # Trezor's firmware takes 49 and 84 where a coin's definition sets
 # "segwit", 86 where it sets "taproot"; Litecoin's sets segwit alone,
 # Bitcoin Cash's and Dogecoin's neither:
@@ -150,6 +155,7 @@ COINS = (
     Coin("bitcoin", 0, (44, 49, 84, 86)),
     Coin("ethereum", 60, (44,), ("m/44h/60h/0h",)),
     Coin("ethereum-classic", 61, (44,), ("m/44h/60h/160720h/0h",)),
+    Coin("bnb", 714, (44,)),
     Coin("bitcoin-cash", 145, (44,)),
     Coin("litecoin", 2, (44, 49, 84)),
     Coin("dogecoin", 3, (44,)),

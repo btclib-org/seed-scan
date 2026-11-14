@@ -200,6 +200,7 @@ def test_each_coin_takes_the_purposes_its_wallets_derive_at() -> None:
         "bitcoin": (44, 49, 84, 86),
         "ethereum": (44,),
         "ethereum-classic": (44,),
+        "bnb": (44,),
         "bitcoin-cash": (44,),
         "litecoin": (44, 49, 84),
         "dogecoin": (44,),

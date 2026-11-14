@@ -52,10 +52,10 @@ seed-scan scan bundle.json --server electrum.example.org:50002 \
 
 It asks the Electrum server named, as `host:port`, which Bitcoin
 accounts of the bundle were used, and the EVM node named, by its URL,
-which of its Ethereum and Ethereum Classic accounts were, and writes
-the scan result to standard output and what it found to standard
-error. Name either or both. Each learns every address it is asked
-about, so name your own: there is no default.
+which of its accounts were on the chain the node serves, and writes the
+scan result to standard output and what it found to standard error.
+Name either or both. Each learns every address it is asked about, so
+name your own: there is no default.
 
 The Electrum connection is TLS, and the server's certificate is verified
 against the system's CA certificates, or against those of the file
@@ -78,16 +78,18 @@ address on each, so Ethereum's accounts are read on every chain: those
 at `m/44h/60h/<n>h`, and the legacy addresses Ledger Live and
 MyEtherWallet derive at `m/44h/60h/0h/<n>`. On Ethereum Classic its own
 are read too: those at `m/44h/61h/<n>h`, where its wallets derive, and
-the legacy ones at `m/44h/60h/160720h/0h/<n>`. Before any address is
-asked, the node's chain id is compared with the chain's. SECURITY.md's
-*Limitations, not vulnerabilities* says which nodes that refuses, and
-what it does not prove.
+the legacy ones at `m/44h/60h/160720h/0h/<n>`. On BNB Smart Chain, BNB's
+are read too: those at `m/44h/714h/<n>h`, where Trust Wallet's "Smart
+Chain Legacy" derives. Before any address is asked, the node's chain id
+is compared with the chain's. SECURITY.md's *Limitations, not
+vulnerabilities* says which nodes that refuses, and what it does not
+prove.
 
-A coin with no server or node named, every coin but Bitcoin, Ethereum
-and Ethereum Classic, and Ethereum Classic's accounts on any other
-chain, are listed as not checked. `seed_scan.scan` documents the result,
-`seed_scan.evm` the node's requests, and `seed-scan scan --help` the
-bounds of the search.
+A coin with no server or node named, every coin but Bitcoin and those
+an EVM chain reads, and the accounts of a coin one chain alone reads on
+any other chain, are listed as not checked. `seed_scan.scan` documents
+the result, `seed_scan.evm` the node's requests, and
+`seed-scan scan --help` the bounds of the search.
 
 ## Reading a fork of Bitcoin
 

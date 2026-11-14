@@ -84,7 +84,7 @@ def _either(words: Iterable[str]) -> str:
 
 
 #: The reasons a scan result writes, each a fixed text.
-SCAN_REASONS = (scan.NO_SERVER, scan.NO_NODE, scan.OTHER_CHAIN, scan.NOT_READ)
+SCAN_REASONS = (scan.NO_SERVER, scan.NO_NODE, *scan.OTHER_CHAIN.values(), scan.NOT_READ)
 
 #: The reason `seed_scan.bundle.slip39_passphrase` writes, its number any:
 #: the first ``0`` of the reason of passphrase 0 is that number.
@@ -495,6 +495,7 @@ SEARCHES = {"json": assert_json_secret_free, "lines": assert_lines_secret_free}
             "reading 0, ethereum-classic legacy account: accounts read: 1",
             "class",
         ),
+        ("lines", "  bnb, purpose 44: not checked: on BNB Smart Chain", "smart"),
     ],
 )
 def test_a_defined_word_elsewhere_is_found(
@@ -516,7 +517,7 @@ def test_a_defined_word_elsewhere_is_found(
         ("json", '{\n  "coin": "ethereum-classic"\n}', "class"),
         ("json", '{\n  "chain": "ethereum-classic",\n  "cut_short": true\n}', "class"),
         ("json", '{"cut_short": true}', "short"),
-        ("json", f'{{"reason": "{OTHER_CHAIN}"}}', "class"),
+        ("json", f'{{"reason": "{OTHER_CHAIN["ethereum-classic"]}"}}', "class"),
         (
             "json",
             '{"node": "https://node\\".example", "chain": "ethereum-classic"}',
@@ -571,6 +572,8 @@ def test_a_defined_word_elsewhere_is_found(
             "class",
         ),
         ("lines", "reading 0, ethereum-classic legacy: accounts read: 1", "class"),
+        ("json", f'{{"reason": "{OTHER_CHAIN["bnb"]}"}}', "smart"),
+        ("lines", f"  bnb, purpose 44: not checked: {OTHER_CHAIN['bnb']}", "smart"),
     ],
 )
 def test_a_defined_word_where_the_format_writes_it_is_not_a_leak(
@@ -579,7 +582,8 @@ def test_a_defined_word_where_the_format_writes_it_is_not_a_leak(
     """A defined word can hold a word of a mnemonic, and is not searched.
 
     A name holds SLIP-0039's ``class``, a member name its ``short``, and
-    ``bitcoin`` BIP39's ``coin``. A reason is dropped whole.
+    ``bitcoin`` BIP39's ``coin``. A reason is dropped whole, as BNB Smart
+    Chain's is, which holds BIP39's ``smart``.
 
     :param form: which search reads the text.
     :param text: what a command wrote.

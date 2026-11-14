@@ -34,6 +34,7 @@ from typing_extensions import override
 
 from seed_scan.evm import EVM_CHAINS, MAX_ANSWER, Node, quantity
 from seed_scan.exceptions import SeedScanTypeError, SeedScanValueError
+from seed_scan.scan import OTHER_CHAIN
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator
@@ -715,16 +716,21 @@ def test_each_chain_is_the_one_its_sources_give() -> None:
     assert all(name == chain.name for name, chain in EVM_CHAINS.items())
 
 
-def test_ethereum_classic_alone_reads_its_coin() -> None:
-    """Every chain reads Ethereum's accounts; Ethereum Classic its own too.
+def test_ethereum_classic_and_bnb_smart_chain_alone_read_their_coin() -> None:
+    """Every chain reads Ethereum's accounts; two read their own coin too.
 
-    `seed_scan.scan.OTHER_CHAIN` says so to a user whose node serves another.
+    Ethereum Classic its own, and BNB Smart Chain BNB's.
+    `seed_scan.scan.OTHER_CHAIN` names that chain to a user whose node
+    serves another.
     """
+    own = {"ethereum-classic": "ethereum-classic", "bnb-smart-chain": "bnb"}
     assert {name: chain.coins for name, chain in EVM_CHAINS.items()} == {
-        name: (
-            ("ethereum", "ethereum-classic")
-            if name == "ethereum-classic"
-            else ("ethereum",)
-        )
+        name: ("ethereum", own[name]) if name in own else ("ethereum",)
         for name in EVM_CHAINS
+    }
+    assert dict(OTHER_CHAIN) == {
+        coin: (
+            f"read on {EVM_CHAINS[name].title} alone, and the node serves another chain"
+        )
+        for name, coin in own.items()
     }
