@@ -123,7 +123,9 @@ person running `identify` holds the keys to funds:
     header the same server answers, so a server that lies can answer a
     history of its own making. `scan` and `forks` compare the server's
     genesis block with Bitcoin's, and its blocks at checkpoints with
-    those of the chain read: that refuses an honest server of another
-    chain, a fork of Bitcoin included, and does not prove that a history
-    answered is that chain's. Proving each history against the chain is
+    those of the chain read: that refuses an honest server of a chain
+    whose blocks differ at those heights, as Bitcoin Cash's for `scan`,
+    and not one of a chain that parts from the one read above its last
+    checkpoint. It does not prove that a history answered is that
+    chain's. Proving each history against the chain is
     [btclib-org/seed-scan#34](https://github.com/btclib-org/seed-scan/issues/34).

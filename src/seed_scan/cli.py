@@ -32,15 +32,18 @@ host as given, with TLS 1.2 at least. The context trusts the system's CA
 certificates, or, where ``--cafile`` names a file, the certificates of
 that file alone, which is how a server of one's own with a self-signed
 certificate is reached. The server is asked first for its genesis block,
-then for its block at a height past the forks of Bitcoin, and one
-answering another block than Bitcoin's at either is refused: a chain
-forked from Bitcoin keeps Bitcoin's genesis block. A read of a history
-during which the server's tip moved is read again, a bounded number of
-times. The node is a `seed_scan.evm.Node`, whose docstring says which
-URLs it takes and how its certificate is verified, over one connection
-kept for the whole scan: ``--cafile`` is the Electrum server's alone. A
-failure of the server, the node or the connection is one line of fixed
-text, which names neither the answer nor the addresses asked.
+then for its block at a height Bitcoin Core pins, and one answering
+another block than Bitcoin's at either is refused. A chain forked from
+Bitcoin keeps Bitcoin's genesis block, so this refuses a server of a
+chain whose first block of its own is at that height or below, as
+Bitcoin Cash's, and not one whose own blocks start above it. A read of a
+history during which the server's tip moved is read again, a bounded
+number of times. The node is a `seed_scan.evm.Node`, whose docstring
+says which URLs it takes and how its certificate is verified, over one
+connection kept for the whole scan: ``--cafile`` is the Electrum
+server's alone. A failure of the server, the node or the connection is
+one line of fixed text, which names neither the answer nor the addresses
+asked.
 
 ``seed-scan forks`` reads a bundle from the file named, runs
 `seed_scan.forks.forks` on it against the Electrum server the user names
@@ -149,10 +152,11 @@ _CAUSES: tuple[tuple[type[BaseException], str], ...] = (
     (OSError, "no connection to the {}"),
 )
 
-# Bitcoin's block at a height past the forks of Bitcoin, its id as hex in
-# display order: a chain forked from Bitcoin keeps Bitcoin's genesis block,
-# and has another block there. Bitcoin Core's assumeutxo snapshot of that
-# height:
+# Bitcoin's block at a height Bitcoin Core pins, its id as hex in display
+# order. A chain forked from Bitcoin whose first block of its own is at
+# that height or below has another block there, as Bitcoin Cash has; one
+# whose own blocks start above it is not told apart. Bitcoin Core's
+# assumeutxo snapshot of that height:
 # https://github.com/bitcoin/bitcoin/blob/a527a0077a0fcae913188410214efe98021c0cca/src/kernel/chainparams.cpp#L215-L220
 _BITCOIN_CHECKPOINTS = (
     (965000, "00000000000000000001595977e6000ce56129f5c9b4073e31ccc30b90b97da9"),
@@ -329,11 +333,12 @@ def _connect(host: str, port: int, context: ssl.SSLContext) -> LineTransport:
 class _Mainnet:
     """A reader that asks its server for Bitcoin's genesis block first.
 
-    So that a server on another chain is refused before any address is
-    asked of it. The server is then asked for its block at each checkpoint
-    of the chain read, and refused where one is not that chain's: the
-    chain is Bitcoin, at `_BITCOIN_CHECKPOINTS`, or `chain` where it is
-    given, a chain forked from Bitcoin. A read during which the tip moved
+    The server is then asked for its block at each checkpoint of the chain
+    read, and refused where one is not that chain's, before any address is
+    asked of it: the chain is Bitcoin, at `_BITCOIN_CHECKPOINTS`, or
+    `chain` where it is given, a chain forked from Bitcoin. A chain that
+    parts from the one read above its last checkpoint is not told apart.
+    A read during which the tip moved
     is read again, up to `_READS` times in all, as `HistoryReader` asks of
     its caller.
     """

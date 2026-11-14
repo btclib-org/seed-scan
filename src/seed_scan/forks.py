@@ -77,12 +77,14 @@ from btclib_wallet.fetch.history import HistoryReader
 from seed_scan.bundle import Account, Reading, loads
 from seed_scan.exceptions import SeedScanTypeError, SeedScanValueError
 from seed_scan.scan import (
+    _OUTSIDE,
     ACCOUNT_GAP,
     GAP_LIMIT,
     Address,
     Tip,
     Transaction,
     _balances,
+    _bounded,
     _descriptors,
     _discover,
     _limit,
@@ -312,15 +314,20 @@ def _fork_account(
 ) -> ForkAccount | None:
     """Return what an account used on the chain, or None where it used nothing.
 
-    Read as `seed_scan.scan` reads a Bitcoin account.
+    Read as `seed_scan.scan` reads a Bitcoin account, its balance bounded
+    as `seed_scan.scan` bounds it. What it held at the fork is held to the
+    same bound.
     """
     where = f"reading {reading}, account {account.path}"
     use = _read_account(descriptors, reader, gap_limit, where)
     if use is None:
         return None
-    found = _used_account(reading, account, use)
+    found = _used_account(reading, account, use, where)
+    at_fork = _at_fork(use, fork_height)
+    if not _bounded(at_fork, 0):
+        raise SeedScanValueError(f"{where}: {_OUTSIDE}")
     members = {field.name: getattr(found, field.name) for field in fields(found)}
-    return ForkAccount(coin=coin, at_fork=_at_fork(use, fork_height), **members)
+    return ForkAccount(coin=coin, at_fork=at_fork, **members)
 
 
 def forks(
@@ -340,11 +347,12 @@ def forks(
     `reader` is asked anything. Refused as `seed_scan.scan.scan` refuses
     them: text that is not a bundle, a descriptor or an xpub that does not
     parse, accounts not numbered from 0, a `server` that
-    `seed_scan.scan.parse_server` refuses, a bound below 1, and an account
-    whose discovery `seed_scan.scan` refuses in both reads of it. A
-    `chain` not in `CHAINS` is refused too, without quoting it. A
-    `chain`, a `server` or a bound of a wrong type is a
-    `SeedScanTypeError`.
+    `seed_scan.scan.parse_server` refuses, a bound below 1, an account
+    whose discovery `seed_scan.scan` refuses in both reads of it, and an
+    account whose balance, or a used address's, is outside 0 to 21 million
+    bitcoin. So is one whose holding at the fork is outside that bound. A
+    `chain` not in `CHAINS` is refused too, without quoting it. A `chain`,
+    a `server` or a bound of a wrong type is a `SeedScanTypeError`.
     """
     bundle = loads(text)
     if not isinstance(chain, str):

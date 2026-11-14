@@ -496,8 +496,15 @@ def _read_account(
     raise SeedScanValueError(f"{where}: {err_msg}, in both reads of it")
 
 
-def _used_account(reading: int, account: Account, use: AccountUse) -> UsedAccount:
-    """Return what an account's discovery found, as public data."""
+def _used_account(
+    reading: int, account: Account, use: AccountUse, where: str
+) -> UsedAccount:
+    """Return what an account's discovery found, as public data.
+
+    Refused where the balance of the account or of a used address is not
+    `_bounded`, as `loads` refuses it; `where` names the account in the
+    refusal.
+    """
     history = use.history
     positions = [
         (branch, index, script_pub_key)
@@ -512,6 +519,8 @@ def _used_account(reading: int, account: Account, use: AccountUse) -> UsedAccoun
     ]
     confirmed = sum(c for c, _ in balances.values())
     unconfirmed = sum(u for _, u in balances.values())
+    if not all(_bounded(*b) for b in [*balances.values(), (confirmed, unconfirmed)]):
+        raise SeedScanValueError(f"{where}: {_OUTSIDE}")
     return UsedAccount(
         reading=reading,
         purpose=account.purpose,
@@ -547,21 +556,10 @@ def _bitcoin_account(
     reader: HistoryReader,
     gap_limit: int,
 ) -> UsedAccount | None:
-    """Return what a Bitcoin account used, or None where it used nothing.
-
-    Refused where the balance of the account or of a used address is not
-    `_bounded`, as `loads` refuses it.
-    """
+    """Return what a Bitcoin account used, or None where it used nothing."""
     where = f"reading {reading}, account {account.path}"
     use = _read_account(descriptors, reader, gap_limit, where)
-    if use is None:
-        return None
-    used = _used_account(reading, account, use)
-    balances = [(a.confirmed, a.unconfirmed) for a in used.addresses]
-    balances.append((used.confirmed, used.unconfirmed))
-    if not all(_bounded(*balance) for balance in balances):
-        raise SeedScanValueError(f"{where}: {_OUTSIDE}")
-    return used
+    return None if use is None else _used_account(reading, account, use, where)
 
 
 def _evm_account(

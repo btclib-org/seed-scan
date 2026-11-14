@@ -61,10 +61,11 @@ The Electrum connection is TLS, and the server's certificate is verified
 against the system's CA certificates, or against those of the file
 `--cafile` names, which is how a server with a self-signed certificate
 is reached. Before any address is asked, the server's genesis block and
-its block at a height past the forks of Bitcoin are compared with
-Bitcoin's, so that a server of a chain forked from it, as one of Bitcoin
-Cash's, is refused. That does not prove the histories it answers are
-Bitcoin's, as SECURITY.md's *Limitations, not vulnerabilities* says.
+its block at a height Bitcoin Core pins are compared with Bitcoin's.
+That refuses a server of a chain forked from Bitcoin at that height or
+below, as one of Bitcoin Cash's, and not one of a chain forked above it.
+Nor does it prove the histories the server answers are Bitcoin's, as
+SECURITY.md's *Limitations, not vulnerabilities* says.
 
 The node is an execution client's JSON-RPC, at an `https` URL, or an
 `http` one on a loopback address such as `http://127.0.0.1:8545`.
@@ -94,13 +95,13 @@ error. Bitcoin Cash is the chain it reads. How it reads an output that
 also carries CashTokens is in `seed_scan.forks`.
 
 The server is the user's own, and its certificate is verified as
-*Scanning a bundle* says. Before any address is asked, its blocks at
-the chain's checkpoints are compared with the chain's, so that a server
-of another chain, as one of Bitcoin's, is refused. That shows which
-chain the server says it serves, not that the histories it answers are
-that chain's: the server is trusted for what it answers, as SECURITY.md's
-*Limitations, not vulnerabilities* says, and proving each history
-against the chain is
+*Scanning a bundle* says. Before any address is asked, its blocks at the
+chain's checkpoints are compared with the chain's, so that a server of a
+chain whose blocks differ there, as one of Bitcoin's, is refused. That
+shows which chain the server says it serves, not that the histories it
+answers are that chain's: the server is trusted for what it answers, as
+SECURITY.md's *Limitations, not vulnerabilities* says, and proving each
+history against the chain is
 [btclib-org/seed-scan#34](https://github.com/btclib-org/seed-scan/issues/34).
 
 `seed_scan.forks` documents the result and which accounts are read, and
