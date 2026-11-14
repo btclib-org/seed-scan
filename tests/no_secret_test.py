@@ -123,9 +123,6 @@ _TITLE = _either(
 )
 _SCAN_REASON = _either(SCAN_REASONS)
 _FORKS_REASON = _group(_NO_WITNESS)
-_PROTOCOLS = _either(
-    names for tokens in report.CHAIN_TOKENS.values() for names, _ in tokens
-)
 _TOKENS_REASON = _either((report.TOKENS_IN_SCRIPT, report.TOKENS_IN_OP_RETURN))
 _REPORT_REASON = _group(
     *map(
@@ -242,7 +239,11 @@ LINE_SHAPES = tuple(
         ),
         rf"{_EVM_TITLE} tokens: not checked: {_either([report.NO_TOKENS])}",
         rf"chain: {_FORK_TITLE}, forked from (Bitcoin) at height {_N}",
-        rf"{_PROTOCOLS}: not checked: {_TOKENS_REASON}",
+        *(
+            rf"({re.escape(names)}): not checked: ({re.escape(reason)})"
+            for tokens in report.CHAIN_TOKENS.values()
+            for names, reason in tokens
+        ),
         rf"not derived: [^:]+: {_BUNDLE_REASON}",
         rf"address search: not run: {_BUNDLE_REASON}",
         (
@@ -755,3 +756,19 @@ def test_a_line_of_no_shape_naming_a_defined_word_is_listed() -> None:
         "for a base58 address",
     ]
     assert unshaped("\n".join(lines)) == ["passphrase: bitcoin"]
+
+
+@pytest.mark.parametrize(
+    "names, reason",
+    [pair for tokens in report.CHAIN_TOKENS.values() for pair in tokens],
+)
+def test_a_protocol_with_the_other_reason_is_unshaped(names: str, reason: str) -> None:
+    """A token line has a shape only with its protocol's own reason.
+
+    :param names: a protocol's names, as a report writes them.
+    :param reason: why its tokens are not checked.
+    """
+    (other,) = {report.TOKENS_IN_SCRIPT, report.TOKENS_IN_OP_RETURN} - {reason}
+    own = f"{names}: not checked: {reason}"
+    swapped = f"{names}: not checked: {other}"
+    assert unshaped(f"{own}\n{swapped}") == [swapped]
