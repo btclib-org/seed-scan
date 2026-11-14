@@ -414,7 +414,7 @@ def test_eip55s_test_cases_are_asked(address: str) -> None:
     """
     fake = Ethereum({address: 5}, {address: 2})
     node = Node("https://node.example", transport=fake)
-    for spelled in (address, address.lower(), "0x" + address[2:].upper()):
+    for spelled in (address, address.lower(), f"0x{address[2:].upper()}"):
         assert node.balance(spelled) == 5
         assert node.nonce(spelled) == 2
 
@@ -434,14 +434,14 @@ def flipped(address: str, position: int) -> str:
     [
         "",
         "0x",
-        "0x" + "00" * 19,
-        "0x" + "00" * 21,
+        f"0x{'00' * 19}",
+        f"0x{'00' * 21}",
         MIXED[2:],
-        "0X" + MIXED[2:].lower(),
-        " " + MIXED,
-        MIXED + "\n",
-        "0x" + "0g" * 20,
-        "0x" + chr(0x660) * 40,
+        f"0X{MIXED[2:].lower()}",
+        f" {MIXED}",
+        f"{MIXED}\n",
+        f"0x{'0g' * 20}",
+        f"0x{chr(0x660) * 40}",
         flipped(MIXED, 3),
         flipped(MIXED, len(MIXED) - 1),
     ],
