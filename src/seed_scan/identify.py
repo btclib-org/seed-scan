@@ -17,11 +17,11 @@ shares.
 Given an address the user knows, it compares the address's script with
 those of every Bitcoin account it wrote, within a bound written beside
 the result. A base58 address is also compared with those of each
-Bitcoin Cash, Bitcoin SV and eCash account, since it spells the same
-script on each of these chains; a match names the coin of the path it is
-at. An address of another network is not searched, and the bundle says
-so; a text that is no Bitcoin address is not written either, since a key
-typed by mistake would otherwise land in the bundle.
+account at Bitcoin Cash's, Bitcoin SV's and eCash's coin types, since it
+spells the same script on each of these chains; a match names the coin
+of the path it is at. An address of another network is not searched,
+and the bundle says so; a text that is no Bitcoin address is not written
+either, since a key typed by mistake would otherwise land in the bundle.
 
 Nothing here opens a connection: `seed_scan.cli` refuses one for the
 whole run. What leaves this module is `seed_scan.bundle`'s objects,
@@ -108,10 +108,18 @@ class Coin:
 #   whose plugin does not derive at eCash's coin type,
 #   https://github.com/Bitcoin-ABC/bitcoin-abc/blob/988b903deb04311b12ba067734dab3ff9f5411a7/electrum/electrumabc/base_wizard.py#L445-L448
 #   https://github.com/Bitcoin-ABC/bitcoin-abc/blob/988b903deb04311b12ba067734dab3ff9f5411a7/electrum/electrumabc/base_wizard.py#L482-L497
-#   Cashtab derives one address, at m/44h/1899h/0h/0/0, a coin type the
-#   bundle does not declare, btclib-org/seed-scan#40,
+# - eCash tokens 44: Cashtab, eCash's web wallet, which derives its one
+#   address at m/44h/1899h/0h/0/0, and an HD wallet's accounts at
+#   m/44h/1899h through ecash-wallet,
 #   https://github.com/Bitcoin-ABC/bitcoin-abc/blob/988b903deb04311b12ba067734dab3ff9f5411a7/cashtab/src/config/app.ts#L49
 #   https://github.com/Bitcoin-ABC/bitcoin-abc/blob/988b903deb04311b12ba067734dab3ff9f5411a7/cashtab/src/wallet/index.ts#L269-L270
+#   https://github.com/Bitcoin-ABC/bitcoin-abc/blob/988b903deb04311b12ba067734dab3ff9f5411a7/cashtab/src/wallet/useWallet.ts#L642-L650
+#   https://github.com/Bitcoin-ABC/bitcoin-abc/blob/988b903deb04311b12ba067734dab3ff9f5411a7/modules/ecash-wallet/src/wallet.ts#L668-L669
+#   The name follows SLIP-0044, which registers 1899 as eCash token, and
+#   Electrum ABC, whose function for that path names it for eCash's SLP
+#   tokens and is called by its tests alone,
+#   https://github.com/satoshilabs/slips/blob/7a2abdd1e823f5180e0997434250eda88b57cb75/slip-0044.md?plain=1#L1136
+#   https://github.com/Bitcoin-ABC/bitcoin-abc/blob/988b903deb04311b12ba067734dab3ff9f5411a7/electrum/electrumabc/keystore.py#L855-L857
 # - Dogecoin 44: Trezor Suite, Ledger Live and wallet-core,
 #   https://github.com/trezor/trezor-suite/blob/c861929418c13919b335061d65a169de5aa869f3/networks/bitcoin/network-bitcoin-suite-common/src/networkConfig.ts#L178-L197
 #   https://github.com/trustwallet/wallet-core/blob/7a21615fad32edd8dc0b040d845de3973cde2c5a/registry.json#L95-L105
@@ -139,6 +147,7 @@ COINS = (
     Coin("bitcoin-cash", 145, (44,)),
     Coin("bitcoin-sv", 236, (44,)),
     Coin("ecash", 899, (44,)),
+    Coin("ecash-tokens", 1899, (44,)),
     Coin("litecoin", 2, (44, 49, 84)),
     Coin("dogecoin", 3, (44,)),
 )
@@ -157,7 +166,7 @@ _BASE58 = ("p2pkh", "p2sh")
 
 # the coins forked from Bitcoin whose accounts a base58 address is
 # searched in
-_FORKS = ("bitcoin-cash", "bitcoin-sv", "ecash")
+_FORKS = ("bitcoin-cash", "bitcoin-sv", "ecash", "ecash-tokens")
 
 # what each scheme the words may claim and no reading covers is
 # reported as
@@ -463,9 +472,9 @@ def identify(
 
     `accounts` is how many accounts of each coin and purpose are written,
     from account 0. Where `address` is given, the receive and change
-    branches of each Bitcoin account written, and of each Bitcoin Cash,
-    Bitcoin SV and eCash one where it is a base58 address, are searched
-    for it, from index 0 to `indexes` - 1.
+    branches of each Bitcoin account written, and of each account at
+    Bitcoin Cash's, Bitcoin SV's and eCash's coin types where it is a
+    base58 address, are searched for it, from index 0 to `indexes` - 1.
 
     A refusal names no secret: the words and the passphrases are never
     quoted.

@@ -13,7 +13,7 @@ blocks at the chain's checkpoints are another chain's.
 
 `CHAINS` holds the chains read. A key's coins at a fork are on both
 chains, at the same script, and a wallet of the new chain may since have
-used the key at Bitcoin's paths or at a coin type of its own:
+used the key at Bitcoin's paths or at coin types of its own:
 `seed_scan.identify`'s comment on its `COINS` cites the wallets of each
 chain and the paths they derive at. Bitcoin SV and eCash each parted
 from Bitcoin Cash after Bitcoin Cash parted from Bitcoin, so each also
@@ -25,8 +25,9 @@ that wallet's path.
 So the accounts read, on whichever chain, are those whose script the
 chain spends with the key, P2PKH: each Bitcoin account whose descriptors
 are ``pkh``, as BIP44's purpose and Electrum's standard reading have
-them, and each account of a coin of `CHAINS`, P2PKH over its xpub. Each
-is read as `seed_scan.scan` reads a Bitcoin account, with the same two
+them, and each account of a coin of `CHAINS` or of ``ecash-tokens``,
+the coin type eCash's Cashtab derives at, P2PKH over its xpub. Each is
+read as `seed_scan.scan` reads a Bitcoin account, with the same two
 bounds. A Bitcoin account of another script is listed as not checked,
 with the reason: the chain's transactions carry no witness, so a key
 does not sign for a segwit script there. The bundle's other coins are
@@ -240,6 +241,11 @@ CHAINS = MappingProxyType(
     {chain.name: chain for chain in (BITCOIN_CASH, BITCOIN_SV, ECASH)}
 )
 
+#: The coins whose accounts each chain reads besides Bitcoin's, in the
+#: order read: each chain's own, and the coin type eCash's Cashtab
+#: derives at.
+_FORK_COINS = (*CHAINS, "ecash-tokens")
+
 
 @dataclass(frozen=True)
 class ForkSearched:
@@ -301,7 +307,7 @@ def dumps(result: ForksResult) -> str:
 
 
 def _own_texts(reading: Reading, account: Account) -> tuple[str, ...]:
-    """Return the receive and change descriptors of an account of `CHAINS`.
+    """Return the receive and change descriptors of an account of `_FORK_COINS`.
 
     P2PKH over the account's xpub, with its key origin, as text.
     """
@@ -336,12 +342,12 @@ def _plan(
 ) -> tuple[tuple[tuple[str, _Accounts], ...], list[Skipped]]:
     """Return a reading's accounts the chain spends, by coin and purpose.
 
-    Bitcoin's first, then each coin of `CHAINS`, in its order; beside
+    Bitcoin's first, then each coin of `_FORK_COINS`, in its order; beside
     them, the Bitcoin accounts of a segwit script, one item per purpose.
     The accounts of each coin are numbered as `seed_scan.scan` holds them
     to be.
     """
-    coins: dict[str, _Accounts] = {coin: {} for coin in (_BITCOIN, *CHAINS)}
+    coins: dict[str, _Accounts] = {coin: {} for coin in (_BITCOIN, *_FORK_COINS)}
     no_witness = (
         f"a segwit script: {chain.title}'s transactions carry no witness, so a"
         " key does not sign for it there"
@@ -349,7 +355,7 @@ def _plan(
     skipped: list[Skipped] = []
     for number, account in enumerate(reading.accounts):
         where = f"reading {position}, account {number}"
-        if account.coin in CHAINS:
+        if account.coin in _FORK_COINS:
             descriptors = _own_descriptors(reading, account, where)
         elif account.coin != _BITCOIN:
             continue
@@ -563,10 +569,10 @@ def _held(bundle: Bundle, chain: Chain) -> tuple[dict[str, _Held], list[Skipped]
     """Return the accounts `forks` reads, by coin, and those it does not.
 
     The bundle is refused as `forks` refuses it. An account of a coin of
-    `CHAINS` holds no descriptor in the bundle, and is given here the ones
-    `forks` reads it with.
+    `_FORK_COINS` holds no descriptor in the bundle, and is given here the
+    ones `forks` reads it with.
     """
-    held: dict[str, _Held] = {coin: {} for coin in (_BITCOIN, *CHAINS)}
+    held: dict[str, _Held] = {coin: {} for coin in (_BITCOIN, *_FORK_COINS)}
     skipped: list[Skipped] = []
     for n, reading in enumerate(bundle.readings):
         coins, skips = _plan(n, reading, chain)
@@ -575,7 +581,7 @@ def _held(bundle: Bundle, chain: Chain) -> tuple[dict[str, _Held], list[Skipped]
             for purpose, accounts in purposes.items():
                 for account, _ in accounts:
                     texts = account.descriptors
-                    if coin in CHAINS:
+                    if coin in _FORK_COINS:
                         texts = _own_texts(reading, account)
                     held[coin][n, purpose, account.account] = replace(
                         account, descriptors=texts

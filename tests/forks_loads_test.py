@@ -98,12 +98,18 @@ def test_a_result_reads_back_as_forks_wrote_it(bundle: str, result: str) -> None
 
 @pytest.mark.parametrize("chain", list(CHAINS))
 def test_a_result_of_each_chain_reads_back_each_coin(bundle: str, chain: str) -> None:
-    """A used account of Bitcoin and of each coin of `CHAINS`, on each chain.
+    """A used account of each coin forks reads, on each chain.
 
     :param bundle: the bundle.
     :param chain: the chain read.
     """
-    paths = ("m/44h/0h/0h", "m/44h/145h/0h", "m/44h/236h/0h", "m/44h/899h/0h")
+    paths = (
+        "m/44h/0h/0h",
+        "m/44h/145h/0h",
+        "m/44h/236h/0h",
+        "m/44h/899h/0h",
+        "m/44h/1899h/0h",
+    )
     paid = pay(1, *((p2pkh(f"{path}/0/0"), 1) for path in paths))
     result = forks_dumps(
         forks(bundle, Chain(HistoryTx(paid, SHARED)), chain=chain, server="h:1")
@@ -115,6 +121,7 @@ def test_a_result_of_each_chain_reads_back_each_coin(bundle: str, chain: str) ->
         ("bitcoin-cash", "m/44h/145h/0h"),
         ("bitcoin-sv", "m/44h/236h/0h"),
         ("ecash", "m/44h/899h/0h"),
+        ("ecash-tokens", "m/44h/1899h/0h"),
     ]
 
 
