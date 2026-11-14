@@ -522,10 +522,11 @@ def test_the_timeout_bounds_the_whole_exchange(
         return 200, Ethereum().answer(body), {}
 
     served = server(slow)
+    timeout = 0.1
     started = time.monotonic()
     try:
         with pytest.raises(FetchError) as caught:
-            Node(served.url(), timeout=0.1).chain_id()
+            Node(served.url(), timeout=timeout).chain_id()
         elapsed = time.monotonic() - started
     finally:
         # no assertion here, which would replace the client's exception
@@ -535,7 +536,7 @@ def test_the_timeout_bounds_the_whole_exchange(
             request_thread.join(5)
     (thread,) = handling
     assert not thread.is_alive()
-    assert elapsed < 0.5
+    assert elapsed < 5 * timeout
     assert isinstance(cause(caught.value, TimeoutError), TimeoutError)
 
 
