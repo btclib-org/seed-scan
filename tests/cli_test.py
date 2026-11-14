@@ -17,7 +17,7 @@ import pytest
 
 from seed_scan import cli
 from seed_scan.bundle import loads
-from seed_scan.exceptions import SeedScanValueError
+from seed_scan.exceptions import SeedScanTypeError, SeedScanValueError
 
 from .identify_test import ABANDON, BIP84_CHANGE, SHARES, Prompt
 from .secret_free import assert_secret_free
@@ -152,6 +152,28 @@ def test_a_command_is_required(capsys: pytest.CaptureFixture[str]) -> None:
         cli.main([], prompt=Prompt(), forbid_network=no_guard)
     assert caught.value.code == 2
     assert "required" in capsys.readouterr().err
+
+
+def test_with_no_argv_the_process_arguments_are_read(
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`main` with nothing takes the process's own argv to parse."""
+    monkeypatch.setattr(sys, "argv", ["seed-scan"])
+    with pytest.raises(SystemExit) as caught:
+        cli.main()
+    assert caught.value.code == 2
+    assert "required" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [1.5, "identify", ["identify", None]],
+    ids=["float", "str", "non-str element"],
+)
+def test_an_argv_that_is_no_sequence_of_strings_is_refused(argv: object) -> None:
+    """An argv that is no sequence of strings is refused before parsing."""
+    with pytest.raises(SeedScanTypeError, match="invalid argv type"):
+        cli.main(argv)  # type: ignore[arg-type]
 
 
 @pytest.mark.parametrize(

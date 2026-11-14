@@ -71,6 +71,7 @@ import getpass
 import ssl
 import sys
 import warnings
+from collections.abc import Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING, NoReturn
 
@@ -85,7 +86,11 @@ from btclib_wallet.fetch.transport import (
 
 from seed_scan.bundle import dumps
 from seed_scan.evm import Node
-from seed_scan.exceptions import SeedScanException, SeedScanValueError
+from seed_scan.exceptions import (
+    SeedScanException,
+    SeedScanTypeError,
+    SeedScanValueError,
+)
 from seed_scan.forks import CHAINS, Chain, forks
 from seed_scan.forks import dumps as forks_dumps
 from seed_scan.report import report
@@ -93,7 +98,7 @@ from seed_scan.scan import ACCOUNT_GAP, GAP_LIMIT, parse_server, scan
 from seed_scan.scan import dumps as scan_dumps
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Iterable, Sequence
+    from collections.abc import Callable, Iterable
 
     from btclib.alias import Octets
     from btclib.script import ScriptPubKey
@@ -739,6 +744,17 @@ def _add_bounds(parser: argparse.ArgumentParser) -> None:
     )
 
 
+def _assert_argv(argv: Sequence[str] | None) -> None:
+    """Refuse an argv that is neither None nor a sequence of strings."""
+    if argv is None:
+        return
+    if isinstance(argv, str) or not isinstance(argv, Sequence):
+        raise SeedScanTypeError(f"invalid argv type: {type(argv).__name__}")
+    for raw in argv:
+        if not isinstance(raw, str):
+            raise SeedScanTypeError(f"invalid argv type: {type(raw).__name__}")
+
+
 def main(
     argv: Sequence[str] | None = None,
     *,
@@ -752,6 +768,7 @@ def main(
     the hidden prompt, the refusal of every socket and new process that
     ``identify`` and ``report`` install, and the transport to a server.
     """
+    _assert_argv(argv)
     args = _parser().parse_args(argv)
     if args.command == "scan":
         return _scan_command(args, connect)
