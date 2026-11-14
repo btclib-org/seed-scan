@@ -18,7 +18,9 @@ every other character is literal.
 
 - ``seed-scan report <VERSION>``: `VERSION` says the layout below. A
   change of meaning takes a new version.
-- ``bundle: sha256 <hex>``: the SHA-256 of the bundle's text.
+- ``bundle: sha256 <hex>``: the SHA-256 of the bundle's text, UTF-8
+  encoded: ``seed-scan report`` reads each file as its bytes, so this
+  is the file's digest.
 - ``scan: sha256 <hex>``, the SHA-256 of the scan result's text, then
   ``server: <host:port>`` or ``server: none``, ``node: <url>, chain id
   <n>, latest block <n> before the first address was read`` or ``node:

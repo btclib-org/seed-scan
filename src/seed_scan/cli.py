@@ -44,7 +44,14 @@ text, which names neither the answer nor the addresses asked.
 ``--scan`` names one, the scan result made from it, and writes
 `seed_scan.report.report`'s text to standard output. It reads no secret,
 and refuses every socket and every new process before it reads a file,
-as ``identify`` does.
+as ``identify`` does. The report goes out as its UTF-8 bytes, with no
+newline translation, so that the file it is redirected to is what its
+last line hashes, on Windows too.
+
+A file the user names is read as its UTF-8 bytes, with no newline
+translation either, so that a digest of its text, as the bundle's in
+scan's result and the report's lines naming each input, is the digest
+of the file.
 """
 
 from __future__ import annotations
@@ -358,7 +365,7 @@ def _read_text(name: str, what: str = "bundle") -> str:
     # the refusal is raised outside `suppress`: a decoding error holds the
     # bytes read, which a file handed in by mistake fills with a secret
     with contextlib.suppress(OSError, UnicodeDecodeError):
-        text = Path(name).read_text(encoding="utf-8")
+        text = Path(name).read_bytes().decode("utf-8")
     if text is None:
         raise SeedScanValueError(f"the {what} file cannot be read as UTF-8 text")
     return text
@@ -441,7 +448,11 @@ def _report_command(
     except SeedScanException as e:
         err_msg = str(e)
     else:
-        sys.stdout.write(text)
+        # the bytes, past the text layer's newline translation, after
+        # anything that layer still holds
+        sys.stdout.flush()
+        sys.stdout.buffer.write(text.encode("utf-8"))
+        sys.stdout.buffer.flush()
         return 0
     sys.stderr.write(f"seed-scan report: {err_msg}\n")
     return 1

@@ -6,8 +6,11 @@
 
 from __future__ import annotations
 
+import io
 import json
 import pathlib
+import sys
+from hashlib import sha256
 from typing import TYPE_CHECKING
 
 import pytest
@@ -97,16 +100,54 @@ def test_the_guard_is_on_before_a_file_is_read(
 ) -> None:
     """`main` refuses sockets and processes before it reads the bundle."""
     events: list[str] = []
-    read_text = pathlib.Path.read_text
+    read_bytes = pathlib.Path.read_bytes
 
-    def recorded(path: pathlib.Path, encoding: str) -> str:
+    def recorded(path: pathlib.Path) -> bytes:
         events.append(path.name)
-        return read_text(path, encoding=encoding)
+        return read_bytes(path)
 
-    monkeypatch.setattr(pathlib.Path, "read_text", recorded)
+    monkeypatch.setattr(pathlib.Path, "read_bytes", recorded)
     argv = ["report", files[0], "--scan", files[1]]
     cli.main(argv, forbid_network=lambda: events.append("guard"))
     assert events == ["guard", "bundle.json", "scan.json"]
+
+
+def test_the_report_is_written_as_its_bytes(
+    monkeypatch: pytest.MonkeyPatch, texts: tuple[str, str], files: tuple[str, str]
+) -> None:
+    """A standard output that writes CRLF, as Windows' does, writes LF.
+
+    The bytes are those the last line hashes.
+    """
+    windows = io.TextIOWrapper(io.BytesIO(), encoding="utf-8", newline="\r\n")
+    monkeypatch.setattr(sys, "stdout", windows)
+    argv = ["report", files[0], "--scan", files[1]]
+    assert cli.main(argv, prompt=Prompt(), forbid_network=no_guard) == 0
+    windows.flush()
+    out = windows.buffer.getvalue()
+    assert out == report(*texts).encode("utf-8")
+    body, last = out[:-1].rsplit(b"\n", 1)
+    assert last == b"digest: sha256 " + sha256(body + b"\n").hexdigest().encode()
+
+
+def test_a_crlf_file_is_hashed_as_its_bytes(
+    capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
+    """A bundle written with CRLF, as Windows writes identify's: its digest.
+
+    The scan result made from it names the digest of those bytes, and the
+    report reads them back as they are.
+    """
+    lf = dumps(identify(ABANDON, [""], no_share, accounts=1))
+    crlf = lf.replace("\n", "\r\n")
+    bundle = tmp_path / "bundle.json"
+    bundle.write_bytes(crlf.encode("utf-8"))
+    result = tmp_path / "scan.json"
+    result.write_bytes(scan_dumps(scan(crlf, Chain(), server="s:1")).encode("utf-8"))
+    status, out, err = run(capsys, str(bundle), "--scan", str(result))
+    assert (status, err) == (0, "")
+    digest = sha256(bundle.read_bytes()).hexdigest()
+    assert out.splitlines()[1] == f"bundle: sha256 {digest}"
 
 
 def test_a_guard_not_in_place_is_one_line_and_reads_nothing(
