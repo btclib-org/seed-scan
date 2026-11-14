@@ -26,6 +26,7 @@ import traceback
 import warnings
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import TYPE_CHECKING
+from unittest.mock import Mock
 
 import pytest
 from btclib_wallet.exceptions import FetchError, HttpError, RpcError
@@ -375,6 +376,133 @@ def test_each_method_asks_its_quantity() -> None:
         "eth_getTransactionCount",
     ]
     assert node.requests == len(fake.asked)
+
+
+#: The test cases of EIP-55, at the commit `seed_scan.evm` cites: in upper
+#: case, in lower case, and in mixed case, the case being the checksum.
+EIP55_CASES = [
+    "0x52908400098527886E0F7030069857D2E4169EE7",
+    "0x8617E340B3D01FA5F11F306F4090FD50E238070D",
+    "0xde709f2102306220921060314715629080e2fb77",
+    "0x27b1fdb04752bbc536007a920d24acb045561c26",
+    "0x5aAeb6053F3E94C9b9A09f33669435E7Ef1BeAed",
+    "0xfB6916095ca1df60bB79Ce92cE3Ea74c37c5d359",
+    "0xdbF03B407c01E7cD3CBea99509d93f8DDDC8C6FB",
+    "0xD1220A0cf47c7B9Be7A2E6BA89F429762e7b9aDb",
+]
+
+#: A mixed-case test case of EIP-55.
+MIXED = "0x5aAeb6053F3E94C9b9A09f33669435E7Ef1BeAed"
+
+
+def refusing() -> Mock:
+    """Return a transport no request may reach, which raises once called.
+
+    A test asserts it was not called, so that a call fails the test
+    whatever `Node` makes of the error.
+
+    :returns: the transport.
+    """
+    return Mock(side_effect=AssertionError("the node was asked"))
+
+
+@pytest.mark.parametrize("address", EIP55_CASES)
+def test_eip55s_test_cases_are_asked(address: str) -> None:
+    """Each, and each in one case, lower or upper, with no checksum to check.
+
+    :param address: the test case.
+    """
+    fake = Ethereum({address: 5}, {address: 2})
+    node = Node("https://node.example", transport=fake)
+    for spelled in (address, address.lower(), f"0x{address[2:].upper()}"):
+        assert node.balance(spelled) == 5
+        assert node.nonce(spelled) == 2
+
+
+def flipped(address: str, position: int) -> str:
+    """Return an address with the case of one character swapped.
+
+    :param address: the address.
+    :param position: where the character is.
+    :returns: the address, that character's case swapped.
+    """
+    return address[:position] + address[position].swapcase() + address[position + 1 :]
+
+
+@pytest.mark.parametrize(
+    "address",
+    [
+        "",
+        "0x",
+        f"0x{'00' * 19}",
+        f"0x{'00' * 21}",
+        MIXED[2:],
+        f"0X{MIXED[2:].lower()}",
+        f" {MIXED}",
+        f"{MIXED}\n",
+        f"0x{'0g' * 20}",
+        f"0x{chr(0x660) * 40}",
+        flipped(MIXED, 3),
+        flipped(MIXED, len(MIXED) - 1),
+    ],
+)
+def test_an_address_that_is_not_one_is_refused_unasked(address: str) -> None:
+    """A length, a prefix, a space, a digit not hex, a checksum that fails.
+
+    Refused before the node is asked, and not quoted.
+
+    :param address: the string refused.
+    """
+    transport = refusing()
+    node = Node("https://node.example", transport=transport)
+    for method in (node.balance, node.nonce):
+        with pytest.raises(SeedScanValueError) as caught:
+            method(address)
+        said = "not an address: 0x and 40 hex digits, in one case or EIP-55's"
+        assert str(caught.value) == said
+    assert node.requests == 0
+    transport.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "address", [a for a in EIP55_CASES if a[2:] not in {a[2:].lower(), a[2:].upper()}]
+)
+def test_any_letter_of_a_checksum_in_the_other_case_is_refused(address: str) -> None:
+    """The case of each letter of a mixed-case address is its checksum.
+
+    :param address: a mixed-case test case of EIP-55.
+    """
+    transport = refusing()
+    node = Node("https://node.example", transport=transport)
+    letters = [i for i, c in enumerate(address) if i > 1 and c.isalpha()]
+    assert letters
+    for position in letters:
+        other = flipped(address, position)
+        assert other[2:] not in {other[2:].lower(), other[2:].upper()}
+        with pytest.raises(SeedScanValueError):
+            node.balance(other)
+        with pytest.raises(SeedScanValueError):
+            node.nonce(other)
+    assert node.requests == 0
+    transport.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "address", [None, 1.5, int(MIXED, 16), MIXED.encode(), [MIXED]]
+)
+def test_an_address_that_is_no_string_is_a_type_error(address: object) -> None:
+    """Refused before the node is asked, naming its type alone.
+
+    :param address: the value refused.
+    """
+    transport = refusing()
+    node = Node("https://node.example", transport=transport)
+    for method in (node.balance, node.nonce):
+        with pytest.raises(SeedScanTypeError) as caught:
+            method(address)  # type: ignore[arg-type]
+        assert str(caught.value) == f"not an address: a {type(address).__name__}"
+    assert node.requests == 0
+    transport.assert_not_called()
 
 
 def response(**members: object) -> dict[str, object]:

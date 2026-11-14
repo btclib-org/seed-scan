@@ -29,6 +29,13 @@ integer ``code`` and a string ``message`` as section 5.1 says. Anything
 else, an HTTP status other than 200 included, is refused, and no refusal
 quotes the answer.
 
+An address is ``0x`` and 40 hex digits, in one case, lower or upper, or
+in mixed case where the case is its `EIP-55`_ checksum, as
+`coin_addresses.evm.assert_valid_address` reads it. `Node.balance` and
+`Node.nonce` refuse anything else before the node is asked, a string as
+a `SeedScanValueError` and any other type as a `SeedScanTypeError`;
+neither quotes it.
+
 The request goes through `btclib_wallet.fetch.transport.http_request`,
 whose network policy is the one `btclib_wallet.fetch.transport`'s
 ``TlsLineTransport`` states for its own: a bounded read, refused rather
@@ -53,6 +60,7 @@ login is refused, and so is one that is not printable ASCII.
 .. _src/schemas/base-types.yaml: https://github.com/ethereum/execution-apis/blob/981aa66d79364be8322a9c358aaf0a571cca0873/src/schemas/base-types.yaml
 .. _docs-api/docs/tests.md: https://github.com/ethereum/execution-apis/blob/981aa66d79364be8322a9c358aaf0a571cca0873/docs-api/docs/tests.md
 .. _JSON-RPC 2.0: https://www.jsonrpc.org/specification
+.. _EIP-55: https://github.com/ethereum/ERCs/blob/8dd085d159cb123f545c272c0d871a5339550e79/ERCS/erc-55.md
 """
 
 from __future__ import annotations
@@ -73,6 +81,7 @@ from btclib_wallet.fetch.transport import (
     http_request,
     urlopen_transport,
 )
+from coin_addresses.evm import is_valid_address
 
 from seed_scan.exceptions import SeedScanTypeError, SeedScanValueError
 
@@ -124,6 +133,16 @@ def quantity(value: object) -> int:
         err_msg = "not a quantity: 0x and up to 64 hex digits, no leading zero"
         raise SeedScanValueError(err_msg)
     return int(value, 0)
+
+
+def _address(address: object) -> str:
+    """Return an address, refusing it as the module docstring says."""
+    if not isinstance(address, str):
+        raise SeedScanTypeError(f"not an address: a {type(address).__name__}")
+    if not is_valid_address(address):
+        err_msg = "not an address: 0x and 40 hex digits, in one case or EIP-55's"
+        raise SeedScanValueError(err_msg)
+    return address
 
 
 def _refuse_constant(name: str) -> object:
@@ -228,6 +247,9 @@ class Node:
     own parameter: its default opens one connection per request, and a
     ``SessionTransport`` keeps one open across requests. `timeout` bounds
     each request, in seconds.
+
+    `balance` and `nonce` check their address first, as the module
+    docstring says, and refuse it without asking anything.
 
     Each method asks one request. A failure below the answer is a
     `btclib_wallet.exceptions.FetchError` that names the node alone,
@@ -336,7 +358,7 @@ class Node:
 
     def balance(self, address: str) -> int:
         """Return an address's balance at ``latest``, in wei."""
-        return self._quantity("eth_getBalance", [address, "latest"])
+        return self._quantity("eth_getBalance", [_address(address), "latest"])
 
     def nonce(self, address: str) -> int:
         """Return an address's nonce at ``latest``.
@@ -344,7 +366,8 @@ class Node:
         ``eth_getTransactionCount``'s: the specification says why the
         name is no longer the count of the transactions the address sent.
         """
-        return self._quantity("eth_getTransactionCount", [address, "latest"])
+        params = [_address(address), "latest"]
+        return self._quantity("eth_getTransactionCount", params)
 
 
 def _is_response(answer: dict[str, object], request_id: int) -> bool:
