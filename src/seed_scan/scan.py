@@ -36,12 +36,14 @@ bounds, on the receive branch alone: the addresses of an account are
 those of the keys ``0/0``, ``0/1`` and on below its ``xpub``, as
 `coin_addresses.evm` writes them. A legacy layout, of purpose ``null``,
 is one account, read on no branch: its addresses are those of the keys
-``0``, ``1`` and on below its ``xpub``. A coin's legacy layouts are
-each read, whatever ``account_gap``, and are never cut short. An
-address is used where the node answers a balance or a nonce other than
-zero, each at the block tag ``latest``. That is the chain's native
-asset alone: an address that only ever received tokens has neither, and
-reads as unused, as no token balance is asked in this version.
+``0``, ``1`` and on below its ``xpub``. An address its wallets derive
+alone is one more such account, whose ``index`` names the one child of
+its ``xpub`` read. A coin's legacy layouts and addresses alone are each
+read, whatever ``account_gap``, and are never cut short. An address is
+used where the node answers a balance or a nonce other than zero, each
+at the block tag ``latest``. That is the chain's native asset alone: an
+address that only ever received tokens has neither, and reads as unused,
+as no token balance is asked in this version.
 
 The balance of an account is read off the history discovery returns: an
 output paying one of its used scripts counts until a transaction of that
@@ -96,13 +98,15 @@ only. Its members:
   `seed_scan.evm.EVM_CHAINS`; ``chain_id``, as the node answered it,
   which is that chain's; ``block``, the latest block's number, asked
   before the first address; ``searched``, as above, with ``coin`` after
-  ``reading`` and ``purpose`` ``null`` for a legacy layout, for the
-  accounts of each coin read; and ``used``, one object per account with
-  a used address: ``coin``, ``reading``, ``purpose``, ``account`` and
-  ``path``, as the bundle has them; ``addresses``, each used address as
-  ``index``, on the receive branch or, for a legacy layout, below the
-  key itself, ``address``, ``balance`` and ``nonce``; and ``balance``,
-  the sum of the addresses' balances.
+  ``reading`` and ``purpose`` ``null`` for the legacy layouts and the
+  addresses alone, for the accounts of each coin read; and ``used``, one
+  object per account with a used address: ``coin``, ``reading``,
+  ``purpose``, ``account`` and ``path``, as the bundle has them;
+  ``addresses``, each used address as ``index``, ``address``,
+  ``balance`` and ``nonce``, its index on the receive branch or, for a
+  legacy layout, below the key itself, and for an address alone the
+  bundle's ``index``; and ``balance``, the sum of the addresses'
+  balances.
 
 A balance in ``evm`` is in wei, 10**-18 of the chain's native asset,
 written as a string of decimal digits: RFC 8259's section 6 holds an
@@ -399,9 +403,10 @@ _Purposes = dict[int | None, list[tuple[Account, _T]]]
 def _numbered(position: int, purposes: _Purposes[_T], *, electrum: bool = True) -> None:
     """Refuse a purpose whose accounts are not numbered from 0 with no gap.
 
-    That is how `identify` writes them, an EVM coin's legacy layouts, of
-    purpose ``None``, included. Where `electrum`, the accounts of purpose
-    ``None`` are an Electrum reading's, which has one.
+    That is how `identify` writes them, an EVM coin's legacy layouts and
+    addresses alone, of purpose ``None``, included. Where `electrum`, the
+    accounts of purpose ``None`` are an Electrum reading's, which has
+    one.
     """
     for purpose, accounts in purposes.items():
         numbers = [account.account for account, _ in accounts]
@@ -624,20 +629,15 @@ def _evm_account(
     """Return an EVM account's used addresses, or None where none is.
 
     The receive branch, or the key itself for a legacy layout, is read
-    from index 0 until `gap_limit` indexes in a row are unused.
+    from index 0 until `gap_limit` indexes in a row are unused. An
+    address alone is read at its account's index, and nowhere else.
     """
     branch = _branch(account, key)
-    addresses: list[EvmAddress] = []
-    index = unused = 0
-    while unused < gap_limit:
-        address = address_from_pub_key(branch.derive(index).sec)
-        balance, nonce = node.balance(address), node.nonce(address)
-        if balance or nonce:
-            addresses.append(EvmAddress(index, address, str(balance), nonce))
-            unused = 0
-        else:
-            unused += 1
-        index += 1
+    if account.index is None:
+        addresses = _evm_branch(node, branch, gap_limit)
+    else:
+        alone = _evm_address(node, branch, account.index)
+        addresses = [] if alone is None else [alone]
     if not addresses:
         return None
     return EvmAccount(
@@ -651,11 +651,39 @@ def _evm_account(
     )
 
 
+def _evm_branch(node: Node, branch: BIP32KeyData, gap_limit: int) -> list[EvmAddress]:
+    """Return a branch's used addresses.
+
+    The branch is read from index 0 until `gap_limit` indexes in a row
+    are unused.
+    """
+    addresses: list[EvmAddress] = []
+    index = unused = 0
+    while unused < gap_limit:
+        found = _evm_address(node, branch, index)
+        if found is None:
+            unused += 1
+        else:
+            addresses.append(found)
+            unused = 0
+        index += 1
+    return addresses
+
+
+def _evm_address(node: Node, branch: BIP32KeyData, index: int) -> EvmAddress | None:
+    """Return the address at an index of a branch, or None where unused."""
+    address = address_from_pub_key(branch.derive(index).sec)
+    balance, nonce = node.balance(address), node.nonce(address)
+    if balance or nonce:
+        return EvmAddress(index, address, str(balance), nonce)
+    return None
+
+
 def _branch(account: Account, key: BIP32KeyData) -> BIP32KeyData:
     """Return the key whose children are an EVM account's addresses.
 
     The receive branch below the account's key, or the key itself for a
-    legacy layout, of purpose None.
+    legacy layout or an address alone, of purpose None.
     """
     return key if account.purpose is None else key.derive(0)
 
@@ -1076,7 +1104,8 @@ def _evm_addresses(
 ) -> tuple[EvmAddress, ...]:
     """Read an EVM account's used addresses, each the bundle's there.
 
-    Each holds a balance or a nonce, as `scan` lists no other.
+    Each holds a balance or a nonce, as `scan` lists no other. An address
+    alone is at its account's index, read with no gap.
     """
     branch = _branch(account, _key(account, f"account {account.path}"))
     addresses: list[EvmAddress] = []
@@ -1087,8 +1116,10 @@ def _evm_addresses(
         address: str = _member(position, "address", str)
         # an index of 2^31 and above would be hardened, a key the xpub
         # does not derive
-        if index >= _HARDENED or address != address_from_pub_key(
-            branch.derive(index).sec
+        if (
+            index >= _HARDENED
+            or account.index not in (None, index)
+            or address != address_from_pub_key(branch.derive(index).sec)
         ):
             err_msg = "scan result: an address is not the bundle's at its position"
             raise SeedScanValueError(err_msg)
@@ -1096,7 +1127,8 @@ def _evm_addresses(
         if balance == "0" and nonce == 0:
             raise SeedScanValueError("scan result: an unused address listed as used")
         addresses.append(EvmAddress(index, address, balance, nonce))
-    _gaps({0: [a.index for a in addresses]}, gap_limit)
+    if account.index is None:
+        _gaps({0: [a.index for a in addresses]}, gap_limit)
     return tuple(addresses)
 
 
@@ -1316,10 +1348,11 @@ def loads(text: str, bundle: str) -> ScanResult:
 
     What a used account lists is what `scan` could have found: an
     address at least, each branch's used positions within ``gap_limit``
-    of the one before, from index 0; for Bitcoin, a transaction at least,
-    a confirmed one where ``confirmed`` is not 0 and one of the mempool's
-    where an address's ``unconfirmed`` is not 0, and balances that leave
-    from 0 to 21 million bitcoin unspent.
+    of the one before, from index 0, or an address alone at its index;
+    for Bitcoin, a transaction at least, a confirmed one where
+    ``confirmed`` is not 0 and one of the mempool's where an address's
+    ``unconfirmed`` is not 0, and balances that leave from 0 to 21
+    million bitcoin unspent.
     """
     read = bundle_loads(bundle)
     # refused as `scan` refuses it: a descriptor or a key that does not

@@ -40,8 +40,8 @@ every other character is literal.
   of a BIP39 reading. Then, two spaces in, per coin and purpose of its
   accounts, in the bundle's order, ``<coin>, purpose <n>`` or, for
   Electrum's layout, ``<coin>, Electrum account``, or, for an EVM coin's
-  legacy layouts, ``<coin>, legacy account``, with ``, on <chain>`` after
-  a coin the node's chain reads, followed by:
+  legacy layouts and its addresses alone, ``<coin>, legacy account``,
+  with ``, on <chain>`` after a coin the node's chain reads, followed by:
 
   - ``: not checked: <reason>``, where the scan result does not read
     it, or no result is given;
@@ -279,10 +279,13 @@ def _scripts(account: Account) -> tuple[str, ...]:
     Its xpub and its descriptors. An EVM account has none, and its
     addresses are those of its xpub's receive branch, whatever its coin,
     or of its xpub itself for a legacy layout, of purpose None, so the
-    layout is part of what gives them.
+    layout is part of what gives them; for an address alone, the one
+    index it names.
     """
     if account.descriptors:
         return (account.xpub, *account.descriptors)
+    if account.index is not None:
+        return (account.xpub, f"index {account.index}")
     return (account.xpub, "legacy" if account.purpose is None else "receive")
 
 

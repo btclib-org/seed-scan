@@ -157,7 +157,8 @@ def test_the_coins_declared_are_written_in_order() -> None:
     """Each coin, purpose and account of `COINS`, Bitcoin's with descriptors.
 
     Each coin's legacy layouts follow its purposes, one account each,
-    numbered from 0.
+    numbered from 0, and its addresses alone follow them, each written
+    as its parent's key and its own index.
     """
     bundle = identify(ABANDON, [""], no_share, accounts=2)
     (reading,) = bundle.readings
@@ -171,6 +172,10 @@ def test_the_coins_declared_are_written_in_order() -> None:
                 for n in range(2)
             ),
             *((None, n, path) for n, path in enumerate(coin.legacy)),
+            *(
+                (None, n, path.rpartition("/")[0])
+                for n, path in enumerate(coin.alone, len(coin.legacy))
+            ),
         ]
     ]
     assert [
@@ -189,7 +194,10 @@ def test_the_coins_declared_are_written_in_order() -> None:
         ("ethereum", ethereum.xpub),
         ("ethereum", master.derive("m/44h/60h").xpub.b58encode()),
         ("ethereum-classic", master.derive("m/44h/60h/160720h/0h").xpub.b58encode()),
+        ("bnb", master.derive("m/44h/60h/9172h/3604").xpub.b58encode()),
     ]
+    assert [a.index for a in legacy] == [None, None, None, 9999]
+    assert {a.index for a in reading.accounts if a.purpose is not None} == {None}
 
 
 def test_each_coin_takes_the_purposes_its_wallets_derive_at() -> None:
@@ -218,6 +226,18 @@ def test_each_legacy_layout_is_one_its_wallets_derive_at() -> None:
     assert {coin.name: coin.legacy for coin in COINS if coin.legacy} == {
         "ethereum": ("m/44h/60h/0h", "m/44h/60h"),
         "ethereum-classic": ("m/44h/60h/160720h/0h",),
+    }
+
+
+def test_each_address_alone_is_one_its_wallets_derive() -> None:
+    """Trust Wallet's Stable Account, as the comment above `COINS` cites it.
+
+    An address added or dropped is a new reading of those wallets, so
+    this pin moves with that comment. The last level of each is
+    unhardened, so the key above it derives it.
+    """
+    assert {coin.name: coin.alone for coin in COINS if coin.alone} == {
+        "bnb": ("m/44h/60h/9172h/3604/9999",),
     }
 
 

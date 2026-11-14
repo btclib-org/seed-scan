@@ -70,13 +70,17 @@ class Coin:
     `legacy` holds the paths of the keys of its legacy layouts, of no
     BIP43 purpose: each key's own children are the addresses, and the
     bundle writes it as one account of purpose None, numbered from 0 in
-    this order.
+    this order. `alone` holds the paths of addresses its wallets derive
+    one by one, outside any account: the bundle writes each as one more
+    such account, whose key is the address's parent and whose index is
+    the address's.
     """
 
     name: str
     coin_type: int
     purposes: tuple[int, ...]
     legacy: tuple[str, ...] = ()
+    alone: tuple[str, ...] = ()
 
 
 # Each other coin's purposes are the union of those these wallets derive
@@ -151,17 +155,23 @@ class Coin:
 # Ethereum account is read on Ethereum Classic too, as `seed_scan.evm`
 # says. The key at m/44h/60h/0h is Ethereum's account 0 as well, whose
 # addresses are on its receive branch instead.
+# The address alone is Trust Wallet's "Stable Account", one address at
+# m/44h/60h/9172h/3604/9999, which wallet-core's registry gives for BNB
+# Smart Chain beside m/44h/60h/0h/0/0:
+#   https://github.com/trustwallet/wallet-core/blob/7a21615fad32edd8dc0b040d845de3973cde2c5a/registry.json#L3095-L3113
+# It is declared under BNB, whose accounts are read on BNB Smart Chain
+# alone.
 
 #: The coins and purposes a bundle declares, the order they are written
 #: in. Bitcoin's are the four `btclib_wallet.bip44` maps to an address
 #: encoding; each other coin's are those its wallets derive accounts at,
-#: and its legacy layouts those they derive addresses at, the comments
-#: above citing them.
+#: its legacy layouts those they derive addresses at, and its addresses
+#: alone those they derive one by one, the comments above citing them.
 COINS = (
     Coin("bitcoin", 0, (44, 49, 84, 86)),
     Coin("ethereum", 60, (44,), ("m/44h/60h/0h", "m/44h/60h")),
     Coin("ethereum-classic", 61, (44,), ("m/44h/60h/160720h/0h",)),
-    Coin("bnb", 714, (44,)),
+    Coin("bnb", 714, (44,), alone=("m/44h/60h/9172h/3604/9999",)),
     Coin("bitcoin-cash", 145, (44,)),
     Coin("litecoin", 2, (44, 49, 84)),
     Coin("dogecoin", 3, (44,)),
@@ -220,7 +230,8 @@ def _accounts(
 ) -> list[tuple[Account, tuple[Descriptor, ...]]]:
     """Return the account keys `COINS` declares, Bitcoin's with descriptors.
 
-    Each coin's purposes come first, then its legacy layouts.
+    Each coin's purposes come first, then its legacy layouts, then its
+    addresses alone.
     """
     master_fingerprint = fingerprint(root)
     found: list[tuple[Account, tuple[Descriptor, ...]]] = []
@@ -252,6 +263,13 @@ def _accounts(
             xpub = root.derive(path).xpub.b58encode()
             legacy = Account(coin.name, coin.coin_type, None, number, path, xpub, ())
             found.append((legacy, ()))
+        for number, path in enumerate(coin.alone, len(coin.legacy)):
+            above, _, index = path.rpartition("/")
+            xpub = root.derive(above).xpub.b58encode()
+            alone = Account(
+                coin.name, coin.coin_type, None, number, above, xpub, (), int(index)
+            )
+            found.append((alone, ()))
     return found
 
 
@@ -488,10 +506,10 @@ def identify(
     given and answers what the user typed, hidden.
 
     `accounts` is how many accounts of each coin and purpose are written,
-    from account 0; a legacy layout's one key is written once. Where
-    `address` is given, the receive and change branches of each Bitcoin
-    account written, and of each Bitcoin Cash one where it is a base58
-    address, are searched for it, from index 0 to `indexes` - 1.
+    from account 0; the one key of a legacy layout or of an address alone is
+    written once. Where `address` is given, the receive and change branches
+    of each Bitcoin account written, and of each Bitcoin Cash one where it
+    is a base58 address, are searched for it, from index 0 to `indexes` - 1.
 
     A refusal names no secret: the words and the passphrases are never
     quoted.

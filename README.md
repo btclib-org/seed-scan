@@ -81,9 +81,11 @@ mnemonic at `m/44h/60h/<n>`. On Ethereum Classic its own are read too:
 those at `m/44h/61h/<n>h`, where its wallets derive, and the legacy ones
 at `m/44h/60h/160720h/0h/<n>`. On BNB Smart Chain, BNB's are read too:
 those at `m/44h/714h/<n>h`, where Trust Wallet's "Smart Chain Legacy"
-derives. Before any address is asked, the node's chain id is compared
-with the chain's. SECURITY.md's *Limitations, not vulnerabilities* says
-which nodes that refuses, and what it does not prove.
+derives, and the one address of its "Stable Account", at
+`m/44h/60h/9172h/3604/9999`. Before any address is asked, the node's
+chain id is compared with the chain's. SECURITY.md's *Limitations, not
+vulnerabilities* says which nodes that refuses, and what it does not
+prove.
 
 A coin with no server or node named, every coin but Bitcoin and those
 an EVM chain reads, and the accounts of a coin one chain alone reads on

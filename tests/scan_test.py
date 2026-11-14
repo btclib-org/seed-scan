@@ -953,7 +953,8 @@ def test_each_chain_reads_the_coins_it_lists(abandon: str, name: str) -> None:
     """Ethereum's accounts on every chain; two chains read their own coin too.
 
     Each coin's purpose 44 and its legacy layout, whose key's own
-    children are its addresses; the result names the chain, and a coin
+    children are its addresses, or BNB's address alone; the result names
+    the chain, and a coin
     not read on it is listed with the chain that reads it.
 
     :param abandon: the bundle.
@@ -966,6 +967,7 @@ def test_each_chain_reads_the_coins_it_lists(abandon: str, name: str) -> None:
         ("ethereum-classic", 44): ("m/44h/61h/1h", 2, "7"),
         ("ethereum-classic", None): ("m/44h/60h/160720h/0h", 3, "8"),
         ("bnb", 44): ("m/44h/714h/1h", 4, "9"),
+        ("bnb", None): ("m/44h/60h/9172h/3604", 9999, "10"),
     }
     balances = {
         eth_address(abandon, path, index, legacy=purpose is None): int(balance)
@@ -986,6 +988,38 @@ def test_each_chain_reads_the_coins_it_lists(abandon: str, name: str) -> None:
     assert [(n.coin, n.reason) for n in result.not_checked if n.coin in own] == [
         (coin, OTHER_CHAIN[coin]) for coin in own if coin not in chain.coins
     ]
+
+
+def test_the_stable_account_is_one_address_read_on_bnb_smart_chain(
+    abandon: str,
+) -> None:
+    """Trust Wallet's m/44h/60h/9172h/3604/9999, and no other index below it.
+
+    Derived here from the seed by BIP32 alone. Index 0 below the same
+    key holds wei too, and is never asked: the account reads one address,
+    two requests, beside the twenty of each other account read.
+    """
+    master = BIP32KeyData.from_seed(bip39.seed_from_mnemonic(ABANDON, ""))
+    stable = address_from_pub_key(master.derive("m/44h/60h/9172h/3604/9999").sec)
+    first = address_from_pub_key(master.derive("m/44h/60h/9172h/3604/0").sec)
+    fake = Ethereum({stable: 11, first: 12}, {stable: 1}, chain_id=56)
+    evm = scan(abandon, None, node=node(fake), evm_chain="bnb-smart-chain").evm
+    assert evm is not None
+    (used,) = evm.used
+    assert (used.coin, used.purpose, used.account, used.path, used.balance) == (
+        "bnb",
+        None,
+        0,
+        "m/44h/60h/9172h/3604",
+        "11",
+    )
+    assert used.addresses == (EvmAddress(9999, stable, "11", 1),)
+    assert evm.searched[-1] == EvmSearched(0, "bnb", None, 1, cut_short=False)
+    # two requests ahead, then two per address: twenty per account of
+    # Ethereum's three, its two legacy layouts and BNB's three, and the
+    # Stable Account's one address
+    assert len(fake.asked) == 2 + 2 * (20 * (3 + 2 + 3) + 1)
+    assert fake.asked.count("eth_getBalance") == 20 * (3 + 2 + 3) + 1
 
 
 def test_ethereum_classic_accounts_need_a_node(abandon: str) -> None:

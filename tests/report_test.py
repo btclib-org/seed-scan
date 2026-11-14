@@ -171,6 +171,7 @@ def test_the_report_of_a_scanned_bundle(abandon: str, result: str) -> None:
         f"  ethereum-classic, purpose 44: not checked: {NO_NODE}",
         f"  ethereum-classic, legacy account: not checked: {NO_NODE}",
         f"  bnb, purpose 44: not checked: {NO_NODE}",
+        f"  bnb, legacy account: not checked: {NO_NODE}",
         *other,
         (
             "total: bitcoin, 4000 sat confirmed, 2000 sat unconfirmed,"
@@ -203,7 +204,7 @@ def test_the_report_of_an_ethereum_scan(abandon: str, evm_result: str) -> None:
     ]
     (opening,) = [n for n, line in enumerate(lines) if line.startswith("reading")]
     classic = OTHER_CHAIN["ethereum-classic"]
-    assert lines[opening + 1 : opening + 18] == [
+    assert lines[opening + 1 : opening + 19] == [
         *(
             f"  bitcoin, purpose {purpose}: not checked: {NO_SERVER}"
             for purpose in (44, 49, 84, 86)
@@ -220,6 +221,7 @@ def test_the_report_of_an_ethereum_scan(abandon: str, evm_result: str) -> None:
         f"  ethereum-classic, purpose 44: not checked: {classic}",
         f"  ethereum-classic, legacy account: not checked: {classic}",
         f"  bnb, purpose 44: not checked: {OTHER_CHAIN['bnb']}",
+        f"  bnb, legacy account: not checked: {OTHER_CHAIN['bnb']}",
         f"  bitcoin-cash, purpose 44: not checked: {NOT_READ}",
     ]
     assert lines[-2] == (
@@ -498,6 +500,7 @@ def test_every_line_naming_a_defined_word_has_a_shape(
         "\n  ethereum-classic, legacy account, on Ethereum Classic: accounts 0 to ",
         f"\n  bnb, purpose 44: not checked: {OTHER_CHAIN['bnb']}\n",
         "\n  bnb, purpose 44, on BNB Smart Chain: accounts 0 to ",
+        "\n  bnb, legacy account, on BNB Smart Chain: accounts 0 to 0 read, 0 used\n",
         "\nreading 0, bnb purpose 44: accounts read: ",
     ):
         assert line in written
@@ -550,6 +553,50 @@ def test_the_report_of_an_ethereum_classic_scan(abandon: str) -> None:
     ]
     assert lines[-2] == (
         "total: ethereum-classic, 9 wei of ETC, 3 used accounts, each account key once"
+    )
+
+
+def test_the_report_of_the_stable_account(abandon: str) -> None:
+    """On BNB Smart Chain, its one address is listed with its full path."""
+    stable = eth_address(abandon, "m/44h/60h/9172h/3604", 9999, legacy=True)
+    fake = Ethereum({stable: 6}, chain_id=56)
+    result = scan_module.scan(
+        abandon, None, node=node(fake), evm_chain="bnb-smart-chain"
+    )
+    lines = report(abandon, scan_module.dumps(result)).splitlines()
+    (opening,) = [n for n, line in enumerate(lines) if line.startswith("  bnb, legacy")]
+    assert lines[opening : opening + 3] == [
+        "  bnb, legacy account, on BNB Smart Chain: accounts 0 to 0 read, 1 used",
+        "    account 0, m/44h/60h/9172h/3604: 6 wei at latest",
+        f"      address m/44h/60h/9172h/3604/9999 {stable}: 6 wei, nonce 0",
+    ]
+    assert lines[-2] == (
+        "total: bnb-smart-chain, 6 wei of BNB, 1 used accounts, each account key once"
+    )
+
+
+def test_an_address_alone_is_counted_apart_from_its_keys_children(
+    abandon: str,
+) -> None:
+    """The Stable Account's key edited to be MyEtherWallet's: two addresses.
+
+    One key, read below at index 0 for Ethereum's legacy layout and at
+    index 9999 alone for the Stable Account, gives two addresses whose
+    funds the total counts each once.
+    """
+    document = json.loads(abandon)
+    accounts = document["readings"][0]["accounts"]
+    (mew,) = [a for a in accounts if a["path"] == "m/44h/60h"]
+    (stable,) = [a for a in accounts if a["index"] is not None]
+    stable["xpub"] = mew["xpub"]
+    text = json.dumps(document)
+    low = eth_address(text, "m/44h/60h", 0, legacy=True)
+    high = eth_address(text, "m/44h/60h", 9999, legacy=True)
+    fake = Ethereum({low: 2, high: 3}, chain_id=56)
+    result = scan_module.scan(text, None, node=node(fake), evm_chain="bnb-smart-chain")
+    lines = report(text, scan_module.dumps(result)).splitlines()
+    assert lines[-2] == (
+        "total: bnb-smart-chain, 5 wei of BNB, 2 used accounts, each account key once"
     )
 
 

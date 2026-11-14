@@ -192,6 +192,31 @@ def test_a_legacy_layout_result_reads_back(bundle: str) -> None:
         loads(json.dumps(document), bundle)
 
 
+def test_a_stable_account_result_reads_back(bundle: str) -> None:
+    """Its one address, at index 9999 and under no gap limit.
+
+    The same key's child at another index is refused, though a branch
+    read from 0 would reach it.
+    """
+    stable = eth_address(bundle, "m/44h/60h/9172h/3604", 9999, legacy=True)
+    fake = Ethereum({stable: 4}, chain_id=56)
+    text = scan_dumps(scan(bundle, None, node=node(fake), evm_chain="bnb-smart-chain"))
+    read = loads(text, bundle)
+    assert scan_dumps(read) == text
+    assert read.evm is not None
+    (used,) = read.evm.used
+    assert (used.path, [a.index for a in used.addresses]) == (
+        "m/44h/60h/9172h/3604",
+        [9999],
+    )
+    document = json.loads(text)
+    position = document["evm"]["used"][0]["addresses"][0]
+    position["index"] = 0
+    position["address"] = eth_address(bundle, "m/44h/60h/9172h/3604", 0, legacy=True)
+    with pytest.raises(SeedScanValueError, match="not the bundle's at its position"):
+        loads(json.dumps(document), bundle)
+
+
 def test_an_electrum_result_reads_back() -> None:
     """Its search and its account have no purpose."""
     text = dumps(identify(SEGWIT, [""], no_share, accounts=1))

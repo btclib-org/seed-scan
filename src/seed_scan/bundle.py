@@ -56,17 +56,20 @@ An account object holds:
 - ``coin_type``: its SLIP-0044 number, from ``0``;
 - ``purpose``: the BIP43 purpose, or ``null`` for a layout that has
   none: Electrum's, and the legacy layouts of an EVM coin, whose
-  addresses are the key's own children, as `seed_scan.identify`'s
-  ``COINS`` says;
-- ``account``: the account number, from ``0``; a coin's legacy layouts
-  are numbered apart, from ``0`` too;
+  addresses are the key's own children, and its addresses alone, as
+  `seed_scan.identify`'s ``COINS`` says;
+- ``account``: the account number, from ``0``; a coin's legacy layouts,
+  then its addresses alone, are numbered apart, from ``0`` too;
 - ``path``: the derivation path of the key, hardened levels written
   with ``h``;
 - ``xpub``: the extended public key at ``path``, in BIP32's mainnet
   version whatever the coin, so that each reader decodes one spelling;
 - ``descriptors``: for Bitcoin, the receive and change output
   descriptors, checksum included, as Bitcoin Core imports them; empty
-  for the other coins, whose account key is ``xpub`` alone.
+  for the other coins, whose account key is ``xpub`` alone;
+- ``index``: ``null``, or, for an address alone, its index below
+  ``xpub``: the one child of the key that is an address. Only an
+  account of no purpose and of a coin other than Bitcoin has one.
 """
 
 from __future__ import annotations
@@ -201,6 +204,7 @@ class Account:
     path: str
     xpub: str
     descriptors: tuple[str, ...]
+    index: int | None = None
 
 
 @dataclass(frozen=True)
@@ -499,19 +503,36 @@ def _strings(
     return tuple(values)
 
 
+def _index(document: dict[str, Any], coin: str, purpose: int | None) -> int | None:
+    """Return an account's ``index``: ``null``, or an unhardened index.
+
+    Only an account of no purpose and of a coin other than Bitcoin has
+    one.
+    """
+    if _member(document, "index", (int, type(None))) is None:
+        return None
+    index = _count(document, "index")
+    if index >= _HARDENED or purpose is not None or coin == "bitcoin":
+        err_msg = "bundle: member 'index' is not an address's index alone"
+        raise SeedScanValueError(err_msg)
+    return index
+
+
 def _account(document: dict[str, Any]) -> Account:
     """Read one account object."""
     purpose = _member(document, "purpose", (int, type(None)))
     coin = _one_of(document, "coin", COIN_NAMES)
     xpub = _xpub(document)
+    purpose = None if purpose is None else _count(document, "purpose")
     return Account(
         coin=coin,
         coin_type=_count(document, "coin_type"),
-        purpose=None if purpose is None else _count(document, "purpose"),
+        purpose=purpose,
         account=_count(document, "account"),
         path=_path(document, "path"),
         xpub=xpub,
         descriptors=_descriptors(document, coin, xpub),
+        index=_index(document, coin, purpose),
     )
 
 
@@ -564,7 +585,8 @@ def loads(text: str) -> Bundle:
     ``xpub`` whose Base58Check, version bytes, length and key prefix are
     a BIP32 mainnet public key's; a Bitcoin account's two descriptors
     over that ``xpub``, and none for another coin; an address that is a
-    base58 or a segwit one, or empty.
+    base58 or a segwit one, or empty. An ``index`` is below 2^31, of an
+    account of no purpose and of a coin other than Bitcoin.
     """
     if not isinstance(text, str):
         raise SeedScanTypeError(f"bundle: text of type {type(text).__name__}")
