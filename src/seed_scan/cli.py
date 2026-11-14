@@ -744,11 +744,24 @@ def _add_bounds(parser: argparse.ArgumentParser) -> None:
     )
 
 
+def _is_buffer(obj: object) -> bool:
+    """Answer whether `obj` exposes the buffer protocol, as bytes do."""
+    try:
+        memoryview(obj)  # type: ignore[arg-type]
+    except TypeError:
+        return False
+    return True
+
+
 def _assert_argv(argv: Sequence[str] | None) -> None:
-    """Refuse an argv that is neither None nor a sequence of strings."""
+    """Refuse an argv that is neither None nor a sequence of strings.
+
+    A str, and anything holding bytes (bytes, bytearray, memoryview,
+    array), is refused even when empty.
+    """
     if argv is None:
         return
-    if isinstance(argv, str | bytes | bytearray) or not isinstance(argv, Sequence):
+    if isinstance(argv, str) or _is_buffer(argv) or not isinstance(argv, Sequence):
         raise SeedScanTypeError(f"invalid argv type: {type(argv).__name__}")
     for raw in argv:
         if not isinstance(raw, str):
