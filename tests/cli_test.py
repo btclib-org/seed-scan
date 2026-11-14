@@ -59,7 +59,7 @@ def test_identify_writes_the_bundle_and_a_summary(
     assert "found: reading 0, bitcoin, m/84h/0h/0h/1/0" in err
     assert (
         "accounts 0 to 0 of each Bitcoin purpose, of Bitcoin Cash's, Bitcoin"
-        " SV's and eCash's for a base58 address"
+        " SV's and eCash's coin types for a base58 address"
     ) in err
 
 

@@ -936,6 +936,7 @@ def test_the_node_alone_is_scanned(
         f"not checked: reading 0, bitcoin-cash: {elsewhere}",
         f"not checked: reading 0, bitcoin-sv: {elsewhere}",
         f"not checked: reading 0, ecash: {elsewhere}",
+        f"not checked: reading 0, ecash-tokens: {elsewhere}",
         f"not checked: reading 0, litecoin: {elsewhere}",
         f"not checked: reading 0, dogecoin: {elsewhere}",
     ]

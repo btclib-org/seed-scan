@@ -67,13 +67,13 @@ every other character is literal.
   and no state the balances share.
 
   Then, per forks result, two spaces in, per coin and purpose of the
-  reading's accounts of Bitcoin and of each coin of
-  `seed_scan.forks.CHAINS`, ``<coin>, purpose <n>, on <title>`` or
-  ``<coin>, Electrum account, on <title>``, followed by what was read or
-  not checked as above, the rerun ending ``, then forks``. Four spaces
-  in, per used account, ``account <n>, <path>: <n> sat confirmed, <n>
-  sat unconfirmed, <n> sat at the fork, <n> transactions, read up to
-  height <n>``, then its used addresses as a Bitcoin account's.
+  reading's accounts of each coin `seed_scan.forks` reads, ``<coin>,
+  purpose <n>, on <title>`` or ``<coin>, Electrum account, on <title>``,
+  followed by what was read or not checked as above, the rerun ending
+  ``, then forks``. Four spaces in, per used account, ``account <n>,
+  <path>: <n> sat confirmed, <n> sat unconfirmed, <n> sat at the fork,
+  <n> transactions, read up to height <n>``, then its used addresses as
+  a Bitcoin account's.
 - ``total: bitcoin, <n> sat confirmed, <n> sat unconfirmed, <n> used
   accounts, each account key once``, where a server is named, and
   ``total: ethereum, <n> wei, <n> used accounts, each account key
@@ -97,6 +97,7 @@ from seed_scan.bundle import Account, Bundle, Reading, Search
 from seed_scan.bundle import loads as bundle_loads
 from seed_scan.exceptions import SeedScanTypeError, SeedScanValueError
 from seed_scan.forks import (
+    _FORK_COINS,
     BITCOIN_CASH,
     CHAINS,
     ECASH,
@@ -284,7 +285,7 @@ def _forked(n: int, reading: Reading, result: ForksResult) -> list[str]:
     }
     lines: list[str] = []
     for (coin, purpose), held in _groups(reading).items():
-        if coin not in {"bitcoin", *CHAINS}:
+        if coin not in {"bitcoin", *_FORK_COINS}:
             continue
         line = f"  {coin}, {_kind(purpose)}, on {title}"
         done = searched.get((coin, purpose))

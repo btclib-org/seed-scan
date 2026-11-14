@@ -244,8 +244,8 @@ def _summary(bundle: Bundle) -> str:
         lines.append(
             f"address searched in {search.searched} positions: accounts 0 to"
             f" {search.accounts - 1} of each Bitcoin purpose, of Bitcoin Cash's,"
-            " Bitcoin SV's and eCash's for a base58 address, and Electrum's"
-            " account, receive and change,"
+            " Bitcoin SV's and eCash's coin types for a base58 address, and"
+            " Electrum's account, receive and change,"
             f" indexes 0 to {search.indexes - 1}"
         )
         lines += [
