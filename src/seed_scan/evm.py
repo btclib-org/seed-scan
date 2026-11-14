@@ -72,7 +72,7 @@ its ``eth_chainId`` answers, the coins of a bundle whose accounts are
 read on it and the ERC-20 tokens whose balances are read; the comments
 above it cite each chain and each token. A key gives the same address
 on each, so the bundle's Ethereum accounts, at m/44h/60h and its legacy
-layout, are read on every one: what such an account held on Ethereum
+layouts, are read on every one: what such an account held on Ethereum
 when Ethereum Classic parted from it is on that chain too. Ethereum
 Classic's, at m/44h/61h, its SLIP-0044 coin type, and at its legacy
 layout, are read on Ethereum Classic alone, where its own wallets derive
