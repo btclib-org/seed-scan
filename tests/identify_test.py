@@ -175,6 +175,8 @@ def test_the_coins_declared_are_written_in_order() -> None:
     master = BIP32KeyData.from_seed(bip39.seed_from_mnemonic(ABANDON, ""))
     ethereum = next(a for a in reading.accounts if a.coin == "ethereum")
     assert ethereum.xpub == master.derive("m/44h/60h/0h").xpub.b58encode()
+    classic = next(a for a in reading.accounts if a.coin == "ethereum-classic")
+    assert classic.xpub == master.derive("m/44h/61h/0h").xpub.b58encode()
 
 
 def test_each_coin_takes_the_purposes_its_wallets_derive_at() -> None:
@@ -186,6 +188,7 @@ def test_each_coin_takes_the_purposes_its_wallets_derive_at() -> None:
     assert {coin.name: coin.purposes for coin in COINS} == {
         "bitcoin": (44, 49, 84, 86),
         "ethereum": (44,),
+        "ethereum-classic": (44,),
         "bitcoin-cash": (44,),
         "litecoin": (44, 49, 84),
         "dogecoin": (44,),

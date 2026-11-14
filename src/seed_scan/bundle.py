@@ -51,8 +51,8 @@ The object's members:
 
 An account object holds:
 
-- ``coin``: ``"bitcoin"``, ``"ethereum"``, ``"bitcoin-cash"``,
-  ``"litecoin"`` or ``"dogecoin"``;
+- ``coin``: ``"bitcoin"``, ``"ethereum"``, ``"ethereum-classic"``,
+  ``"bitcoin-cash"``, ``"litecoin"`` or ``"dogecoin"``;
 - ``coin_type``: its SLIP-0044 number, from ``0``;
 - ``purpose``: the BIP43 purpose, or ``null`` for Electrum's layouts,
   which have none;
@@ -120,7 +120,14 @@ READ_SCHEMES = ("bip39", "slip39", "electrum_standard", "electrum_segwit")
 LANGUAGES = ("cs", "en", "es", "fr", "it", "ja", "ko", "pt", "ru", "tr", "zh", "zh_tw")
 
 #: The coins an account names.
-COIN_NAMES = ("bitcoin", "ethereum", "bitcoin-cash", "litecoin", "dogecoin")
+COIN_NAMES = (
+    "bitcoin",
+    "ethereum",
+    "ethereum-classic",
+    "bitcoin-cash",
+    "litecoin",
+    "dogecoin",
+)
 
 #: Each reason a scheme is not checked, or an address not searched, by
 #: name. A passphrase SLIP-0039 refuses is the one reason with a number
