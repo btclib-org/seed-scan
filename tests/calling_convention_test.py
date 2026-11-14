@@ -28,7 +28,9 @@ itself; a class as its `__init__` and each public function it has, a
 property's getter included, inherited ones too, the first definition
 along its MRO winning. An inherited method is walked where it is
 defined, where that class is published, and otherwise under the first
-published class that inherits it, so that each is walked once.
+published class that inherits it, so that each is walked once. A
+method is a name its class defines, so an alias is walked under its own
+name.
 """
 
 from __future__ import annotations
@@ -76,12 +78,13 @@ def _members(cls: type) -> dict[str, tuple[type, Any]]:
 def _callables(root: ModuleType) -> Iterator[tuple[str, Any]]:
     """Yield each public function, and each class's `__init__` and methods.
 
-    What is neither, a constant or a module-level object, is passed over.
-    A method is yielded once, under the class the module docstring says.
+        What is neither, a constant or a module-level object, is passed over.
+        A method, a name its defining class gives a function, is yielded once,
+    under the class the module docstring says.
     """
     walked = list(published(root))
     classes = {id(obj) for _, _, obj in walked if inspect.isclass(obj)}
-    yielded: set[int] = set()
+    yielded: set[tuple[type, str]] = set()
     for module, name, obj in walked:
         label = f"{module}:{name}"
         if inspect.isfunction(obj):
@@ -101,8 +104,8 @@ def _callables(root: ModuleType) -> Iterator[tuple[str, Any]]:
                 # walked under its own class, which the walk reaches too
                 if owner is not obj and id(owner) in classes:
                     continue
-                if id(function) not in yielded:
-                    yielded.add(id(function))
+                if (owner, attr) not in yielded:
+                    yielded.add((owner, attr))
                     yield f"{label}.{attr}", function
 
 
@@ -240,3 +243,31 @@ def test_an_inherited_method_is_walked_once_as_the_class_has_it() -> None:
         "root:Sibling.overridden": ["key"],
         "root:Base.shared": ["key"],
     }
+
+
+def test_an_alias_is_walked_under_its_own_name() -> None:
+    """Two names of one function are two methods, each held to its promise.
+
+    `bad` is `is_ok` under a name that promises nothing. `Derived`
+    inherits both from `Hidden`, which no list publishes, and each is
+    walked under `Derived`, so the broken promise is reported.
+    """
+    namespace: dict[str, Any] = {}
+    exec(  # noqa: S102 -- a literal, compiled for its signatures
+        "from __future__ import annotations\n"
+        "class Hidden:\n"
+        "    def is_ok(self) -> bool: ...\n"
+        "    bad = is_ok\n"
+        "class Derived(Hidden): ...\n",
+        namespace,
+    )
+    root = ModuleType("root")
+    root.__all__ = ["Derived"]  # type: ignore[attr-defined]
+    root.Derived = namespace["Derived"]  # type: ignore[attr-defined]
+    assert [label for label, _ in _callables(root)] == [
+        "root:Derived.is_ok",
+        "root:Derived.bad",
+    ]
+    assert _broken_promises(_callables(root)) == [
+        "root:Derived.bad answers a bool, and its name promises nothing"
+    ]
