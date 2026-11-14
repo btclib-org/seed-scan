@@ -71,7 +71,6 @@ import getpass
 import ssl
 import sys
 import warnings
-from collections.abc import Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING, NoReturn
 
@@ -744,24 +743,15 @@ def _add_bounds(parser: argparse.ArgumentParser) -> None:
     )
 
 
-def _is_buffer(obj: object) -> bool:
-    """Answer whether `obj` exposes the buffer protocol, as bytes do."""
-    try:
-        memoryview(obj)  # type: ignore[arg-type]
-    except TypeError:
-        return False
-    return True
+def _assert_argv(argv: list[str] | tuple[str, ...] | None) -> None:
+    """Refuse an argv that is neither None nor a list or a tuple of strings.
 
-
-def _assert_argv(argv: Sequence[str] | None) -> None:
-    """Refuse an argv that is neither None nor a sequence of strings.
-
-    A str, and anything holding bytes (bytes, bytearray, memoryview,
-    array), is refused even when empty.
+    A list or a tuple, as `sys.argv` and every caller of the command
+    give: an emptiness never hides a wrong type (a str, bytes, a range).
     """
     if argv is None:
         return
-    if isinstance(argv, str) or _is_buffer(argv) or not isinstance(argv, Sequence):
+    if not isinstance(argv, list | tuple):
         raise SeedScanTypeError(f"invalid argv type: {type(argv).__name__}")
     for raw in argv:
         if not isinstance(raw, str):
@@ -769,7 +759,7 @@ def _assert_argv(argv: Sequence[str] | None) -> None:
 
 
 def main(
-    argv: Sequence[str] | None = None,
+    argv: list[str] | tuple[str, ...] | None = None,
     *,
     prompt: Callable[[str], str] = _hidden,
     forbid_network: Callable[[], None] = _forbid_network,

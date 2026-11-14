@@ -12,6 +12,7 @@ import subprocess
 import sys
 import warnings
 from array import array
+from collections import deque
 from typing import TYPE_CHECKING
 
 import pytest
@@ -177,6 +178,8 @@ def test_with_no_argv_the_process_arguments_are_read(
         bytearray(),
         memoryview(b""),
         array("B"),
+        range(0),
+        deque(["identify"]),
     ],
     ids=[
         "float",
@@ -187,6 +190,8 @@ def test_with_no_argv_the_process_arguments_are_read(
         "bytearray",
         "memoryview",
         "array",
+        "range",
+        "deque",
     ],
 )
 def test_an_argv_that_is_no_sequence_of_strings_is_refused(argv: object) -> None:
