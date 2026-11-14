@@ -95,7 +95,10 @@ every other character is literal.
   readings can hold the same account keys, as the same passphrase typed
   twice gives: each is listed with its accounts, and a total counts once
   the accounts paid by the same outputs, those of one key read as one
-  script type.
+  script type. Two accounts of different keys can still list one
+  address, so the Bitcoin and EVM totals sum the balance of each address
+  once, and so do the token totals its token balances, as the first used
+  account listing it has them.
 - ``digest: sha256 <hex>``: the SHA-256 of every line above it, so that
   ``sed '$d' report.txt | shasum -a 256`` gives it back.
 """
@@ -124,6 +127,7 @@ from seed_scan.forks import (
 from seed_scan.forks import loads as forks_loads
 from seed_scan.scan import (
     EvmAccount,
+    EvmAddress,
     EvmSearched,
     EvmTokenBalance,
     ScanResult,
@@ -489,7 +493,7 @@ def _once(
     """Return the used accounts, the first of each `key`.
 
     `used` pairs each account with its coin. Two accounts of one `key`
-    hold the same funds, which a total counts once.
+    are one account, which a total counts once.
     """
     accounts = {
         (account.coin, n, account.purpose, account.account): account
@@ -504,13 +508,21 @@ def _once(
 
 
 def _totals(bundle: Bundle, result: ScanResult) -> list[str]:
-    """Return the total of each coin the result reads, each key once."""
+    """Return the total of each coin the result reads.
+
+    The accounts are counted each key once, and the funds each address
+    once.
+    """
     lines = []
     if result.server is not None:
         used = _once(bundle, [("bitcoin", u) for u in result.used])
+        held: dict[str, tuple[int, int]] = {}
+        for account in result.used:
+            for a in account.addresses:
+                held.setdefault(a.address, (a.confirmed, a.unconfirmed))
         lines.append(
-            f"total: bitcoin, {sum(u.confirmed for u in used)} sat confirmed,"
-            f" {sum(u.unconfirmed for u in used)} sat unconfirmed,"
+            f"total: bitcoin, {sum(c for c, _ in held.values())} sat confirmed,"
+            f" {sum(u for _, u in held.values())} sat unconfirmed,"
             f" {len(used)} used accounts, each account key once"
         )
     if result.evm is not None:
@@ -519,25 +531,31 @@ def _totals(bundle: Bundle, result: ScanResult) -> list[str]:
 
 
 def _evm_totals(bundle: Bundle, chain: str, used: tuple[EvmAccount, ...]) -> list[str]:
-    """Return the totals of the EVM chain the node serves, each key once.
+    """Return the totals of the EVM chain the node serves.
 
-    Whatever its coin: an Ethereum and an Ethereum Classic account of one
-    key are read at the same addresses, on the same chain. The native
-    asset's total comes first, then each token's that is not zero.
+    The accounts are counted each key once, and the funds each address
+    once, its wei and its tokens alike, whatever its coin: an Ethereum
+    and an Ethereum Classic account of one key are read at the same
+    addresses, on the same chain. The native asset's total comes first,
+    then each token's that is not zero.
     """
     accounts = _once(bundle, [(u.coin, u) for u in used])
+    held: dict[str, EvmAddress] = {}
+    for account in used:
+        for a in account.addresses:
+            held.setdefault(a.address, a)
     native = (
-        f"total: {chain}, {sum(int(u.balance) for u in accounts)} wei of"
+        f"total: {chain}, {sum(int(a.balance) for a in held.values())} wei of"
         f" {EVM_CHAINS[chain].symbol}, {len(accounts)} used accounts, each account"
         " key once"
     )
     lines = [native]
     for token in EVM_CHAINS[chain].tokens:
         if units := sum(
-            int(held.balance)
-            for account in accounts
-            for held in account.tokens
-            if held.contract == token.contract
+            int(balance.balance)
+            for a in held.values()
+            for balance in a.tokens
+            if balance.contract == token.contract
         ):
             total = EvmTokenBalance(
                 token.contract, token.symbol, token.decimals, str(units)
