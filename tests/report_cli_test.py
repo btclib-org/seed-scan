@@ -19,6 +19,8 @@ from btclib_wallet.fetch.history import HistoryTx
 from seed_scan import cli
 from seed_scan.bundle import dumps
 from seed_scan.exceptions import SeedScanValueError
+from seed_scan.forks import dumps as forks_dumps
+from seed_scan.forks import forks
 from seed_scan.identify import identify
 from seed_scan.report import report
 from seed_scan.scan import dumps as scan_dumps
@@ -64,6 +66,20 @@ def files(texts: tuple[str, str], tmp_path: Path) -> tuple[str, str]:
     return names[0], names[1]
 
 
+@pytest.fixture
+def forks_file(texts: tuple[str, str], tmp_path: Path) -> str:
+    """Write the forks result of the bundle, on a chain that used nothing.
+
+    :param texts: the bundle and the scan result.
+    :param tmp_path: pytest's directory for the test.
+    :returns: the file's path.
+    """
+    result = forks(texts[0], Chain(), chain="bitcoin-cash", server="h:1")
+    path = tmp_path / "forks.json"
+    path.write_bytes(forks_dumps(result).encode("utf-8"))
+    return str(path)
+
+
 def run(capsys: pytest.CaptureFixture[str], *argv: str) -> tuple[int, str, str]:
     """Run ``seed-scan report`` with the guard replaced.
 
@@ -88,6 +104,44 @@ def test_report_writes_the_report_of_both_files(
     assert "    account 0, m/84h/0h/0h: 9 sat confirmed" in out
 
 
+def test_each_forks_file_is_reported(
+    capsys: pytest.CaptureFixture[str],
+    texts: tuple[str, str],
+    files: tuple[str, str],
+    forks_file: str,
+) -> None:
+    """The report of the bundle, its scan result and its forks result."""
+    status, out, err = run(capsys, files[0], "--scan", files[1], "--forks", forks_file)
+    assert (status, err) == (0, "")
+    forked = pathlib.Path(forks_file).read_bytes().decode("utf-8")
+    assert out == report(*texts, [forked])
+    assert "\nchain: Bitcoin Cash, its own blocks from height " in out
+
+
+def test_two_forks_files_of_one_chain_are_one_line(
+    capsys: pytest.CaptureFixture[str], files: tuple[str, str], forks_file: str
+) -> None:
+    """--forks is given once per chain."""
+    status, out, err = run(
+        capsys, files[0], "--forks", forks_file, "--forks", forks_file
+    )
+    assert (status, out) == (1, "")
+    assert err == "seed-scan report: forks results: two of one chain\n"
+
+
+def test_a_forks_file_that_is_no_text_is_refused_unquoted(
+    capsys: pytest.CaptureFixture[str], files: tuple[str, str], tmp_path: Path
+) -> None:
+    """Bytes that are no UTF-8 are neither decoded nor quoted."""
+    binary = tmp_path / "forks.bin"
+    binary.write_bytes(b"\xff" + ABANDON.encode())
+    status, out, err = run(capsys, files[0], "--forks", str(binary))
+    assert (status, out) == (1, "")
+    assert err == (
+        "seed-scan report: the forks result file cannot be read as UTF-8 text\n"
+    )
+
+
 def test_without_scan_the_bundle_alone_is_reported(
     capsys: pytest.CaptureFixture[str],
     texts: tuple[str, str],
@@ -100,7 +154,7 @@ def test_without_scan_the_bundle_alone_is_reported(
 
 
 def test_the_guard_is_on_before_a_file_is_read(
-    monkeypatch: pytest.MonkeyPatch, files: tuple[str, str]
+    monkeypatch: pytest.MonkeyPatch, files: tuple[str, str], forks_file: str
 ) -> None:
     """`main` refuses sockets and processes before it reads the bundle."""
     events: list[str] = []
@@ -111,9 +165,9 @@ def test_the_guard_is_on_before_a_file_is_read(
         return read_bytes(path)
 
     monkeypatch.setattr(pathlib.Path, "read_bytes", recorded)
-    argv = ["report", files[0], "--scan", files[1]]
+    argv = ["report", files[0], "--scan", files[1], "--forks", forks_file]
     cli.main(argv, forbid_network=lambda: events.append("guard"))
-    assert events == ["guard", "bundle.json", "scan.json"]
+    assert events == ["guard", "bundle.json", "scan.json", "forks.json"]
 
 
 def test_the_report_is_written_as_its_bytes(
@@ -287,16 +341,17 @@ def test_balances_too_large_to_sum_are_one_line(
     )
 
 
-def test_the_help_names_the_report_and_its_option(
+def test_the_help_names_the_report_and_its_options(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    """``seed-scan --help`` lists the command, and its own help the option."""
+    """``seed-scan --help`` lists the command, and its own help the options."""
     with pytest.raises(SystemExit):
         cli.main(["--help"])
     listed = " ".join(capsys.readouterr().out.split())
-    assert "summarize a bundle and its scan result, offline" in listed
+    assert "summarize a bundle and its scan and forks results, offline" in listed
     with pytest.raises(SystemExit):
         cli.main(["report", "--help"])
-    out = capsys.readouterr().out
+    out = " ".join(capsys.readouterr().out.split())
     assert "--scan SCAN" in out
-    assert "seed_scan.report" in " ".join(out.split())
+    assert "--forks FORKS a result forks wrote for that bundle; once per chain" in out
+    assert "seed_scan.report" in out
