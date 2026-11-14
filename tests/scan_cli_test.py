@@ -949,7 +949,10 @@ def test_a_failure_to_close_the_tls_connection_leaves_the_result_written(
 
     def failing(self: ssl.SSLSocket) -> None:
         closing(self)
-        if not self.server_side:
+        # The test server's socket may close before the scan returns, or
+        # after the patch is undone: whether a server-side close passes
+        # here is timing, so the branch that skips it is not always taken.
+        if not self.server_side:  # pragma: no branch -- the server's close is racy
             raise OSError(ABANDON)
 
     monkeypatch.setattr(ssl.SSLSocket, "close", failing)
