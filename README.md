@@ -60,7 +60,11 @@ there is no default.
 The Electrum connection is TLS, and the server's certificate is verified
 against the system's CA certificates, or against those of the file
 `--cafile` names, which is how a server with a self-signed certificate
-is reached.
+is reached. Before any address is asked, the server's genesis block and
+its block at a height past the forks of Bitcoin are compared with
+Bitcoin's, so that a server of a chain forked from it, as one of Bitcoin
+Cash's, is refused. That does not prove the histories it answers are
+Bitcoin's, as SECURITY.md's *Limitations, not vulnerabilities* says.
 
 The node is an execution client's JSON-RPC, at an `https` URL, or an
 `http` one on a loopback address such as `http://127.0.0.1:8545`.

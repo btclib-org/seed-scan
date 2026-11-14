@@ -121,9 +121,9 @@ person running `identify` holds the keys to funds:
     `forks` take each history as the server the user names answers it.
     Each confirmed transaction's merkle branch is checked against a
     header the same server answers, so a server that lies can answer a
-    history of its own making. `scan` compares the server's genesis
-    block with Bitcoin's, and `forks` also its blocks at the chain's
-    checkpoints: that refuses an honest server of another chain, and
-    does not prove that a history answered is that chain's. Proving each
-    history against the chain is
+    history of its own making. `scan` and `forks` compare the server's
+    genesis block with Bitcoin's, and its blocks at checkpoints with
+    those of the chain read: that refuses an honest server of another
+    chain, a fork of Bitcoin included, and does not prove that a history
+    answered is that chain's. Proving each history against the chain is
     [btclib-org/seed-scan#34](https://github.com/btclib-org/seed-scan/issues/34).
