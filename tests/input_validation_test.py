@@ -325,3 +325,24 @@ def test_the_walk_descends_into_a_published_subpackage() -> None:
     grand.new_function = len  # type: ignore[attr-defined]
     hidden.elsewhere = len  # type: ignore[attr-defined]
     assert list(published(root)) == [("root.child.grand", "new_function", len)]
+
+
+def test_a_module_publishing_itself_is_walked_once() -> None:
+    """A cycle of one: the walk ends, and each name is yielded once."""
+    root = ModuleType("root")
+    root.__all__ = ["self", "new_function"]  # type: ignore[attr-defined]
+    root.self = root  # type: ignore[attr-defined]
+    root.new_function = len  # type: ignore[attr-defined]
+    assert list(published(root)) == [("root", "new_function", len)]
+
+
+def test_two_modules_publishing_each_other_are_walked_once() -> None:
+    """A cycle of two: each module is walked once, from wherever it is met."""
+    first, second = ModuleType("first"), ModuleType("second")
+    first.__all__ = ["second", "one"]  # type: ignore[attr-defined]
+    second.__all__ = ["first", "two"]  # type: ignore[attr-defined]
+    first.second = second  # type: ignore[attr-defined]
+    second.first = first  # type: ignore[attr-defined]
+    first.one = len  # type: ignore[attr-defined]
+    second.two = abs  # type: ignore[attr-defined]
+    assert list(published(first)) == [("second", "two", abs), ("first", "one", len)]

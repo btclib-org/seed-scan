@@ -53,10 +53,19 @@ def published(module: ModuleType) -> Iterator[tuple[str, str, Any]]:
     `getattr` reaches a submodule not yet imported where its package
     answers for it, as `seed_scan`'s `__getattr__` does, and
     `all_test.py` holds every name under an `__all__` to being there.
+
+    A module is walked once, however many lists name it, so the walk ends
+    where a module publishes itself or two modules publish each other.
     """
-    for name in module.__all__:
-        obj = getattr(module, name)
-        if isinstance(obj, ModuleType):
-            yield from published(obj)
-        else:
-            yield module.__name__, name, obj
+    seen: set[int] = set()
+
+    def walk(current: ModuleType) -> Iterator[tuple[str, str, Any]]:
+        seen.add(id(current))
+        for name in current.__all__:
+            obj = getattr(current, name)
+            if not isinstance(obj, ModuleType):
+                yield current.__name__, name, obj
+            elif id(obj) not in seen:
+                yield from walk(obj)
+
+    return walk(module)
