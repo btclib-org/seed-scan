@@ -383,6 +383,12 @@ that literally: a statement or a branch no test reaches fails it. A
 selective run is reported and not gated, and `tests/conftest.py`'s
 `coverage_fail_under` is what makes that difference.
 
+Beyond that floor, new or changed functionality must come with tests of
+its own, added or updated in the same pull request, and a fix must come
+with a test that fails without the fix. Coverage shows that a line ran,
+not that anything checked what it did, and a test that passes without
+the fix proves nothing about it.
+
 The documentation build is the one to remember, because no hook reads
 reStructuredText: a docstring docutils cannot parse fails it with every
 hook green — a name ending in an underscore is a reference to a link
