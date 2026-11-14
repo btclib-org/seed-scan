@@ -27,6 +27,7 @@ from seed_scan.bundle import dumps, loads
 from seed_scan.exceptions import SeedScanTypeError, SeedScanValueError
 from seed_scan.forks import (
     BITCOIN_CASH,
+    BITCOIN_SV,
     CHAINS,
     FORMAT,
     VERSION,
@@ -51,7 +52,7 @@ if TYPE_CHECKING:
 SHARED = BlockRef(BITCOIN_CASH.fork_height - 1, b"\x01" * 32)
 OWN = BlockRef(BITCOIN_CASH.fork_height, b"\x02" * 32)
 
-#: Why a Bitcoin account of a segwit script is not read.
+#: Why a Bitcoin account of a segwit script is not read on Bitcoin Cash.
 NO_WITNESS = (
     "a segwit script: Bitcoin Cash's transactions carry no witness, so a key"
     " does not sign for it there"
@@ -145,6 +146,40 @@ def test_the_chain_s_own_account_and_bitcoin_s_are_read(abandon: str) -> None:
     assert (second.confirmed, second.at_fork) == (7_000, 0)
 
 
+@pytest.mark.parametrize("chain", list(CHAINS))
+def test_each_chain_reads_the_accounts_of_every_chain(abandon: str, chain: str) -> None:
+    """A payment at Bitcoin's path and at each chain's coin type is found.
+
+    Bitcoin SV holds Bitcoin Cash's blocks up to their split, and a
+    base58 address spells one script on both, so each reads both coins.
+    Each counts at the fork from Bitcoin, Bitcoin SV's included.
+
+    :param abandon: the bundle.
+    :param chain: the chain read.
+    """
+    paths = ["m/44h/0h/0h", "m/44h/145h/0h", "m/44h/236h/0h"]
+    chain_read = Chain(
+        HistoryTx(pay(1, *((p2pkh(f"{path}/0/0"), 1) for path in paths)), SHARED)
+    )
+    result = forks(abandon, chain_read, chain=chain, server="h:1")
+    assert [(u.coin, u.path, u.at_fork) for u in result.used] == [
+        ("bitcoin", "m/44h/0h/0h", 1),
+        ("bitcoin-cash", "m/44h/145h/0h", 1),
+        ("bitcoin-sv", "m/44h/236h/0h", 1),
+    ]
+    assert result.fork_height == BITCOIN_CASH.fork_height
+
+
+def test_bitcoin_sv_s_segwit_accounts_are_not_checked(abandon: str) -> None:
+    """The reason names the chain read."""
+    result = forks(abandon, Chain(), chain="bitcoin-sv", server="h:1")
+    reason = NO_WITNESS.replace("Bitcoin Cash", "Bitcoin SV")
+    assert result.not_checked == tuple(
+        Skipped(0, "bitcoin", purpose, reason) for purpose in (49, 84, 86)
+    )
+    assert result.chain == BITCOIN_SV.name
+
+
 def test_the_fork_height_is_the_first_block_not_counted(abandon: str) -> None:
     """A payment in the last shared block counts at the fork; one after not.
 
@@ -206,6 +241,7 @@ def test_nothing_used_reads_each_p2pkh_purpose_and_lists_the_segwit_ones(
     assert result.searched == (
         ForkSearched(0, "bitcoin", 44, 3, cut_short=False),
         ForkSearched(0, "bitcoin-cash", 44, 3, cut_short=False),
+        ForkSearched(0, "bitcoin-sv", 44, 3, cut_short=False),
     )
     assert result.not_checked == tuple(
         Skipped(0, "bitcoin", purpose, NO_WITNESS) for purpose in (49, 84, 86)
@@ -399,7 +435,7 @@ def test_a_chain_s_xpub_off_the_curve_is_refused(abandon: str) -> None:
     assert caught.value.__context__ is None
 
 
-@pytest.mark.parametrize("path", ["m/44h/145h/1h", "m/44h/0h/1h"])
+@pytest.mark.parametrize("path", ["m/44h/145h/1h", "m/44h/236h/1h", "m/44h/0h/1h"])
 def test_accounts_not_numbered_from_0_are_refused(abandon: str, path: str) -> None:
     """A coin and purpose's accounts are 0 to n - 1, in order.
 

@@ -244,7 +244,8 @@ def _summary(bundle: Bundle) -> str:
         lines.append(
             f"address searched in {search.searched} positions: accounts 0 to"
             f" {search.accounts - 1} of each Bitcoin purpose, of Bitcoin Cash's"
-            " for a base58 address, and Electrum's account, receive and change,"
+            " and Bitcoin SV's for a base58 address, and Electrum's account,"
+            " receive and change,"
             f" indexes 0 to {search.indexes - 1}"
         )
         lines += [
@@ -508,7 +509,7 @@ def _forks_summary(result: ForksResult) -> str:
     title = CHAINS[result.chain].title
     lines = [
         f"server: {result.server}",
-        f"chain: {title}, its own blocks from height {result.fork_height}",
+        f"chain: {title}, forked from Bitcoin at height {result.fork_height}",
         f"bounds: account gap {result.account_gap}, gap limit {result.gap_limit}",
     ]
     lines += [_searched(done, f"{done.coin} ") for done in result.searched]

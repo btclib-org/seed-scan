@@ -106,6 +106,7 @@ def test_the_report_of_a_scanned_bundle(abandon: str, result: str) -> None:
         f"  {coin}, purpose {purpose}: not checked: {NOT_READ}"
         for coin, purpose in [
             ("bitcoin-cash", 44),
+            ("bitcoin-sv", 44),
             ("litecoin", 44),
             ("litecoin", 49),
             ("litecoin", 84),

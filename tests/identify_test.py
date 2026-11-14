@@ -187,6 +187,7 @@ def test_each_coin_takes_the_purposes_its_wallets_derive_at() -> None:
         "bitcoin": (44, 49, 84, 86),
         "ethereum": (44,),
         "bitcoin-cash": (44,),
+        "bitcoin-sv": (44,),
         "litecoin": (44, 49, 84),
         "dogecoin": (44,),
     }
@@ -222,7 +223,7 @@ def test_a_known_address_is_found_with_its_path(address: str, path: str) -> None
     assert search.checked
     assert search.matches == (Match(0, "bitcoin", path),)
     # two readings, four purposes, one account, two branches, two indexes:
-    # a segwit address is not searched on Bitcoin Cash's paths
+    # a segwit address is not searched on the paths of Bitcoin's forks
     assert search.searched == 2 * 4 * 1 * 2 * 2
 
 
@@ -242,13 +243,12 @@ def legacy_address(path: str) -> str:
     [
         ("bitcoin-cash", "m/44h/145h/0h/0/1"),
         ("bitcoin-cash", "m/44h/145h/0h/1/0"),
+        ("bitcoin-sv", "m/44h/236h/0h/0/1"),
         ("bitcoin", "m/44h/0h/0h/0/1"),
     ],
 )
-def test_a_base58_address_is_searched_on_bitcoin_cash_paths(
-    coin: str, path: str
-) -> None:
-    """A legacy address is found on either chain's path, which names the coin.
+def test_a_base58_address_is_searched_on_the_forks_paths(coin: str, path: str) -> None:
+    """A legacy address is found on any chain's path, which names the coin.
 
     :param coin: the coin of the path.
     :param path: where the address is.
@@ -258,9 +258,9 @@ def test_a_base58_address_is_searched_on_bitcoin_cash_paths(
     search = bundle.search
     assert search is not None
     assert search.matches == (Match(0, coin, path),)
-    # one reading, Bitcoin's four purposes and Bitcoin Cash's one, one
-    # account, two branches, two indexes
-    assert search.searched == 1 * (4 + 1) * 1 * 2 * 2
+    # one reading, Bitcoin's four purposes, Bitcoin Cash's one and Bitcoin
+    # SV's one, one account, two branches, two indexes
+    assert search.searched == 1 * (4 + 1 + 1) * 1 * 2 * 2
 
 
 def test_an_address_out_of_the_bound_is_not_found() -> None:

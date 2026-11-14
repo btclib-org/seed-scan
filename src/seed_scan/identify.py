@@ -17,11 +17,11 @@ shares.
 Given an address the user knows, it compares the address's script with
 those of every Bitcoin account it wrote, within a bound written beside
 the result. A base58 address is also compared with those of each
-Bitcoin Cash account, since it spells the same script on both chains;
-a match names the coin of the path it is at. An address of another
-network is not searched, and the bundle says so; a text that is no
-Bitcoin address is not written either, since a key typed by mistake
-would otherwise land in the bundle.
+Bitcoin Cash and Bitcoin SV account, since it spells the same script on
+each of these chains; a match names the coin of the path it is at. An
+address of another network is not searched, and the bundle says so; a
+text that is no Bitcoin address is not written either, since a key
+typed by mistake would otherwise land in the bundle.
 
 Nothing here opens a connection: `seed_scan.cli` refuses one for the
 whole run. What leaves this module is `seed_scan.bundle`'s objects,
@@ -89,6 +89,14 @@ class Coin:
 #   https://github.com/trezor/trezor-suite/blob/c861929418c13919b335061d65a169de5aa869f3/networks/bitcoin/network-bitcoin-suite-common/src/networkConfig.ts#L218-L231
 #   https://github.com/trustwallet/wallet-core/blob/7a21615fad32edd8dc0b040d845de3973cde2c5a/registry.json#L1462-L1472
 #   Electron Cash and Ledger Live also offer m/44h/0h, Bitcoin's own.
+# - Bitcoin SV 44: Yours Wallet, OKX's wallet SDK and the BSV
+#   Blockchain's Python SDK,
+#   https://github.com/yours-org/yours-wallet/blob/ccdd6f480906c06cfa1481ad3a66f4abc8a5cc9e/src/utils/constants.ts#L33-L36
+#   https://github.com/okx/js-wallet-sdk/blob/8d5e8089d8e7cabff732d181433dd2d6884273d7/bu-packages/coin-bitcoin/src/wallet/BsvWallet.ts#L24-L26
+#   https://github.com/bsv-blockchain/py-sdk/blob/ea3db00f89090a4a9a2ed6f5934c06e6b3002a1e/bsv/constants.py#L14
+#   ElectrumSV derives at m/44h/0h, Bitcoin's own, and offers
+#   m/44h/145h, Bitcoin Cash's,
+#   https://github.com/electrumsv/electrumsv/blob/7ab1c7ceaaaa0f8079da21356989d9b250e874b4/electrumsv/gui/qt/account_wizard.py#L60-L63
 # - Dogecoin 44: Trezor Suite, Ledger Live and wallet-core,
 #   https://github.com/trezor/trezor-suite/blob/c861929418c13919b335061d65a169de5aa869f3/networks/bitcoin/network-bitcoin-suite-common/src/networkConfig.ts#L178-L197
 #   https://github.com/trustwallet/wallet-core/blob/7a21615fad32edd8dc0b040d845de3973cde2c5a/registry.json#L95-L105
@@ -113,6 +121,7 @@ COINS = (
     Coin("bitcoin", 0, (44, 49, 84, 86)),
     Coin("ethereum", 60, (44,)),
     Coin("bitcoin-cash", 145, (44,)),
+    Coin("bitcoin-sv", 236, (44,)),
     Coin("litecoin", 2, (44, 49, 84)),
     Coin("dogecoin", 3, (44,)),
 )
@@ -126,8 +135,12 @@ _ELECTRUM = {
     "electrum_segwit": ("m/0h", "/0h", "wpkh"),
 }
 
-# the script types of a base58 address, which Bitcoin Cash spells alike
+# the script types of a base58 address, which the forks below spell alike
 _BASE58 = ("p2pkh", "p2sh")
+
+# the coins forked from Bitcoin whose accounts a base58 address is
+# searched in
+_FORKS = ("bitcoin-cash", "bitcoin-sv")
 
 # what each scheme the words may claim and no reading covers is
 # reported as
@@ -152,14 +165,15 @@ def _searched(
 ) -> tuple[Descriptor, ...]:
     """Return the receive and change descriptors an address is searched in.
 
-    Bitcoin's purpose names its encoding. Bitcoin Cash's one purpose, 44,
-    gives p2pkh scripts, built here since `btclib_wallet.bip44` refuses
-    its coin type; the bundle does not write them, as it writes
-    descriptors for Bitcoin alone. Any other coin answers none.
+    Bitcoin's purpose names its encoding. The one purpose of each coin of
+    `_FORKS`, 44, gives p2pkh scripts, built here since
+    `btclib_wallet.bip44` refuses their coin types; the bundle does not
+    write them, as it writes descriptors for Bitcoin alone. Any other coin
+    answers none.
     """
     if coin.coin_type == 0:
         return bip44.account_descriptors(xpub, path, master_fingerprint)
-    if coin.name != "bitcoin-cash":
+    if coin.name not in _FORKS:
         return ()
     origin = f"[{master_fingerprint.hex()}{path[1:]}]"
     return tuple(parse(f"pkh({origin}{xpub}/{branch}/*)") for branch in (0, 1))
@@ -397,7 +411,7 @@ def _search(found: _Found, address: str, accounts: int, indexes: int) -> Search:
         return Search("", False, REASONS["not_an_address"], accounts, indexes, 0, ())
     if target.network != "mainnet":
         return Search(address, False, REASONS["not_mainnet"], accounts, indexes, 0, ())
-    coins = ("bitcoin", "bitcoin-cash") if target.type in _BASE58 else ("bitcoin",)
+    coins = ("bitcoin", *_FORKS) if target.type in _BASE58 else ("bitcoin",)
     matches = []
     searched = 0
     for reading, pairs in enumerate(found.descriptors):
@@ -432,9 +446,9 @@ def identify(
 
     `accounts` is how many accounts of each coin and purpose are written,
     from account 0. Where `address` is given, the receive and change
-    branches of each Bitcoin account written, and of each Bitcoin Cash
-    one where it is a base58 address, are searched for it, from index 0
-    to `indexes` - 1.
+    branches of each Bitcoin account written, and of each Bitcoin Cash and
+    Bitcoin SV one where it is a base58 address, are searched for it,
+    from index 0 to `indexes` - 1.
 
     A refusal names no secret: the words and the passphrases are never
     quoted.
