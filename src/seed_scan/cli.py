@@ -108,7 +108,7 @@ from seed_scan.scan import ACCOUNT_GAP, GAP_LIMIT, parse_server, scan
 from seed_scan.scan import dumps as scan_dumps
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Iterable
+    from collections.abc import Callable, Iterable, Sequence
 
     from btclib.alias import Octets
     from btclib.script import ScriptPubKey
