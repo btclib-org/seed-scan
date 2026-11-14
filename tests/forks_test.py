@@ -44,7 +44,7 @@ from .no_secret_test import Secrets, assert_text_secret_free
 from .scan_test import ELSEWHERE, Chain, edited, pay
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable, Iterator
+    from collections.abc import Callable, Iterable, Iterator
 
     from btclib.alias import Octets
 
@@ -66,6 +66,31 @@ NEVER = Chain()
 #: first valid prefix of the specification's vectors,
 #: https://github.com/cashtokens/cashtokens/blob/41d2444c17bbfb456d4061953a3ed0e32161571b/test-vectors/token-prefix-valid.json
 TOKEN_PREFIX = bytes.fromhex("ef" + "aa" * 32 + "1001")
+
+#: A 1Sat Ordinals inscription of a BSV-20 transfer, in the envelope of
+#: the specification's README,
+#: https://github.com/BitcoinSchema/1sat-ordinals/blob/4f6d8d78d90acd807843cd254a9068586c793c20/README.md?plain=1#L18-L32
+_TRANSFER = b'{"p":"bsv-20","op":"transfer","tick":"ordi","amt":"100"}'
+INSCRIPTION = (
+    bytes.fromhex("0063036f726451")
+    + bytes([18])
+    + b"application/bsv-20"
+    + b"\x00"
+    + bytes([len(_TRANSFER)])
+    + _TRANSFER
+    + b"\x68"
+)
+
+#: Each way a protocol of Bitcoin SV writes its tokens in the script of
+#: the output holding them, as `seed_scan.forks` cites them, built from
+#: the P2PKH of the owner's key: STAS's, which goes on after it; STAS 3's,
+#: which starts with its key hash; and an inscription after or before it.
+IN_SCRIPT: dict[str, Callable[[bytes], bytes]] = {
+    "stas": lambda p2pkh: p2pkh + bytes.fromhex("6976aa607f5f7f7c"),
+    "stas 3": lambda p2pkh: b"\x14" + p2pkh[3:23] + bytes.fromhex("006d827363"),
+    "inscription after": lambda p2pkh: p2pkh + INSCRIPTION,
+    "inscription before": lambda p2pkh: INSCRIPTION + p2pkh,
+}
 
 
 class Listing:
@@ -237,6 +262,25 @@ def test_an_account_paid_only_through_tokens_reads_as_unused(abandon: str) -> No
     token = ScriptPubKey(TOKEN_PREFIX + p2pkh("m/44h/145h/0h/0/0").script)
     chain = Listing(HistoryTx(pay(1, (token, 800)), SHARED))
     assert not forks(abandon, chain, chain="bitcoin-cash", server="h:1").used
+
+
+@pytest.mark.parametrize("shape", IN_SCRIPT.values(), ids=IN_SCRIPT.keys())
+def test_bitcoin_sv_tokens_in_the_script_leave_the_account_unused(
+    abandon: str, shape: Callable[[bytes], bytes]
+) -> None:
+    """Listed under the account's script, the token output pays another."""
+    token = ScriptPubKey(shape(p2pkh("m/44h/236h/0h/0/0").script))
+    chain = Listing(HistoryTx(pay(1, (token, 1_000)), OWN))
+    assert not forks(abandon, chain, chain="bitcoin-sv", server="h:1").used
+
+
+def test_an_output_beside_an_op_return_is_counted(abandon: str) -> None:
+    """SLP, Run and Tokenized write tokens apart from the P2PKH holding them."""
+    op_return = ScriptPubKey(bytes.fromhex("006a03") + b"run")
+    plain = p2pkh("m/44h/236h/0h/0/0")
+    chain = Chain(HistoryTx(pay(1, (op_return, 0), (plain, 546)), OWN))
+    (used,) = forks(abandon, chain, chain="bitcoin-sv", server="h:1").used
+    assert (used.confirmed, used.at_fork) == (546, 0)
 
 
 def test_nothing_used_reads_each_p2pkh_purpose_and_lists_the_segwit_ones(

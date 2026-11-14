@@ -18,8 +18,9 @@ from hashlib import sha256
 import pytest
 from bip32_descriptors.bip32 import BIP32KeyData
 from bip39_slip39 import bip39
+from btclib.script import ScriptPubKey
 from btclib_wallet.descriptors import add_checksum, parse, strip_checksum
-from btclib_wallet.fetch.history import HistoryTx
+from btclib_wallet.fetch.history import BlockRef, HistoryTx
 from coin_addresses.evm import address_from_pub_key
 
 from seed_scan import forks as forks_module
@@ -27,14 +28,16 @@ from seed_scan import report as report_module
 from seed_scan import scan as scan_module
 from seed_scan.bundle import dumps, loads
 from seed_scan.exceptions import SeedScanTypeError, SeedScanValueError
+from seed_scan.forks import CHAINS
 from seed_scan.identify import identify
 from seed_scan.report import (
-    NO_CASHTOKENS,
+    CHAIN_TOKENS,
     NO_SCAN,
-    NO_SLP_ALP,
     NO_TOKENS,
     NOT_IN_FORKS,
     NOT_IN_SCAN,
+    TOKENS_IN_OP_RETURN,
+    TOKENS_IN_SCRIPT,
     VERSION,
     report,
 )
@@ -206,13 +209,14 @@ def test_the_report_of_a_scanned_bundle(abandon: str, result: str) -> None:
 def test_the_report_of_a_forks_result(abandon: str, forked: str) -> None:
     """Its digest and what it asked, its accounts by reading, its total."""
     lines = report(abandon, None, [forked]).splitlines()
-    assert lines[2:9] == [
+    assert lines[2:10] == [
         "scan: none",
         f"forks: sha256 {digest(forked)}",
         "chain: Bitcoin Cash, forked from Bitcoin at height 478559",
         "server: h:1",
         "bounds: account gap 3, gap limit 20",
-        f"cashtokens: not checked: {NO_CASHTOKENS}",
+        f"cashtokens: not checked: {TOKENS_IN_SCRIPT}",
+        f"slp tokens: not checked: {TOKENS_IN_OP_RETURN}",
         "claims: bip39",
     ]
     bitcoin = script(abandon, "m/44h/0h/0h", 0, 0).address
@@ -263,6 +267,11 @@ def test_a_forks_result_follows_the_scan_s_lines(
     assert lines[last + 1].startswith("  bitcoin, purpose 44, on Bitcoin Cash: ")
     assert lines[-3].startswith("total: bitcoin, ")
     assert lines[-2].startswith("total: bitcoin-cash, ")
+
+
+def test_each_chain_names_its_token_protocols() -> None:
+    """Each chain forks reads has its token lines: a new chain needs them."""
+    assert CHAIN_TOKENS.keys() == CHAINS.keys()
 
 
 @pytest.mark.parametrize("forks", [None, {}, "text", 1.5])
@@ -319,18 +328,20 @@ def test_a_bitcoin_sv_result_lists_bitcoin_cash_s_accounts(abandon: str) -> None
     """Each coin forks reads is listed on the result's chain, and totalled.
 
     7000 sat paid since the fork at Bitcoin Cash's coin type, read on
-    Bitcoin SV. The CashTokens line is a Bitcoin Cash result's alone.
+    Bitcoin SV. Its token lines name Bitcoin SV's protocols alone.
     """
     own = p2pkh("m/44h/145h/0h/0/0")
     forked = forked_of(
         abandon, HistoryTx(pay(1, (own, 7_000)), OWN), chain="bitcoin-sv"
     )
     lines = report(abandon, None, [forked]).splitlines()
-    assert lines[3:8] == [
+    assert lines[3:10] == [
         f"forks: sha256 {digest(forked)}",
         "chain: Bitcoin SV, forked from Bitcoin at height 478559",
         "server: h:1",
         "bounds: account gap 3, gap limit 20",
+        f"stas, bsv-20 and bsv-21 tokens: not checked: {TOKENS_IN_SCRIPT}",
+        f"slp, run and tokenized tokens: not checked: {TOKENS_IN_OP_RETURN}",
         "claims: bip39",
     ]
     read = "  bitcoin-cash, purpose 44, on Bitcoin SV: accounts 0 to 3 read, 1 used"
@@ -355,12 +366,32 @@ def test_a_bitcoin_sv_result_lists_bitcoin_cash_s_accounts(abandon: str) -> None
     ]
 
 
+def test_a_bitcoin_sv_report_says_slp_is_not_checked(abandon: str) -> None:
+    """An SLP output made before Bitcoin SV parted from Bitcoin Cash is on both.
+
+    546 sat paid at height 550000 at Bitcoin Cash's coin type, beside the
+    ``OP_RETURN`` of SLP's identifier: counted on Bitcoin SV, its tokens
+    not checked.
+    """
+    slp = ScriptPubKey(bytes.fromhex("6a04") + b"SLP\x00")
+    own = p2pkh("m/44h/145h/0h/0/0")
+    before = BlockRef(550_000, b"\x03" * 32)
+    forked = forked_of(
+        abandon, HistoryTx(pay(1, (slp, 0), (own, 546)), before), chain="bitcoin-sv"
+    )
+    text = report(abandon, None, [forked])
+    assert f"\nslp, run and tokenized tokens: not checked: {TOKENS_IN_OP_RETURN}\n" in (
+        text
+    )
+    assert "\ntotal: bitcoin-sv, 546 sat confirmed, 0 sat unconfirmed," in text
+
+
 def test_an_ecash_result_lists_each_coin_s_accounts(abandon: str) -> None:
     """Each coin forks reads is listed on eCash, and totalled once.
 
     300 sat held at the fork at Bitcoin's path, then 20 sat paid at
     Bitcoin Cash's coin type, 30 at Bitcoin SV's and 40 at eCash's, read
-    on eCash. The SLP and ALP line is an eCash result's alone.
+    on eCash. Its token line names eCash's protocols alone.
     """
     bitcoin = p2pkh("m/44h/0h/0h/0/0")
     paid = [
@@ -383,7 +414,7 @@ def test_an_ecash_result_lists_each_coin_s_accounts(abandon: str) -> None:
         "chain: eCash, forked from Bitcoin at height 478559",
         "server: h:1",
         "bounds: account gap 3, gap limit 20",
-        f"slp and alp tokens: not checked: {NO_SLP_ALP}",
+        f"slp and alp tokens: not checked: {TOKENS_IN_OP_RETURN}",
         "claims: bip39",
     ]
     reason = NO_WITNESS.replace("Bitcoin Cash", "eCash")

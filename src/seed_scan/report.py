@@ -31,9 +31,9 @@ every other character is literal.
 - per forks result, in the order given, ``forks: sha256 <hex>``, the
   SHA-256 of its text, then ``chain: <title>, forked from Bitcoin at
   height <n>``, ``server: <host:port>`` and ``bounds: account gap <n>,
-  gap limit <n>``, then for a Bitcoin Cash result ``cashtokens: not
-  checked: <reason>``, and for an eCash result ``slp and alp tokens: not
-  checked: <reason>``; or ``forks: none`` alone, where none is given.
+  gap limit <n>``, then ``<protocols>: not checked: <reason>`` per item
+  `CHAIN_TOKENS` holds for its chain; or ``forks: none`` alone, where
+  none is given.
 - ``claims: <scheme>, ...``: the schemes that claim the words, or
   ``claims: none``.
 - ``not derived: <scheme>: <reason>``: one line per scheme the words
@@ -91,6 +91,7 @@ from __future__ import annotations
 
 import re
 from hashlib import sha256
+from types import MappingProxyType
 from typing import TYPE_CHECKING, TypeVar
 
 from seed_scan.bundle import Account, Bundle, Reading, Search
@@ -98,6 +99,7 @@ from seed_scan.bundle import loads as bundle_loads
 from seed_scan.exceptions import SeedScanTypeError, SeedScanValueError
 from seed_scan.forks import (
     BITCOIN_CASH,
+    BITCOIN_SV,
     CHAINS,
     ECASH,
     ForkAccount,
@@ -112,12 +114,13 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
 
 __all__ = [
+    "CHAIN_TOKENS",
     "NOT_IN_FORKS",
     "NOT_IN_SCAN",
-    "NO_CASHTOKENS",
     "NO_SCAN",
-    "NO_SLP_ALP",
     "NO_TOKENS",
+    "TOKENS_IN_OP_RETURN",
+    "TOKENS_IN_SCRIPT",
     "VERSION",
     "report",
 ]
@@ -140,18 +143,36 @@ NO_TOKENS = (
 #: Why an account is not checked where the forks result does not read it.
 NOT_IN_FORKS = "the forks result does not read it"
 
-#: Why CashTokens are not checked where a Bitcoin Cash forks result is given.
-NO_CASHTOKENS = (
+#: Why the tokens a protocol writes in the script of the output holding
+#: them are not checked.
+TOKENS_IN_SCRIPT = (
     "forks does not read an output carrying them as paying its script, so its"
     " satoshis are not counted, and an account paid only through such outputs"
     " reads as unused"
 )
 
-#: Why SLP and ALP tokens are not checked where an eCash forks result is
-#: given.
-NO_SLP_ALP = (
+#: Why the tokens a protocol writes in an ``OP_RETURN`` output are not
+#: checked.
+TOKENS_IN_OP_RETURN = (
     "forks counts the satoshis of an output holding them, and does not read"
-    " the tokens, which the transaction's first output assigns to it"
+    " the tokens, which an OP_RETURN output of the transaction assigns to it"
+)
+
+#: The token protocols of each chain of `seed_scan.forks.CHAINS`, as a
+#: report names them, each with why its tokens are not checked.
+#: `seed_scan.forks` says where each protocol writes its tokens.
+CHAIN_TOKENS = MappingProxyType(
+    {
+        BITCOIN_CASH.name: (
+            ("cashtokens", TOKENS_IN_SCRIPT),
+            ("slp tokens", TOKENS_IN_OP_RETURN),
+        ),
+        BITCOIN_SV.name: (
+            ("stas, bsv-20 and bsv-21 tokens", TOKENS_IN_SCRIPT),
+            ("slp, run and tokenized tokens", TOKENS_IN_OP_RETURN),
+        ),
+        ECASH.name: (("slp and alp tokens", TOKENS_IN_OP_RETURN),),
+    }
 )
 
 _BRANCHES = ("receive", "change")
@@ -366,10 +387,10 @@ def _forks(result: ForksResult, text: str) -> list[str]:
         f"server: {result.server}",
         f"bounds: account gap {result.account_gap}, gap limit {result.gap_limit}",
     ]
-    if result.chain == BITCOIN_CASH.name:
-        lines.append(f"cashtokens: not checked: {NO_CASHTOKENS}")
-    elif result.chain == ECASH.name:
-        lines.append(f"slp and alp tokens: not checked: {NO_SLP_ALP}")
+    lines += [
+        f"{names}: not checked: {reason}"
+        for names, reason in CHAIN_TOKENS[result.chain]
+    ]
     return lines
 
 

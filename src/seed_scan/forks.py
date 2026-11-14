@@ -39,20 +39,60 @@ same history, from the transactions confirmed below the chain's
 held when the chain parted from Bitcoin, which for Bitcoin SV and eCash
 is Bitcoin Cash's fork, not their own later split from Bitcoin Cash.
 
-On Bitcoin Cash, an output carrying CashTokens holds the token prefix
-before its script, in the same length field, as the CashTokens
-specification's *Token Encoding* says
-(https://github.com/cashtokens/cashtokens/blob/41d2444c17bbfb456d4061953a3ed0e32161571b/readme.md#token-encoding):
-it is not read as paying the script, so its satoshis are not counted,
-and an account paid only through such outputs reads as unused.
+Each token protocol below writes its tokens either in the script of the
+output holding them, or in an ``OP_RETURN`` output of the transaction.
+`seed_scan.report` names the protocols of each chain, and says that
+their tokens are not checked.
 
-On eCash, an output holding SLP or ALP tokens pays its script as any
-output does: the tokens it holds are written in the transaction's first
-output, an ``OP_RETURN``, as SLP's parser in ecash-lib and the ALP
-standard say
-(https://github.com/Bitcoin-ABC/bitcoin-abc/blob/988b903deb04311b12ba067734dab3ff9f5411a7/modules/ecash-lib/src/token/slp.parse.ts#L79-L89,
-https://github.com/Bitcoin-ABC/bitcoin-abc/blob/988b903deb04311b12ba067734dab3ff9f5411a7/doc/standards/alp.md#11-empp).
-Its satoshis are counted, and its tokens are not read.
+Where the tokens are in the script, the output is not read as paying
+the account's script, so its satoshis are not counted, and an account
+paid only through such outputs reads as unused. These are:
+
+- on Bitcoin Cash, CashTokens, whose token prefix stands before the
+  script, in the same length field, as the CashTokens specification's
+  *Token Encoding* says
+  (https://github.com/cashtokens/cashtokens/blob/41d2444c17bbfb456d4061953a3ed0e32161571b/readme.md#token-encoding);
+- on Bitcoin SV, STAS, whose script is a P2PKH followed by the token's
+  own, or from STAS 3 the owner's hash followed by it, and whose tokens
+  are the output's satoshis
+  (https://github.com/stas-token/stas-sdk/blob/6bdd953c8c8073cca34e41e997ba3e9de49e2394/lib/scripts/stasScripts.js#L1,
+  https://github.com/stassso/STAS-3-script-templates/blob/38b334f988c600865a0b45804fc7cc18a54f6dd9/Template%20STAS%203.0,
+  https://github.com/stas-token/stas-sdk/blob/6bdd953c8c8073cca34e41e997ba3e9de49e2394/README.md?plain=1#L336);
+- on Bitcoin SV, BSV-20 and BSV-21, whose 1Sat Ordinals inscription
+  stands in the script beside the one that locks it, typically a P2PKH,
+  and gives the amount the output holds
+  (https://github.com/BitcoinSchema/1sat-ordinals/blob/4f6d8d78d90acd807843cd254a9068586c793c20/README.md?plain=1#L18-L32,
+  https://github.com/BitcoinSchema/1sat-ordinals/blob/4f6d8d78d90acd807843cd254a9068586c793c20/fungible-tokens/bsv20.md?plain=1#L84-L95,
+  https://github.com/BitcoinSchema/1sat-ordinals/blob/4f6d8d78d90acd807843cd254a9068586c793c20/fungible-tokens/bsv-21.md?plain=1#L163-L174).
+
+Where the tokens are in an ``OP_RETURN`` output, the output holding them
+pays its script as any output does: where that is an account's P2PKH,
+its satoshis are counted, and its tokens are not read. These are:
+
+- SLP, on Bitcoin Cash and eCash, whose first output, an ``OP_RETURN``,
+  gives the tokens each later output holds, as SLP's specification and
+  its parser in ecash-lib say
+  (https://github.com/simpleledger/slp-specifications/blob/bc2632c19cfa841ca7dce2e5b7b2860d76bb5447/slp-token-type-1.md?plain=1#L197,
+  https://github.com/simpleledger/slp-specifications/blob/bc2632c19cfa841ca7dce2e5b7b2860d76bb5447/slp-token-type-1.md?plain=1#L401,
+  https://github.com/Bitcoin-ABC/bitcoin-abc/blob/988b903deb04311b12ba067734dab3ff9f5411a7/modules/ecash-lib/src/token/slp.parse.ts#L79-L89);
+  and on Bitcoin SV, which holds the SLP outputs made before it parted
+  from Bitcoin Cash at Bitcoin Cash's upgrade of November 2018, SLP's
+  specification being published before that upgrade
+  (https://github.com/simpleledger/slp-specifications/commit/71a821b850639e0a4ed71303f30f53d9949bdcec,
+  https://gitlab.com/bitcoin-cash-node/bitcoin-cash-node/-/blob/e13b48e37b3005dca9a316f75aea456697a5dfd6/src/chainparams.cpp#L125-126);
+- ALP, on eCash, written in that same first output
+  (https://github.com/Bitcoin-ABC/bitcoin-abc/blob/988b903deb04311b12ba067734dab3ff9f5411a7/doc/standards/alp.md#11-empp);
+- on Bitcoin SV, Run, whose tokens are jigs held by P2PKH outputs,
+  generally dust, their amounts being what the actions in the
+  transaction's ``OP_RETURN`` output leave in them
+  (https://github.com/runonbitcoin/walleteering/blob/28ed62edd9886e0e4cd4cc702c6f373561eccbf7/guide/01-background.md?plain=1#L15-L17,
+  https://github.com/runonbitcoin/walleteering/blob/28ed62edd9886e0e4cd4cc702c6f373561eccbf7/guide/01-background.md?plain=1#L47-L50,
+  https://github.com/runonbitcoin/run-sdk/blob/aea17210bf40095d17413f39e9d961da0ece9100/lib/kernel/metadata.js#L25-L39);
+- on Bitcoin SV, Tokenized, whose holders are P2PKH addresses, and whose
+  settlement's ``OP_RETURN`` output gives the balance of the address of
+  each output it names
+  (https://github.com/tokenized/docs/blob/bd495cc0b3bb5652f70b810bed6e46791c410651/concepts-transactions.md?plain=1#L15,
+  https://github.com/tokenized/specification/blob/84dbb49995b63c85fe9bc57b35e415d9d5faca3e/dist/markdown/protocol-actions.md?plain=1#L4516-L4524).
 
 The result is one JSON object, which `dumps` writes. It holds public data
 only. Its members:
