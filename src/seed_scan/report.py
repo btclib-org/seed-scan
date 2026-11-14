@@ -519,13 +519,12 @@ def _evm_totals(bundle: Bundle, chain: str, used: tuple[EvmAccount, ...]) -> lis
     )
     lines = [native]
     for token in EVM_CHAINS[chain].tokens:
-        units = sum(
+        if units := sum(
             int(held.balance)
             for account in accounts
             for held in account.tokens
             if held.contract == token.contract
-        )
-        if units:
+        ):
             total = EvmTokenBalance(
                 token.contract, token.symbol, token.decimals, str(units)
             )

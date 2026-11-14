@@ -646,15 +646,11 @@ def _evm_address(
     """
     block = node.block_number()
     balance, nonce = node.balance(address, block), node.nonce(address, block)
-    held: list[EvmTokenBalance] = []
-    for token in tokens:
-        units = node.token_balance(token.contract, address, block)
-        if units:
-            held.append(
-                EvmTokenBalance(
-                    token.contract, token.symbol, token.decimals, str(units)
-                )
-            )
+    held = [
+        EvmTokenBalance(token.contract, token.symbol, token.decimals, str(units))
+        for token in tokens
+        if (units := node.token_balance(token.contract, address, block))
+    ]
     if not (balance or nonce or held):
         return None
     return EvmAddress(index, address, str(balance), nonce, block, tuple(held))
@@ -667,21 +663,18 @@ def _token_sums(
 
     The sums are in the order of `tokens`.
     """
-    sums: list[EvmTokenBalance] = []
-    for token in tokens:
-        units = sum(
-            int(held.balance)
-            for found in addresses
-            for held in found.tokens
-            if held.contract == token.contract
-        )
-        if units:
-            sums.append(
-                EvmTokenBalance(
-                    token.contract, token.symbol, token.decimals, str(units)
-                )
+    return tuple(
+        EvmTokenBalance(token.contract, token.symbol, token.decimals, str(units))
+        for token in tokens
+        if (
+            units := sum(
+                int(held.balance)
+                for found in addresses
+                for held in found.tokens
+                if held.contract == token.contract
             )
-    return tuple(sums)
+        )
+    )
 
 
 def _evm_account(

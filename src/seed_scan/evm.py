@@ -235,8 +235,8 @@ class EvmChain:
 # smart-order-router declares for chain id 10, OP Mainnet's:
 #   https://github.com/Uniswap/smart-order-router/blob/04c7c0b4d85ac2a19a3ff53987d21f9c8f1fe647/src/providers/token-provider.ts#L199-L205
 #   https://github.com/Uniswap/sdks/blob/8ae0425c57e1699b0ae48ebb3077a2f526ae3818/sdks/sdk-core/src/chains.ts#L6
-# The registry lists no USDT, USDC, DAI or wrapped ETC on Ethereum
-# Classic, whose list is empty:
+# The registry lists no USDT, USDC, DAI, wrapped ETC or wrapped bitcoin
+# on Ethereum Classic, so its tuple is empty:
 #   https://github.com/trustwallet/assets/tree/50d6fd574843da19cdd5fded102b5d6b951c72d2/blockchains/classic/assets
 _ETHEREUM_TOKENS = (
     EvmToken("0xdAC17F958D2ee523a2206206994597C13D831ec7", "USDT", 6),
@@ -479,8 +479,9 @@ class Node:
     ``SessionTransport`` keeps one open across requests. `timeout` bounds
     each request, in seconds.
 
-    `balance`, `nonce` and `token_balance` check their address first, as
-    the module docstring says, and refuse it without asking anything.
+    `balance`, `nonce` and `token_balance` check their address first, and
+    `token_balance` its contract too, as the module docstring says; they
+    refuse a bad one without asking anything.
 
     Each method asks one request. A failure below the answer is a
     `btclib_wallet.exceptions.FetchError` that names the node alone,
