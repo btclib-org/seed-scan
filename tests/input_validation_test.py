@@ -16,9 +16,10 @@ two rounds:
 
 ## What it calls
 
-The walk starts at `seed_scan.__all__` and reads each module's own
-`__all__` when the suite runs, so a function published later is driven
-without being listed here. It takes every function, and every class
+The walk starts at `seed_scan.__all__` and descends through every
+module an `__all__` publishes, at any depth, when the suite runs, so a
+function published later is driven without being listed here. It takes
+every function, and every class
 that is neither an exception nor a dataclass, its constructor being the
 call. A dataclass is a record: its constructor checks nothing, and the
 readers that build one from text are what refuse.
@@ -34,8 +35,10 @@ annotation of the parameter, as the signature spells it.
 
 A required parameter whose annotation is in neither vocabulary fails
 `test_every_public_function_is_driven`, naming the function and the
-annotation: the fix is a wrong type and a wrong value for it. A key no
-public function uses any more fails `test_the_vocabulary_is_in_use`.
+annotation: the fix is a wrong type and a wrong value for it. A function
+no round drives fails `test_no_public_function_escapes_both_rounds`,
+unless `_NOT_DRIVEN` names it, its reason beside it. A key no public function
+uses any more fails `test_the_vocabulary_is_in_use`.
 
 ## What it does not reach
 
@@ -45,8 +48,8 @@ one is driven in the type round only. `object` has no wrong type, so a
 function taking one is driven in the value round only.
 
 A parameter with a default is never driven, since reaching it needs
-valid arguments before it, and a function with no required parameter,
-such as `seed_scan.cli.main`, is driven by neither round. A method needs
+valid arguments before it, so a function with no required parameter is
+driven by neither round. A method needs
 an instance the vocabulary does not build, and is not driven here
 (btclib-org/seed-scan#42).
 """
@@ -54,15 +57,17 @@ an instance the vocabulary does not build, and is not driven here
 from __future__ import annotations
 
 import dataclasses
-import importlib
 import inspect
 from functools import partial
+from types import ModuleType
 from typing import TYPE_CHECKING, Any
 
 import pytest
 
 import seed_scan
 from seed_scan.exceptions import SeedScanException, SeedScanTypeError
+
+from . import published
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator
@@ -92,8 +97,9 @@ _WRONG_TYPE: dict[str, tuple[Any, ...]] = {
 _WRONG_VALUE: dict[str, tuple[Any, ...]] = {
     # not JSON, a URL, host:port or a chain's name
     "str": ("not one of them",),
-    # below the first passphrase number, and past what a reason reads back
-    "int": (-1, 10**9),
+    # below the first passphrase number, past what a reason reads back, and
+    # past what `str` converts
+    "int": (-1, 10**9, 10**5000),
     # a quantity is 0x and hex digits with no leading zero
     "object": ("zz", "0x01"),
     # every list of passphrases is one to try, and every prompt one to ask
@@ -107,14 +113,6 @@ _WRONG_VALUE: dict[str, tuple[Any, ...]] = {
     "ForksResult": (),
     "ScanResult": (),
 }
-
-
-def _published() -> Iterator[tuple[str, Any]]:
-    """Yield every name under the `__all__` of every published module."""
-    for name in seed_scan.__all__:
-        module = importlib.import_module(f"seed_scan.{name}")
-        for public in module.__all__:
-            yield f"{module.__name__}.{public}", getattr(module, public)
 
 
 def _is_driven(obj: object) -> bool:
@@ -137,7 +135,19 @@ def _required(function: Callable[..., Any]) -> list[inspect.Parameter]:
     ]
 
 
-_CALLABLES = {dotted: obj for dotted, obj in _published() if _is_driven(obj)}
+_CALLABLES = {
+    f"{module}.{name}": obj
+    for module, name, obj in published(seed_scan)
+    if _is_driven(obj)
+}
+
+# what neither round drives, by dotted name, with the reason. A function
+# whose parameters all carry a default is the shape that lands here
+_NOT_DRIVEN = {
+    # the command line, whose one parameter stands for sys.argv: argparse
+    # answers a wrong argument with a usage line and exit status 2
+    "seed_scan.cli.main",
+}
 
 
 def _calls(
@@ -168,7 +178,9 @@ def _calls(
         yield partial(function, *positional, **keywords)
 
 
-def _driven_by(vocabulary: dict[str, tuple[Any, ...]]) -> list[str]:
+def _driven_by(
+    vocabulary: dict[str, tuple[Any, ...]], callables: dict[str, Any]
+) -> list[str]:
     """Return the functions every required parameter of which has a value.
 
     A function with a parameter of an annotation the vocabulary does not
@@ -176,13 +188,13 @@ def _driven_by(vocabulary: dict[str, tuple[Any, ...]]) -> list[str]:
     """
     return sorted(
         dotted
-        for dotted, function in _CALLABLES.items()
+        for dotted, function in callables.items()
         if (annotations := [str(p.annotation) for p in _required(function)])
         and all(vocabulary.get(annotation) for annotation in annotations)
     )
 
 
-@pytest.mark.parametrize("dotted", _driven_by(_WRONG_TYPE))
+@pytest.mark.parametrize("dotted", _driven_by(_WRONG_TYPE, _CALLABLES))
 def test_a_wrong_type_leaves_as_a_type_error_of_the_package(dotted: str) -> None:
     """The first rule.
 
@@ -196,7 +208,7 @@ def test_a_wrong_type_leaves_as_a_type_error_of_the_package(dotted: str) -> None
             call()
 
 
-@pytest.mark.parametrize("dotted", _driven_by(_WRONG_VALUE))
+@pytest.mark.parametrize("dotted", _driven_by(_WRONG_VALUE, _CALLABLES))
 def test_a_wrong_value_leaves_as_an_exception_of_the_package(dotted: str) -> None:
     """The second rule: the base, which is the contract a caller is given."""
     for call in _calls(dotted, _WRONG_VALUE):
@@ -217,10 +229,37 @@ def test_every_public_function_is_driven(dotted: str) -> None:
         f"{dotted} takes {', '.join(unknown)}, which the vocabularies do not"
         " hold: add a wrong type and a wrong value for it"
     )
-    assert not annotations or dotted in {
-        *_driven_by(_WRONG_TYPE),
-        *_driven_by(_WRONG_VALUE),
-    }
+
+
+def _undriven(callables: dict[str, Any]) -> list[str]:
+    """Return the callables neither round drives, `_NOT_DRIVEN` included."""
+    driven = {*_driven_by(_WRONG_TYPE, callables), *_driven_by(_WRONG_VALUE, callables)}
+    return sorted(set(callables) - driven)
+
+
+def test_no_public_function_escapes_both_rounds() -> None:
+    """What neither round calls is named, with its reason, or it fails.
+
+    A function whose parameters all carry a default is called by neither
+    round, and without this it would pass every test here untested. An
+    entry `_NOT_DRIVEN` keeps for a function a round now drives, or one
+    no longer published, fails too.
+    """
+    assert set(_undriven(_CALLABLES)) == _NOT_DRIVEN
+
+
+def test_an_undriven_function_is_reported() -> None:
+    """The check above, on a function with no required parameter.
+
+    Compiled from a string, so that its body, never called, is not code
+    the suite's coverage reads.
+    """
+    namespace: dict[str, Any] = {}
+    exec(  # noqa: S102 -- a literal, compiled for its signature
+        "def new_function(text: str = '') -> None: ...\n", namespace
+    )
+    new_function = namespace["new_function"]
+    assert _undriven({"m.new_function": new_function}) == ["m.new_function"]
 
 
 def test_the_vocabulary_is_in_use() -> None:
@@ -257,10 +296,32 @@ def test_the_walk_reaches_what_it_claims() -> None:
     assert [p.name for p in _required(_CALLABLES["seed_scan.report.report"])] == [
         "bundle"
     ]
-    assert not _required(_CALLABLES["seed_scan.cli.main"])
 
     assert "seed_scan.bundle.Bundle" not in _CALLABLES
     assert "seed_scan.exceptions.SeedScanValueError" not in _CALLABLES
     assert "seed_scan.scan.VERSION" not in _CALLABLES
-    assert "seed_scan.evm.quantity" not in _driven_by(_WRONG_TYPE)
-    assert "seed_scan.forks.forks" not in _driven_by(_WRONG_VALUE)
+    assert "seed_scan.evm.quantity" not in _driven_by(_WRONG_TYPE, _CALLABLES)
+    assert "seed_scan.forks.forks" not in _driven_by(_WRONG_VALUE, _CALLABLES)
+
+
+def test_the_walk_descends_into_a_published_subpackage() -> None:
+    """A function published at any depth is reached, as the lists publish it.
+
+    Measured on modules built here: the package publishes no subpackage
+    yet, and one added later is the case this guards. A module no list
+    names is not reached.
+    """
+    root, child, grand, hidden = (
+        ModuleType(name)
+        for name in ("root", "root.child", "root.child.grand", "root.hidden")
+    )
+    root.__all__ = ["child"]  # type: ignore[attr-defined]
+    child.__all__ = ["grand"]  # type: ignore[attr-defined]
+    grand.__all__ = ["new_function"]  # type: ignore[attr-defined]
+    hidden.__all__ = ["elsewhere"]  # type: ignore[attr-defined]
+    root.child = child  # type: ignore[attr-defined]
+    root.hidden = hidden  # type: ignore[attr-defined]
+    child.grand = grand  # type: ignore[attr-defined]
+    grand.new_function = len  # type: ignore[attr-defined]
+    hidden.elsewhere = len  # type: ignore[attr-defined]
+    assert list(published(root)) == [("root.child.grand", "new_function", len)]

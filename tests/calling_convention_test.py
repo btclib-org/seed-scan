@@ -20,21 +20,23 @@ rules, and this module tests these over every public callable:
 The rule that a private function carries no default is not tested here:
 tests/README.md says why.
 
-The walk starts at `seed_scan.__all__` and reads each module's own
-`__all__` when the suite runs, so a callable published later is walked
-without being listed here. A function is walked as itself; a class as
-its `__init__`, where it defines one, and each public function in its
-own `__dict__`, a property's getter included. An inherited method is
-walked where it is defined.
+The walk is `tests/__init__.py`'s `published`: it starts at
+`seed_scan.__all__` and descends through every module an `__all__`
+publishes, at any depth, when the suite runs, so a callable published
+later is walked without being listed here. A function is walked as
+itself; a class as its `__init__`, where it defines one, and each public
+function in its own `__dict__`, a property's getter included. An
+inherited method is walked where it is defined.
 """
 
 from __future__ import annotations
 
-import importlib
 import inspect
 from typing import TYPE_CHECKING, Any
 
 import seed_scan
+
+from . import published
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Iterator
@@ -59,25 +61,22 @@ def _callables() -> Iterator[tuple[str, Any]]:
 
     What is neither, a constant or a module-level object, is passed over.
     """
-    for name in seed_scan.__all__:
-        module = importlib.import_module(f"seed_scan.{name}")
-        for public in module.__all__:
-            obj = getattr(module, public)
-            label = f"{module.__name__}:{public}"
-            if inspect.isfunction(obj):
-                yield label, obj
-            elif inspect.isclass(obj):
-                for attr, member in vars(obj).items():
-                    # a static or class method is walked as its function
-                    function = (
-                        member.fget
-                        if isinstance(member, property)
-                        else getattr(member, "__func__", member)
-                    )
-                    if inspect.isfunction(function) and (
-                        attr == "__init__" or not attr.startswith("_")
-                    ):
-                        yield f"{label}.{attr}", function
+    for module, name, obj in published(seed_scan):
+        label = f"{module}:{name}"
+        if inspect.isfunction(obj):
+            yield label, obj
+        elif inspect.isclass(obj):
+            for attr, member in vars(obj).items():
+                # a static or class method is walked as its function
+                function = (
+                    member.fget
+                    if isinstance(member, property)
+                    else getattr(member, "__func__", member)
+                )
+                if inspect.isfunction(function) and (
+                    attr == "__init__" or not attr.startswith("_")
+                ):
+                    yield f"{label}.{attr}", function
 
 
 def _keyword_only() -> dict[str, list[str]]:

@@ -145,8 +145,10 @@ REASONS = {
         "not a Bitcoin address: neither searched nor written, in case it is a key"
     ),
 }
+# the digits a passphrase's number in a reason has at most
+_PASSPHRASE_DIGITS = 9
 _SLIP39_PASSPHRASE = re.compile(
-    r"passphrase (?:0|[1-9][0-9]{0,8}): not one SLIP-0039 accepts"
+    rf"passphrase (?:0|[1-9][0-9]{{0,{_PASSPHRASE_DIGITS - 1}}}): not one SLIP-0039 accepts"
 )
 
 # a path as identify writes it: `m`, then indexes, hardened ones with `h`
@@ -189,10 +191,11 @@ def slip39_passphrase(number: int) -> str:
     """
     if isinstance(number, bool) or not isinstance(number, int):
         raise SeedScanTypeError(f"invalid number type: {type(number).__name__}")
-    reason = f"passphrase {number}: not one SLIP-0039 accepts"
-    if not _SLIP39_PASSPHRASE.fullmatch(reason):
+    # compared before `str` converts it, which refuses an int of too many
+    # digits with a ValueError of its own
+    if not 0 <= number < 10**_PASSPHRASE_DIGITS:
         raise SeedScanValueError("passphrase number: outside what the format writes")
-    return reason
+    return f"passphrase {number}: not one SLIP-0039 accepts"
 
 
 @dataclass(frozen=True)
