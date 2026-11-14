@@ -42,7 +42,8 @@ describes. Anything that breaks it is a vulnerability to report here:
   what the commands before it wrote and, for `scan` and `forks`, the CA
   certificates they verify their server against, and `scan` its node:
   the system's, or, for a server, those of the file the user names;
-- a query sent to a server, a node or an explorer the user did not name.
+- a query sent to a server, a node or an explorer the user did not name,
+  or sent by `--tcp` to an address off loopback.
 
 So is a report that calls a scheme or a coin checked when it was not,
 since a user acts on its "nothing found", and so is a flaw in the
@@ -129,3 +130,9 @@ person running `identify` holds the keys to funds:
     checkpoint. It does not prove that a history answered is that
     chain's. Proving each history against the chain is
     [btclib-org/seed-scan#34](https://github.com/btclib-org/seed-scan/issues/34).
+- **`--tcp` is neither encrypted nor authenticated.** Its connection
+    stays on the machine, and anything there that can read loopback
+    traffic learns every address asked. A process listening on the port
+    in the server's place, as one started while the server is down, is
+    sent every request and answers each as it likes: TLS with `--cafile`
+    is what tells the user's server from it.

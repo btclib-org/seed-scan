@@ -10,9 +10,10 @@ block at the command's checkpoint, and lists each payment as a mempool
 transaction: no other header is needed, whose proof of work no test could
 produce. The checkpoint's header is a real one, which a test checks
 hashes to the id the command compares. Most tests hand it to the command
-in place of the TLS transport. The others serve it over TLS on the
-loopback interface, with the certificates the `tls` fixture makes, so
-that the handshake the command makes is the one under test.
+in place of the transport. The others serve it on the loopback
+interface, over TLS with the certificates the `tls` fixture makes or
+over plain TCP, so that the connections the command makes are the ones
+under test.
 
 The Ethereum node is `tests.evm_test`'s `Ethereum`, served over HTTP, or
 HTTPS with the same certificates, on the loopback interface, so that the
@@ -41,7 +42,10 @@ from btclib.script import ScriptPubKey
 from btclib.tx import OutPoint, Tx, TxIn, TxOut
 from btclib_wallet.descriptors import parse
 from btclib_wallet.exceptions import FetchError
-from btclib_wallet.fetch.transport import SessionTransport
+from btclib_wallet.fetch.transport import (
+    PersistentTlsLineTransport,
+    SessionTransport,
+)
 
 from seed_scan import cli
 from seed_scan.bundle import dumps, loads
@@ -197,14 +201,16 @@ class Connections:
         :param server: what every connection reaches.
         """
         self.server = server
-        self.made: list[tuple[str, int, ssl.SSLContext]] = []
+        self.made: list[tuple[str, int, ssl.SSLContext | None]] = []
 
-    def __call__(self, host: str, port: int, context: ssl.SSLContext) -> LineTransport:
+    def __call__(
+        self, host: str, port: int, context: ssl.SSLContext | None
+    ) -> LineTransport:
         """Record the connection asked for, and answer the server.
 
         :param host: the host.
         :param port: the port.
-        :param context: the TLS context.
+        :param context: the TLS context, or None for plain TCP.
         :returns: the server.
         """
         self.made.append((host, port, context))
@@ -399,10 +405,13 @@ def test_the_context_verifies_the_certificate_and_the_host(
     run(capsys, [bundle, "--server", "h:1"], connect)
     run(capsys, [bundle, "--server", "h:1", "--cafile", str(tls / "ca.pem")], connect)
     for _, _, context in connect.made:
+        assert context is not None
         assert context.verify_mode == ssl.CERT_REQUIRED
         assert context.check_hostname
         assert context.minimum_version == ssl.TLSVersion.TLSv1_2
-    (ca,) = connect.made[1][2].get_ca_certs()
+    context = connect.made[1][2]
+    assert context is not None
+    (ca,) = context.get_ca_certs()
     assert ca["subject"] == ((("commonName", "seed-scan test CA"),),)
 
 
@@ -734,18 +743,21 @@ def tls(tmp_path_factory: pytest.TempPathFactory) -> Path:
     return folder
 
 
-class TlsServer:
-    """`Electrum` over TLS on the loopback interface, in a thread."""
+class LineServer:
+    """`Electrum` on a port of 127.0.0.1, in a thread, over TLS or plain TCP."""
 
-    def __init__(self, electrum: Electrum, tls: Path) -> None:
+    def __init__(self, electrum: Electrum, tls: Path | None = None) -> None:
         """Listen on a port of 127.0.0.1, and serve until stopped.
 
         :param electrum: what answers each request.
-        :param tls: the folder of the certificates.
+        :param tls: the folder of the certificates, or None for plain TCP.
         """
-        self.context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
-        self.context.load_cert_chain(tls / "server.pem")
+        self.context = None
+        if tls is not None:
+            self.context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+            self.context.load_cert_chain(tls / "server.pem")
         self.electrum = electrum
+        self.connections = 0
         self.listening = socket.create_server(("127.0.0.1", 0))
         self.listening.settimeout(0.05)
         self.port = self.listening.getsockname()[1]
@@ -754,17 +766,22 @@ class TlsServer:
         self.thread.start()
 
     def serve(self) -> None:
-        """Answer one request per connection, until stopped."""
+        """Answer each line of each connection, one connection at a time."""
         while not self.stopped.is_set():
             try:
                 connection, _ = self.listening.accept()
             except TimeoutError:
                 continue
+            self.connections += 1
             connection.settimeout(5)
             try:
-                with self.context.wrap_socket(connection, server_side=True) as tls:
-                    line = tls.makefile("rb").readline()
-                    tls.sendall(self.electrum.answer(line) + b"\n")
+                stream = connection
+                if self.context is not None:
+                    stream = self.context.wrap_socket(connection, server_side=True)
+                with stream:
+                    lines = stream.makefile("rb")
+                    while line := lines.readline():
+                        stream.sendall(self.electrum.answer(line) + b"\n")
             except OSError:
                 # the client refused the certificate, and closed
                 connection.close()
@@ -777,21 +794,64 @@ class TlsServer:
 
 
 @pytest.fixture
-def tls_server(bundle_text: str, tls: Path) -> Iterator[TlsServer]:
-    """Serve a payment to the first BIP84 address over TLS.
+def paid_electrum(bundle_text: str) -> Electrum:
+    """Return a server holding a payment to the first BIP84 address.
 
     :param bundle_text: the bundle.
+    :returns: the server.
+    """
+    return Electrum(pay(receive_script(bundle_text, "m/84h/0h/0h"), 9))
+
+
+@pytest.fixture
+def tls_server(paid_electrum: Electrum, tls: Path) -> Iterator[LineServer]:
+    """Serve a payment to the first BIP84 address over TLS.
+
+    :param paid_electrum: what the server answers.
     :param tls: the folder of the certificates.
     :yields: the server, stopped at teardown.
     """
-    electrum = Electrum(pay(receive_script(bundle_text, "m/84h/0h/0h"), 9))
-    server = TlsServer(electrum, tls)
+    server = LineServer(paid_electrum, tls)
     yield server
     server.stop()
 
 
+@pytest.fixture
+def tcp_server(paid_electrum: Electrum) -> Iterator[LineServer]:
+    """Serve a payment to the first BIP84 address over plain TCP.
+
+    :param paid_electrum: what the server answers.
+    :yields: the server, stopped at teardown.
+    """
+    server = LineServer(paid_electrum)
+    yield server
+    server.stop()
+
+
+class Recording:
+    """The command's own `connect`, keeping each transport it makes."""
+
+    def __init__(self) -> None:
+        """Hold no transport yet."""
+        self.made: list[tuple[str, LineTransport]] = []
+
+    def __call__(
+        self, host: str, port: int, context: ssl.SSLContext | None
+    ) -> LineTransport:
+        """Make the command's transport, and keep it with its host.
+
+        :param host: the host.
+        :param port: the port.
+        :param context: the TLS context, or None for plain TCP.
+        :returns: the transport.
+        """
+        transport = cli._connect(host, port, context)
+        self.made.append((host, transport))
+        return transport
+
+
 def test_a_server_whose_certificate_the_cafile_names_is_scanned(
-    capsys: pytest.CaptureFixture[str], bundle: str, tls_server: TlsServer, tls: Path
+    capsys: pytest.CaptureFixture[str], bundle: str, tls_server: LineServer, tls: Path
 ) -> None:
     """The certificate chains to the file's CA, and names the host."""
     argv = ["scan", bundle, "--server", f"127.0.0.1:{tls_server.port}"]
@@ -813,7 +873,7 @@ def test_a_server_whose_certificate_the_cafile_names_is_scanned(
 def test_a_certificate_that_does_not_verify_is_refused(
     capsys: pytest.CaptureFixture[str],
     bundle: str,
-    tls_server: TlsServer,
+    tls_server: LineServer,
     tls: Path,
     host: str,
     cafile: str | None,
@@ -835,14 +895,269 @@ def test_a_certificate_that_does_not_verify_is_refused(
     assert tls_server.electrum.asked == []
 
 
+@pytest.mark.parametrize("tcp", [[], ["--tcp"]])
 def test_a_closed_port_is_no_connection(
-    capsys: pytest.CaptureFixture[str], bundle: str
+    capsys: pytest.CaptureFixture[str], bundle: str, tcp: list[str]
 ) -> None:
-    """Nothing listens: the connection is refused."""
+    """Nothing listens: the connection is refused, over TLS and over TCP.
+
+    :param capsys: pytest's capture of the standard streams.
+    :param bundle: the bundle's file.
+    :param tcp: the option that asks for plain TCP, if given.
+    """
     with socket.create_server(("127.0.0.1", 0)) as listening:
         port = listening.getsockname()[1]
-    assert cli.main(["scan", bundle, "--server", f"127.0.0.1:{port}"]) == 1
+    assert cli.main(["scan", bundle, "--server", f"127.0.0.1:{port}", *tcp]) == 1
     assert capsys.readouterr().err == "seed-scan scan: no connection to the server\n"
+
+
+def test_one_tls_connection_serves_a_short_scan(
+    capsys: pytest.CaptureFixture[str], bundle: str, tls_server: LineServer, tls: Path
+) -> None:
+    """Every request goes over one connection, closed once the scan is done.
+
+    A short scan, every request answered: it meets none of the conditions
+    README.md's *Scanning a bundle* gives for a new connection.
+    """
+    connect = Recording()
+    argv = ["scan", bundle, "--server", f"127.0.0.1:{tls_server.port}"]
+    argv += ["--cafile", str(tls / "ca.pem"), "--gap-limit", "2"]
+    assert cli.main(argv, connect=connect) == 0
+    (used,) = json.loads(capsys.readouterr().out)["used"]
+    assert used["unconfirmed"] == 9
+    ((_, transport),) = connect.made
+    assert isinstance(transport, PersistentTlsLineTransport)
+    assert not transport.is_open
+    assert len(tls_server.electrum.asked) > 1
+    assert tls_server.connections == 1
+
+
+def test_a_failure_to_close_the_tls_connection_leaves_the_result_written(
+    capsys: pytest.CaptureFixture[str],
+    bundle: str,
+    tls_server: LineServer,
+    tls: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The client's socket fails to close once the scan is done: dropped.
+
+    The transport raises `bitcoin_core_rpc`'s `FetchError` for it, which
+    no `except` of the command's catches: unhandled, it would end the
+    command with a traceback and no result.
+    """
+    closing = ssl.SSLSocket.close
+
+    def failing(self: ssl.SSLSocket) -> None:
+        closing(self)
+        if not self.server_side:
+            raise OSError(ABANDON)
+
+    monkeypatch.setattr(ssl.SSLSocket, "close", failing)
+    connect = Recording()
+    argv = ["scan", bundle, "--server", f"127.0.0.1:{tls_server.port}"]
+    argv += ["--cafile", str(tls / "ca.pem"), "--gap-limit", "2"]
+    assert cli.main(argv, connect=connect) == 0
+    # the server's own socket closes while the patch holds, not after
+    tls_server.stop()
+    out, err = capsys.readouterr()
+    (used,) = json.loads(out)["used"]
+    assert used["unconfirmed"] == 9
+    assert err.startswith(f"server: 127.0.0.1:{tls_server.port}\n")
+    ((_, transport),) = connect.made
+    assert isinstance(transport, PersistentTlsLineTransport)
+    assert not transport.is_open
+
+
+def test_tcp_scans_a_server_on_a_loopback_address(
+    capsys: pytest.CaptureFixture[str], bundle: str, tcp_server: LineServer
+) -> None:
+    """Plain TCP, one connection per request."""
+    argv = ["scan", bundle, "--server", f"127.0.0.1:{tcp_server.port}", "--tcp"]
+    assert cli.main([*argv, "--gap-limit", "2"]) == 0
+    (used,) = json.loads(capsys.readouterr().out)["used"]
+    assert used["unconfirmed"] == 9
+    assert tcp_server.connections == len(tcp_server.electrum.asked)
+
+
+#: A name no resolver answers, RFC 6761's ``.test``: `resolving` answers it.
+NAME = "electrum.test"
+
+#: Each answer `resolving` gives: an address with its family, an error.
+Found = list[tuple[int, str]] | OSError
+
+
+def resolving(monkeypatch: pytest.MonkeyPatch, *answers: Found) -> list[int]:
+    """Make the resolution of `NAME` answer each of `answers` in turn.
+
+    The last answers every later resolution too. Any other host is
+    resolved as the system does.
+
+    :param monkeypatch: what replaces `socket.getaddrinfo`.
+    :param answers: what each resolution answers.
+    :returns: the port of each resolution of `NAME`, in order.
+    """
+    asked: list[int] = []
+    system = socket.getaddrinfo
+
+    def getaddrinfo(host: str, port: int, *args: object, **kwargs: object) -> object:
+        if host != NAME:
+            return system(host, port, *args, **kwargs)  # type: ignore[arg-type]
+        asked.append(port)
+        found = answers[min(len(asked), len(answers)) - 1]
+        if isinstance(found, OSError):
+            raise found
+        return [
+            (family, socket.SOCK_STREAM, 6, "", (address, port))
+            for family, address in found
+        ]
+
+    monkeypatch.setattr(socket, "getaddrinfo", getaddrinfo)
+    return asked
+
+
+IPV4, IPV6 = socket.AF_INET, socket.AF_INET6
+
+
+def test_tcp_resolves_a_name_once(
+    capsys: pytest.CaptureFixture[str],
+    bundle: str,
+    tcp_server: LineServer,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A name answering loopback, then another address: resolved once.
+
+    Each connection goes to the loopback address the one resolution gave.
+    """
+    asked = resolving(monkeypatch, [(IPV4, "127.0.0.1")], [(IPV4, "192.0.2.1")])
+    argv = ["scan", bundle, "--server", f"{NAME}:{tcp_server.port}", "--tcp"]
+    assert cli.main([*argv, "--gap-limit", "2"]) == 0
+    (used,) = json.loads(capsys.readouterr().out)["used"]
+    assert used["unconfirmed"] == 9
+    assert asked == [tcp_server.port]
+    assert tcp_server.connections > 1
+
+
+@pytest.mark.parametrize(
+    "found, probes",
+    [
+        # nothing listens on ::1: the last address, untried
+        ([(IPV6, "::1"), (IPV4, "127.0.0.1")], 0),
+        # the first accepts, and its connection is closed unused
+        ([(IPV4, "127.0.0.1"), (IPV6, "::1")], 1),
+    ],
+)
+def test_tcp_takes_the_first_address_that_accepts(
+    capsys: pytest.CaptureFixture[str],
+    bundle: str,
+    tcp_server: LineServer,
+    monkeypatch: pytest.MonkeyPatch,
+    found: list[tuple[int, str]],
+    probes: int,
+) -> None:
+    """In resolution's order, as ``localhost`` resolves on some systems.
+
+    :param capsys: pytest's capture of the standard streams.
+    :param bundle: the bundle's file.
+    :param tcp_server: the server, on 127.0.0.1 alone.
+    :param monkeypatch: what replaces the resolution.
+    :param found: what the name resolves to.
+    :param probes: the connections made before the scan's own.
+    """
+    resolving(monkeypatch, found)
+    connect = Recording()
+    argv = ["scan", bundle, "--server", f"{NAME}:{tcp_server.port}", "--tcp"]
+    assert cli.main([*argv, "--gap-limit", "2"], connect=connect) == 0
+    assert {host for host, _ in connect.made} == {"127.0.0.1"}
+    asked = len(tcp_server.electrum.asked)
+    assert tcp_server.connections == asked + probes
+
+
+#: Why --tcp refuses a host off loopback.
+OFF_LOOPBACK = (
+    "--tcp is plain TCP, accepted to a loopback address alone, 127.0.0.0/8"
+    " or ::1: the host --server names resolves to another"
+)
+
+#: Why --tcp refuses a host that does not resolve.
+NO_ADDRESS = "--tcp: the host --server names resolves to no address"
+
+
+@pytest.mark.parametrize(
+    "found, said",
+    [
+        ([(IPV4, "192.0.2.1")], OFF_LOOPBACK),
+        ([(IPV4, "127.0.0.1"), (IPV6, "2001:db8::1")], OFF_LOOPBACK),
+        ([(IPV6, "::ffff:127.0.0.1")], OFF_LOOPBACK),
+        ([(socket.AF_UNSPEC, "127.0.0.1")], OFF_LOOPBACK),
+        ([], NO_ADDRESS),
+        (socket.gaierror(socket.EAI_NONAME, NAME), NO_ADDRESS),
+    ],
+)
+def test_tcp_refuses_a_name_off_loopback(
+    capsys: pytest.CaptureFixture[str],
+    bundle: str,
+    monkeypatch: pytest.MonkeyPatch,
+    found: Found,
+    said: str,
+) -> None:
+    """Refused before any connection, the name unquoted.
+
+    :param capsys: pytest's capture of the standard streams.
+    :param bundle: the bundle's file.
+    :param monkeypatch: what replaces the resolution.
+    :param found: what the name resolves to.
+    :param said: the line written.
+    """
+    resolving(monkeypatch, found)
+    connect = Connections(Electrum())
+    argv = [bundle, "--server", f"{NAME}:50001", "--tcp"]
+    assert run(capsys, argv, connect) == (1, "", f"seed-scan scan: {said}\n")
+    assert not connect.made
+
+
+@pytest.mark.parametrize(
+    "server, said",
+    [
+        ("192.0.2.1:50001", OFF_LOOPBACK),
+        ("[::ffff:127.0.0.1]:50001", OFF_LOOPBACK),
+        # an empty label, which the codec refuses before any query
+        ("a..b:50001", NO_ADDRESS),
+    ],
+)
+def test_tcp_refuses_an_address_off_loopback(
+    capsys: pytest.CaptureFixture[str], bundle: str, server: str, said: str
+) -> None:
+    """Written as an address, or as a name the system cannot ask for.
+
+    :param capsys: pytest's capture of the standard streams.
+    :param bundle: the bundle's file.
+    :param server: what --server names.
+    :param said: the line written.
+    """
+    connect = Connections(Electrum())
+    argv = [bundle, "--server", server, "--tcp"]
+    assert run(capsys, argv, connect) == (1, "", f"seed-scan scan: {said}\n")
+    assert not connect.made
+
+
+@pytest.mark.parametrize(
+    "server", ["127.0.0.1:50001", "127.8.9.10:50001", "[::1]:50001"]
+)
+def test_tcp_takes_a_loopback_address(
+    capsys: pytest.CaptureFixture[str], bundle: str, server: str
+) -> None:
+    """Of 127.0.0.0/8, or ::1: plain TCP to it, with no TLS context.
+
+    :param capsys: pytest's capture of the standard streams.
+    :param bundle: the bundle's file.
+    :param server: what --server names.
+    """
+    connect = Connections(Electrum())
+    status, out, _ = run(capsys, [bundle, "--server", server, "--tcp"], connect)
+    assert status == 0
+    assert json.loads(out)["server"] == server
+    host = server.rpartition(":")[0].strip("[]")
+    assert connect.made == [(host, 50001, None)]
 
 
 def test_a_transaction_touching_no_script_is_left_out(
@@ -983,12 +1298,20 @@ def test_the_server_and_the_node_are_both_scanned(
             "node: plain http is accepted on a loopback address alone",
         ),
         (["--node", "https://user@h"], "node: the URL carries a login"),
+        (
+            ["--node", "http://127.0.0.1:1", "--tcp"],
+            "--tcp is for --server, and none is named",
+        ),
+        (
+            ["--server", "127.0.0.1:1", "--tcp", "--cafile", "ca.pem"],
+            "--cafile is for TLS, and --tcp is plain TCP",
+        ),
     ],
 )
 def test_options_the_command_cannot_scan_with_are_refused(
     capsys: pytest.CaptureFixture[str], bundle: str, argv: list[str], said: str
 ) -> None:
-    """No backend, a CA file for no server, a URL `Node` refuses.
+    """No backend, an option no other allows, a URL `Node` refuses.
 
     :param capsys: pytest's capture of the standard streams.
     :param bundle: the bundle's file.
