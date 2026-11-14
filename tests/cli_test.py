@@ -167,8 +167,8 @@ def test_with_no_argv_the_process_arguments_are_read(
 
 @pytest.mark.parametrize(
     "argv",
-    [1.5, "identify", ["identify", None]],
-    ids=["float", "str", "non-str element"],
+    [1.5, "identify", ["identify", None], b"", b"identify", bytearray()],
+    ids=["float", "str", "non-str element", "empty bytes", "bytes", "bytearray"],
 )
 def test_an_argv_that_is_no_sequence_of_strings_is_refused(argv: object) -> None:
     """An argv that is no sequence of strings is refused before parsing."""

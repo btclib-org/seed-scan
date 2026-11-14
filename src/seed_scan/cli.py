@@ -748,7 +748,7 @@ def _assert_argv(argv: Sequence[str] | None) -> None:
     """Refuse an argv that is neither None nor a sequence of strings."""
     if argv is None:
         return
-    if isinstance(argv, str) or not isinstance(argv, Sequence):
+    if isinstance(argv, str | bytes | bytearray) or not isinstance(argv, Sequence):
         raise SeedScanTypeError(f"invalid argv type: {type(argv).__name__}")
     for raw in argv:
         if not isinstance(raw, str):
