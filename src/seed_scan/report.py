@@ -50,8 +50,9 @@ every other character is literal.
   fingerprint <hex>``, with ``, languages <code> ...`` after the scheme
   of a BIP39 reading. Then, two spaces in, per coin and purpose of its
   accounts, in the bundle's order, ``<coin>, purpose <n>`` or, for
-  Electrum's layout, ``<coin>, Electrum account``, with ``, on <chain>``
-  after a coin the node's chain reads, followed by:
+  Electrum's layout, ``<coin>, Electrum account``, or, for an EVM coin's
+  legacy layout, ``<coin>, legacy account``, with ``, on <chain>`` after
+  a coin the node's chain reads, followed by:
 
   - ``: not checked: <reason>``, where the scan result does not read
     it, or no result is given;
@@ -65,13 +66,14 @@ every other character is literal.
   change> <path> <address>: <n> sat confirmed, <n> sat unconfirmed``,
   the path being the address's own. Per used account the node read,
   ``account <n>, <path>: <n> wei``; six spaces in, per used address,
-  ``receive <path> <address>: <n> wei, nonce <n>, block <n>``; and eight
-  spaces in, per token it holds, ``<symbol> <contract>: <n>, <n>
-  decimals``, the balance in units of 10**-decimals of the token. What
-  an address holds is the node's answer at the block its line names,
-  the latest when that address was read: the addresses of an account
-  may be read at different blocks, so their sum is no state of one
-  block, and the node's line marks when the EVM scan began.
+  ``receive <path> <address>: <n> wei, nonce <n>, block <n>``, with
+  ``address`` for ``receive`` in a legacy account, whose addresses are on
+  no branch; and eight spaces in, per token it holds, ``<symbol>
+  <contract>: <n>, <n> decimals``, the balance in units of 10**-decimals
+  of the token. What an address holds is the node's answer at the block
+  its line names, the latest when that address was read: the addresses
+  of an account may be read at different blocks, so their sum is no
+  state of one block, and the node's line marks when the EVM scan began.
 
   Then, per forks result, two spaces in, per coin and purpose of the
   reading's accounts of each coin `seed_scan.forks` reads, ``<coin>,
@@ -260,12 +262,16 @@ def _token(held: EvmTokenBalance) -> str:
 
 
 def _evm_used(used: EvmAccount) -> list[str]:
-    """Return the lines of a used EVM account and of its used addresses."""
+    """Return the lines of a used EVM account and of its used addresses.
+
+    A legacy account's addresses are its key's own children.
+    """
     lines = [f"    account {used.account}, {used.path}: {used.balance} wei"]
+    kind, branch = ("address", "") if used.purpose is None else ("receive", "/0")
     for a in used.addresses:
         lines.append(
-            f"      receive {used.path}/0/{a.index} {a.address}: {a.balance} wei,"
-            f" nonce {a.nonce}, block {a.block}"
+            f"      {kind} {used.path}{branch}/{a.index} {a.address}:"
+            f" {a.balance} wei, nonce {a.nonce}, block {a.block}"
         )
         lines += [f"        {_token(held)}" for held in a.tokens]
     return lines
@@ -326,9 +332,11 @@ def _groups(reading: Reading) -> dict[tuple[str, int | None], int]:
     return groups
 
 
-def _kind(purpose: int | None) -> str:
-    """Return how a line names a purpose."""
-    return "Electrum account" if purpose is None else f"purpose {purpose}"
+def _kind(coin: str, purpose: int | None) -> str:
+    """Return how a line names a coin's purpose, or its layout of none."""
+    if purpose is not None:
+        return f"purpose {purpose}"
+    return "Electrum account" if coin == "bitcoin" else "legacy account"
 
 
 def _forked(n: int, reading: Reading, result: ForksResult) -> list[str]:
@@ -342,7 +350,7 @@ def _forked(n: int, reading: Reading, result: ForksResult) -> list[str]:
     for (coin, purpose), held in _groups(reading).items():
         if coin not in {"bitcoin", *_FORK_COINS}:
             continue
-        line = f"  {coin}, {_kind(purpose)}, on {title}"
+        line = f"  {coin}, {_kind(coin, purpose)}, on {title}"
         done = searched.get((coin, purpose))
         if done is None:
             reason = reasons.get((coin, purpose), NOT_IN_FORKS)
@@ -376,7 +384,7 @@ def _readings(
     for n, reading in enumerate(bundle.readings):
         lines.append(_reading(n, reading))
         for (coin, purpose), held in _groups(reading).items():
-            line = f"  {coin}, {_kind(purpose)}"
+            line = f"  {coin}, {_kind(coin, purpose)}"
             done = searched.get((coin, n, purpose))
             if done is None:
                 reason = reasons.get((n, coin), NOT_IN_SCAN)
@@ -450,12 +458,15 @@ def _scripts(account: Account) -> tuple[str, ...]:
     accounts of one key and one script type are paid by the same outputs,
     whatever path the origin names. An EVM account has no descriptors,
     and its addresses are those of its xpub's receive branch, whatever its
-    coin.
+    coin, or of its xpub itself for a legacy layout, of purpose None, so
+    the layout is part of what gives them.
     """
-    return (
-        account.xpub,
-        *(_ORIGIN.sub("", text.partition("#")[0]) for text in account.descriptors),
-    )
+    if account.descriptors:
+        return (
+            account.xpub,
+            *(_ORIGIN.sub("", text.partition("#")[0]) for text in account.descriptors),
+        )
+    return (account.xpub, "legacy" if account.purpose is None else "receive")
 
 
 def _p2pkh(account: Account) -> tuple[str, ...]:

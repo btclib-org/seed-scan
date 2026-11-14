@@ -32,10 +32,13 @@ Ethereum Classic account is listed as not checked on any other chain.
 Each coin's accounts are read the same way as Bitcoin's, purpose
 by purpose and with the same two bounds, on the receive branch alone:
 the addresses of an account are those of the keys ``0/0``, ``0/1`` and
-on below its ``xpub``, as `coin_addresses.evm` writes them. Each
-address is asked its balance, its nonce and its balance of each ERC-20
-token the chain's `seed_scan.evm.EvmChain` lists, all at one block, the
-latest when its read begins. It is used where any of them is not zero.
+on below its ``xpub``, as `coin_addresses.evm` writes them. A legacy
+layout, of purpose ``null``, is one account, read alone as an Electrum
+reading's is, and on no branch: its addresses are those of the keys
+``0``, ``1`` and on below its ``xpub``. Each address is asked its
+balance, its nonce and its balance of each ERC-20 token the chain's
+`seed_scan.evm.EvmChain` lists, all at one block, the latest when its
+read begins. It is used where any of them is not zero.
 
 A token balance counts as use, so that an address that only received a
 token, and so has a nonce of zero and no balance of the native asset,
@@ -99,14 +102,16 @@ only. Its members:
   before the first address; ``tokens``, the ERC-20 tokens read, each
   ``contract``, ``symbol`` and ``decimals`` as the chain's
   `seed_scan.evm.EvmChain` lists them, any other token being not
-  checked; ``searched``, as above, with ``coin`` after ``reading``, for
-  the accounts of each coin read; and ``used``, one object per account
-  with a used address: ``coin``, ``reading``, ``purpose``, ``account``
-  and ``path``, as the bundle has them; ``addresses``, each used address
-  as ``index``, on the receive branch, ``address``, ``balance``,
-  ``nonce``, ``block``, the block they were read at, and ``tokens``, its
-  token balances; ``balance``, the sum of the addresses' balances; and
-  ``tokens``, the sum of their balances of each token.
+  checked; ``searched``, as above, with ``coin`` after ``reading`` and
+  ``purpose`` ``null`` for a legacy layout, for the accounts of each
+  coin read; and ``used``, one object per account with a used address:
+  ``coin``, ``reading``, ``purpose``, ``account`` and ``path``, as the
+  bundle has them; ``addresses``, each used address as ``index``, on the
+  receive branch or, for a legacy layout, below the key itself,
+  ``address``, ``balance``, ``nonce``, ``block``, the block they were
+  read at, and ``tokens``, its token balances; ``balance``, the sum of
+  the addresses' balances; and ``tokens``, the sum of their balances of
+  each token.
 
 A balance in ``evm`` is in wei, 10**-18 of the chain's native asset,
 written as a string of decimal digits: RFC 8259's section 6 holds an
@@ -418,8 +423,8 @@ _Purposes = dict[int | None, list[tuple[Account, _T]]]
 def _numbered(position: int, purposes: _Purposes[_T]) -> None:
     """Refuse a purpose whose accounts are not numbered from 0 with no gap.
 
-    That is how `identify` writes them, and an Electrum reading, of
-    purpose ``None``, has one.
+    That is how `identify` writes them, and a layout of purpose ``None``,
+    Electrum's or an EVM coin's legacy one, has one.
     """
     for purpose, accounts in purposes.items():
         numbers = [account.account for account, _ in accounts]
@@ -688,10 +693,11 @@ def _evm_account(
 ) -> EvmAccount | None:
     """Return an EVM account's used addresses, or None where none is.
 
-    The receive branch is read from index 0 until `gap_limit` indexes in
-    a row are unused, each address as `_evm_address` reads it.
+    The receive branch, or the key itself for a legacy layout, is read
+    from index 0 until `gap_limit` indexes in a row are unused, each
+    address as `_evm_address` reads it.
     """
-    branch = key.derive(0)
+    branch = _branch(account, key)
     addresses: list[EvmAddress] = []
     index = unused = 0
     while unused < gap_limit:
@@ -715,6 +721,15 @@ def _evm_account(
         balance=str(sum(int(found.balance) for found in addresses)),
         tokens=_token_sums(addresses, tokens),
     )
+
+
+def _branch(account: Account, key: BIP32KeyData) -> BIP32KeyData:
+    """Return the key whose children are an EVM account's addresses.
+
+    The receive branch below the account's key, or the key itself for a
+    legacy layout, of purpose None.
+    """
+    return key if account.purpose is None else key.derive(0)
 
 
 def _discover(
@@ -1180,7 +1195,7 @@ def _evm_addresses(
     Each holds a balance, a nonce or a token balance, as `scan` lists no
     other, read at `block`, the scan's, or later.
     """
-    branch = _key(account, f"account {account.path}").derive(0)
+    branch = _branch(account, _key(account, f"account {account.path}"))
     addresses: list[EvmAddress] = []
     for position in _objects(document, "addresses"):
         index = _count(position, "index")
@@ -1249,8 +1264,8 @@ def _agrees(done: Searched, used: set[int], held: int, account_gap: int) -> bool
 
     `scan` reads a purpose's accounts from 0 and stops once `account_gap`
     of them in a row are unused, or once the bundle's `held` accounts run
-    out: then, and only then, the purpose is cut short. An Electrum
-    reading's one account is read alone and never cut short.
+    out: then, and only then, the purpose is cut short. The one account
+    of a layout of purpose None is read alone and never cut short.
     """
     if done.purpose is None:
         return not done.cut_short

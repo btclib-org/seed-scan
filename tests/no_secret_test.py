@@ -246,7 +246,8 @@ LINE_SHAPES = tuple(
         rf"not derived: [^:]+: {_BUNDLE_REASON}",
         rf"address search: not run: {_BUNDLE_REASON}",
         (
-            rf"  {_COIN}, (?:purpose {_N}|Electrum account)(?:, on {_TITLE})?"
+            rf"  {_COIN}, (?:purpose {_N}|Electrum account|legacy account)"
+            rf"(?:, on {_TITLE})?"
             rf"(?:: not checked: {_REPORT_REASON}"
             rf"|: accounts 0 to {_N} read, {_N} used"
             rf"(?:, cut short: run identify with --accounts above {_N}, then"
@@ -287,12 +288,13 @@ LINE_SHAPES = tuple(
             for chain in EVM_CHAINS.values()
         ),
         *(
-            rf"used: reading {_N}, \S+: {_N} addresses, {_N} wei of \w+"
+            rf"used: reading {_N}, \S+(?:, legacy)?: {_N} addresses, {_N} wei of \w+"
             + rf", {_N} of {_TOKEN} at {_N} decimals" * count
             for count in range(1, _MOST_TOKENS + 1)
         ),
         (
-            rf"reading {_N}, {_COIN} (?:purpose {_N}|Electrum): accounts read: {_N}"
+            rf"reading {_N}, {_COIN} (?:purpose {_N}|Electrum|legacy): accounts read:"
+            rf" {_N}"
             r"(?:, cut short: the bundle's accounts end before the account gap)?"
         ),
         rf"not checked: reading {_N}, {_COIN}: {_SCAN_REASON}",
@@ -603,6 +605,12 @@ WETH = next(token for token in ETHEREUM_TOKENS if token.symbol == "WETH")
             "used: reading 0, m/44h/60h/0h: 1 addresses, 5 wei of ETH, 3 of WETH",
             "wet",
         ),
+        ("lines", "  ethereum-classic, legacy: accounts 0 to 0 read, 1 used", "class"),
+        (
+            "lines",
+            "reading 0, ethereum-classic legacy account: accounts read: 1",
+            "class",
+        ),
     ],
 )
 def test_a_defined_word_elsewhere_is_found(
@@ -704,6 +712,15 @@ def test_a_defined_word_elsewhere_is_found(
             ),
             "wet",
         ),
+        (
+            "lines",
+            (
+                "  ethereum-classic, legacy account, on Ethereum Classic: accounts 0"
+                " to 0 read, 1 used"
+            ),
+            "class",
+        ),
+        ("lines", "reading 0, ethereum-classic legacy: accounts read: 1", "class"),
     ],
 )
 def test_a_defined_word_where_the_format_writes_it_is_not_a_leak(

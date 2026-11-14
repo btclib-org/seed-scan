@@ -1226,10 +1226,13 @@ def test_the_node_alone_is_scanned(
     """The result's ``evm``, and a summary naming the node and the bound.
 
     The address holds USDT too, which the summary and the result give.
+    The legacy layout's account, below the key of account 0, is named
+    apart from it.
     """
     address = eth_address(bundle_text, "m/44h/60h/0h", 0)
+    legacy = eth_address(bundle_text, "m/44h/60h/0h", 1, legacy=True)
     usdt = EVM_CHAINS["ethereum"].tokens[0]
-    fake = Ethereum({address: 5}, tokens={(usdt.contract, address): 12})
+    fake = Ethereum({address: 5, legacy: 2}, tokens={(usdt.contract, address): 12})
     with serve(serving(fake)) as node:
         argv = [bundle, "--node", node.url()]
         status, out, err = run(capsys, argv, Connections(Electrum()))
@@ -1244,7 +1247,7 @@ def test_the_node_alone_is_scanned(
         1,
         16,
     )
-    (used,) = evm["used"]
+    used, apart = evm["used"]
     held = {"contract": usdt.contract, "symbol": "USDT", "decimals": 6, "balance": "12"}
     assert used["addresses"] == [
         {
@@ -1256,7 +1259,18 @@ def test_the_node_alone_is_scanned(
             "tokens": [held],
         }
     ]
+    assert apart["addresses"] == [
+        {
+            "index": 1,
+            "address": legacy,
+            "balance": "2",
+            "nonce": 0,
+            "block": 16,
+            "tokens": [],
+        }
+    ]
     assert used["tokens"] == [held]
+    assert not apart["tokens"]
     symbols = ", ".join(token.symbol for token in EVM_CHAINS["ethereum"].tokens)
     elsewhere = (
         "scan reads Bitcoin, Ethereum and Ethereum Classic alone in this version"
@@ -1269,10 +1283,12 @@ def test_the_node_alone_is_scanned(
             "reading 0, ethereum purpose 44: accounts read: 1, cut short:"
             " the bundle's accounts end before the account gap"
         ),
+        "reading 0, ethereum legacy: accounts read: 1",
         (
             "used: reading 0, m/44h/60h/0h: 1 addresses, 5 wei of ETH,"
             " 12 of USDT at 6 decimals"
         ),
+        "used: reading 0, m/44h/60h/0h, legacy: 1 addresses, 2 wei of ETH",
         "not checked: reading 0, bitcoin: no Electrum server was named",
         f"not checked: reading 0, ethereum-classic: {OTHER_CHAIN}",
         f"not checked: reading 0, bitcoin-cash: {elsewhere}",
@@ -1298,7 +1314,9 @@ def test_the_chain_named_is_read_and_named(
     assert (evm["chain"], evm["chain_id"]) == ("ethereum-classic", 61)
     assert [(s["coin"], s["purpose"]) for s in evm["searched"]] == [
         ("ethereum", 44),
+        ("ethereum", None),
         ("ethereum-classic", 44),
+        ("ethereum-classic", None),
     ]
     lines = err.splitlines()
     assert (
