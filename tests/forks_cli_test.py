@@ -10,7 +10,8 @@ Bitcoin's at the checkpoint of ``scan``, by default, and for `Forked` a
 chain's at its own checkpoints, Bitcoin Cash's unless told otherwise.
 Those are real headers, so that the proof of work the fetcher checks
 holds: the first test checks that each chain's hash to the ids it
-names.
+names. Its tip is its genesis block, on which `proved_at_genesis` has
+the command prove each tip, as in `tests.scan_cli_test`.
 """
 
 from __future__ import annotations
@@ -28,8 +29,9 @@ from btclib.script import ScriptPubKey
 from typing_extensions import override
 
 from seed_scan import cli
+from seed_scan._proof import BELOW, RULES, TipProof
 from seed_scan.bundle import dumps
-from seed_scan.forks import BITCOIN_CASH, BITCOIN_SV, ECASH
+from seed_scan.forks import BITCOIN_CASH, BITCOIN_SV, CHAINS, ECASH
 from seed_scan.identify import identify
 
 from .identify_test import ABANDON, SEGWIT, STANDARD, legacy_address, no_share
@@ -39,6 +41,8 @@ from .scan_cli_test import (
     Connections,
     Electrum,
     Failing,
+    Scripted,
+    at_genesis,
     caused,
     pay,
 )
@@ -105,6 +109,15 @@ BCH_661648 = (
     "42faaa7bb98abdfb6f780417b1c0eb7873cd49e048feef273d5e270e1eb223855938b15f"
     "d0e0041888420330"
 )
+
+
+@pytest.fixture(autouse=True)
+def proved_at_genesis(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Have the command prove each tip on the genesis block, the fake's tip.
+
+    :param monkeypatch: what replaces the command's proof.
+    """
+    monkeypatch.setattr(cli, "TipProof", at_genesis)
 
 
 class Forked(Electrum):
@@ -275,6 +288,62 @@ def test_ecash_is_read_on_a_server_serving_its_checkpoints(
     assert "\nchain: eCash, forked from Bitcoin at height 478559\n" in err
     assert "\nreading 0, ecash purpose 44: accounts read: 1, cut short:" in err
     assert server.asked[:4] == ["blockchain.block.header"] * 4
+
+
+@pytest.mark.parametrize(
+    "chain, headers",
+    [("bitcoin-cash", HEADERS), ("bitcoin-sv", SV_HEADERS), ("ecash", XEC_HEADERS)],
+)
+def test_the_proof_is_on_the_chain_s_last_checkpoint_under_its_rule(
+    capsys: pytest.CaptureFixture[str],
+    bundle: str,
+    monkeypatch: pytest.MonkeyPatch,
+    chain: str,
+    headers: dict[int, str],
+) -> None:
+    """Each history's tip is asked of a proof on the chain's own checkpoint.
+
+    :param capsys: pytest's capture of the standard streams.
+    :param bundle: the bundle's file.
+    :param monkeypatch: what replaces the command's proof.
+    :param chain: the chain named.
+    :param headers: its checkpoints.
+    """
+    proof = Scripted()
+    monkeypatch.setattr(cli, "TipProof", proof)
+    server = Forked(headers=headers)
+    status, _, _ = run(capsys, [bundle, "--server", "h:1"], Connections(server), chain)
+    assert status == 0
+    assert proof.built == [(max(CHAINS[chain].checkpoints), RULES[chain])]
+    assert proof.tips
+
+
+@pytest.mark.parametrize(
+    "chain, headers",
+    [("bitcoin-cash", HEADERS), ("bitcoin-sv", SV_HEADERS), ("ecash", XEC_HEADERS)],
+)
+def test_a_tip_below_the_chain_s_checkpoint_is_refused(
+    capsys: pytest.CaptureFixture[str],
+    bundle: str,
+    monkeypatch: pytest.MonkeyPatch,
+    chain: str,
+    headers: dict[int, str],
+) -> None:
+    """The fake's tip, its genesis block, is below each chain's checkpoint.
+
+    :param capsys: pytest's capture of the standard streams.
+    :param bundle: the bundle's file.
+    :param monkeypatch: what puts the command's proof back.
+    :param chain: the chain named.
+    :param headers: its checkpoints.
+    """
+    monkeypatch.setattr(cli, "TipProof", TipProof)
+    server = Forked(headers=headers)
+    status, out, err = run(
+        capsys, [bundle, "--server", "h:1"], Connections(server), chain
+    )
+    said = f"the server's history does not prove on {CHAINS[chain].title}: {BELOW}"
+    assert (status, out, err) == (1, "", f"seed-scan forks: {said}\n")
 
 
 @pytest.mark.parametrize(
@@ -528,11 +597,14 @@ def test_a_chain_forks_does_not_read_is_refused_unquoted(
 #: A whole `forks` in an interpreter of its own, against a server serving
 #: Bitcoin Cash's headers, that prints its exit status and whether
 #: `seed_scan.identify` was loaded. The bundle file, the genesis header and
-#: the checkpoints, as JSON, are its arguments
+#: the checkpoints, as JSON, are its arguments. Each tip is proved on the
+#: genesis block, as `proved_at_genesis` has it
 _FORKS_ALONE = """
-import contextlib, io, json, sys
-from seed_scan import cli
+import contextlib, hashlib, io, json, sys
+from seed_scan import _proof, cli
 bundle, genesis, headers = sys.argv[1], sys.argv[2], json.loads(sys.argv[3])
+genesis_id = hashlib.sha256(hashlib.sha256(bytes.fromhex(genesis)).digest()).digest()
+cli.TipProof = lambda f, _, r: _proof.TipProof(f, (0, genesis_id[::-1].hex()), r)
 def server(request, timeout):
     parsed = json.loads(request)
     result = {

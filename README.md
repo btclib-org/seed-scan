@@ -78,9 +78,10 @@ authenticated: SECURITY.md's *Limitations, not vulnerabilities* says
 what that exposes.
 
 Before any address is asked, the server's genesis block and its block
-at a height Bitcoin Core pins are compared with Bitcoin's. SECURITY.md's
-*Limitations, not vulnerabilities* says which servers that refuses, and
-what it does not prove.
+at a height Bitcoin Core pins are compared with Bitcoin's, and each
+history it answers is then proved on that block. SECURITY.md's
+*Limitations, not vulnerabilities* says which servers that refuses, what
+the proof holds, and what the server is still trusted for.
 
 The node is an execution client's JSON-RPC, at an `https` URL, or an
 `http` one on a loopback address such as `http://127.0.0.1:8545`.
@@ -133,12 +134,11 @@ The server is the user's own, reached as *Scanning a bundle* says, over
 TLS or, with `--tcp`, over loopback. Before any address is asked, its
 blocks at the chain's checkpoints are compared with the chain's, so that
 a server of a chain whose blocks differ there, as one of Bitcoin's, is
-refused. That shows which chain the server says it serves, not that the
-histories it answers are that chain's: the server is trusted for what it
-answers, as
-SECURITY.md's *Limitations, not vulnerabilities* says, and proving each
-history against the chain is
-[btclib-org/seed-scan#34](https://github.com/btclib-org/seed-scan/issues/34).
+refused. Each history it answers is then proved on the chain's last
+checkpoint, under the chain's own difficulty rule, as for `scan`.
+SECURITY.md's *Limitations, not vulnerabilities* says what the proof
+holds, and what the server is still trusted for: what it leaves out of
+a history, and the mempool's transactions.
 
 `seed_scan.forks` documents the result and which accounts are read, and
 `seed-scan forks --help` the bounds of the search.

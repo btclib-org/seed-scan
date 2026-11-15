@@ -36,16 +36,18 @@ the connection is plain TCP instead, one connection per request, through
 `btclib_wallet.fetch.transport.TcpLineTransport`, and only to a loopback
 address, as `_loopback` says. The server is asked first for its genesis
 block, then for its block at a height Bitcoin Core pins, and one
-answering another block than Bitcoin's at either is refused. A read of a
-history during which the server's tip moved is read again, a bounded
-number of times. The node is a `seed_scan.evm.Node`, whose docstring
-says which URLs it takes and how its certificate is verified:
-``--cafile`` is the Electrum server's alone. Its connection is kept
-across requests, and `SessionTransport` replaces it where data waits on
-it before a request is sent, as when the node closed it, or a request on
-it failed. A failure of the server, the node or the connection is one
-line of fixed text, which names neither the answer nor the addresses
-asked.
+answering another block than Bitcoin's at either is refused. The tip of
+each history it answers is then proved on that block, as
+`seed_scan._proof` says, and a history whose tip does not prove is
+refused. A read of a history during which the server's tip moved is
+read again, a bounded number of times. The node is a
+`seed_scan.evm.Node`, whose docstring says which URLs it takes and how
+its certificate is verified: ``--cafile`` is the Electrum server's
+alone. Its connection is kept across requests, and `SessionTransport`
+replaces it where data waits on it before a request is sent, as when
+the node closed it, or a request on it failed. A failure of the server,
+the node or the connection is one line of fixed text, which names
+neither the answer nor the addresses asked.
 
 ``--evm-chain`` names the chain the node serves, Ethereum where it is
 not given, and is refused without ``--node``. `seed_scan.scan.scan`
@@ -57,8 +59,9 @@ node any address.
 for the chain named, and writes the forks result and a summary as
 ``scan`` writes its own. It reads no secret, connects as ``scan``
 connects to its server, and says a failure as ``scan`` says one. Its
-server's blocks are checked as ``scan`` checks them, at the chain's
-checkpoints in place of Bitcoin's.
+server's blocks are checked, and its histories proved, as ``scan``
+checks and proves them, at the chain's checkpoints in place of
+Bitcoin's and under the chain's rule.
 
 ``seed-scan report`` reads a bundle from the file named and, where
 ``--scan`` names one, the scan result made from it, and the forks result
@@ -99,6 +102,7 @@ from btclib_wallet.fetch.transport import (
     TcpLineTransport,
 )
 
+from seed_scan._proof import MOVED, RULES, TipProof
 from seed_scan.bundle import dumps
 from seed_scan.evm import EVM_CHAINS, Node
 from seed_scan.exceptions import (
@@ -158,6 +162,9 @@ _TIP_MOVED = "the tip moved while the history was read"
 
 # how many times one history is read where the tip moves during each read
 _READS = 3
+
+# what a failure says where it did, of every read
+_EVERY_READ = "the server's tip moved during every read of a history"
 
 # what a failure caused by each class says, the first class it is in,
 # of the server or the node
@@ -437,47 +444,61 @@ class _Mainnet:
     The server is then asked for its block at each checkpoint of the chain
     read, and refused where one is not that chain's, before any address is
     asked of it: the chain is Bitcoin, at `_BITCOIN_CHECKPOINTS`, or
-    `chain` where it is given, a chain forked from Bitcoin. A read during
-    which the tip moved is read again, up to `_READS` times in all, as
+    `chain` where it is given, a chain forked from Bitcoin. The tip of
+    each history the server answers is then proved on the chain's last
+    checkpoint, under the chain's rule, as `seed_scan._proof` says, and a
+    history whose tip does not prove is refused. A read during which the
+    tip moved is read again, up to `_READS` times in all, as
     `HistoryReader` asks of its caller.
     """
 
     def __init__(self, fetcher: ElectrumFetcher, chain: Chain | None = None) -> None:
         self._fetcher = fetcher
-        self._chain = chain
+        self._title = "Bitcoin's mainnet" if chain is None else chain.title
+        self._checkpoints = _BITCOIN_CHECKPOINTS if chain is None else chain.checkpoints
+        rule = RULES["bitcoin" if chain is None else chain.name]
+        self._proof = TipProof(fetcher, max(self._checkpoints), rule)
         self._checked = False
 
     def _assert_chain(self) -> None:
         """Refuse a server whose blocks are not those of the chain read."""
-        chain = self._chain
-        title = "Bitcoin's mainnet" if chain is None else chain.title
-        checkpoints = _BITCOIN_CHECKPOINTS if chain is None else chain.checkpoints
         other_chain = False
         try:
             self._fetcher.assert_network()
             other_chain = any(
                 self._fetcher.get_block_header(height).hash.hex() != block_id
-                for height, block_id in checkpoints
+                for height, block_id in self._checkpoints
             )
         except BTClibValueError:
             other_chain = True
         if other_chain:
-            raise SeedScanValueError(f"the server does not serve {title}")
+            raise SeedScanValueError(f"the server does not serve {self._title}")
 
     def get_history(
         self, scripts: Iterable[Octets | ScriptPubKey], start_height: int = 0
     ) -> ScriptHistory:
-        """Return the fetcher's answer, once the chain has been checked."""
+        """Return the fetcher's answer, once the chain has been checked.
+
+        The answer is returned once its tip proves; the refusal of one
+        that does not names what failed, in fixed text.
+        """
         if not self._checked:
             self._assert_chain()
             self._checked = True
-        for _ in range(_READS - 1):
+        for read in range(1, _READS + 1):
             try:
-                return self._fetcher.get_history(scripts, start_height)
+                history = self._fetcher.get_history(scripts, start_height)
             except FetchError as e:
-                if str(e) != _TIP_MOVED:
+                if str(e) != _TIP_MOVED or read == _READS:
                     raise
-        return self._fetcher.get_history(scripts, start_height)
+                continue
+            reason = self._proof.refusal(history.tip)
+            if not reason:
+                return history
+            if reason != MOVED:
+                err_msg = f"the server's history does not prove on {self._title}"
+                raise SeedScanValueError(f"{err_msg}: {reason}")
+        raise SeedScanValueError(_EVERY_READ)
 
 
 def _failure(error: FetchError, who: str) -> str:
@@ -493,7 +514,7 @@ def _failure(error: FetchError, who: str) -> str:
     if isinstance(error, HttpError):
         return f"the {who} answered HTTP status {error.status}"
     if str(error) == _TIP_MOVED:
-        return "the server's tip moved during every read of a history"
+        return _EVERY_READ
     cause = error.__cause__
     while cause is not None:
         for kind, text in _CAUSES:

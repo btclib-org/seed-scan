@@ -28,7 +28,7 @@ from seed_scan.scan import scan
 
 from .cli_test import no_guard
 from .identify_test import ABANDON, SEGWIT, Prompt, no_share
-from .scan_cli_test import Connections, Electrum
+from .scan_cli_test import Connections, Electrum, at_genesis
 from .scan_test import BLOCK, Chain, pay, script
 
 if TYPE_CHECKING:
@@ -215,6 +215,8 @@ def test_what_windows_writes_reports_as_its_bytes(
 
     As on Windows: the bundle and the result are written with CRLF, and
     the report names the SHA-256 of each file as it is, and is LF itself.
+    The scan proves its tip on the genesis block, the fake server's tip,
+    as in scan_cli_test.
     """
 
     def written(argv: list[str], **replaced: Any) -> bytes:
@@ -231,6 +233,7 @@ def test_what_windows_writes_reports_as_its_bytes(
     )
     assert b"\r\n" in bundle.read_bytes()
     result = tmp_path / "scan.json"
+    monkeypatch.setattr(cli, "TipProof", at_genesis)
     connect = Connections(Electrum())
     result.write_bytes(
         written(["scan", str(bundle), "--server", "h:1"], connect=connect)

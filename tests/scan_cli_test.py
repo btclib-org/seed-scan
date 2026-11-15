@@ -9,11 +9,13 @@ methods `ElectrumFetcher` asks over mainnet's genesis block and Bitcoin's
 block at the command's checkpoint, and lists each payment as a mempool
 transaction: no other header is needed, whose proof of work no test could
 produce. The checkpoint's header is a real one, which a test checks
-hashes to the id the command compares. Most tests hand it to the command
-in place of the transport. The others serve it on the loopback
-interface, over TLS with the certificates the `tls` fixture makes or
-over plain TCP, so that the connections the command makes are the ones
-under test.
+hashes to the id the command compares. Its tip is its genesis block, so
+`proved_at_genesis` proves each tip on that block in place of the
+checkpoint, which only the chain of headers from the genesis block up to
+it would reach. Most tests hand it to the command in place of the
+transport. The others serve it on the loopback interface, over TLS with
+the certificates the `tls` fixture makes or over plain TCP, so that the
+connections the command makes are the ones under test.
 
 The Ethereum node is `tests.evm_test`'s `Ethereum`, served over HTTP, or
 HTTPS with the same certificates, on the loopback interface, so that the
@@ -48,6 +50,7 @@ from btclib_wallet.fetch.transport import (
 )
 
 from seed_scan import cli
+from seed_scan._proof import BELOW, MOVED, OFF, RULES, TipProof
 from seed_scan.bundle import dumps, loads
 from seed_scan.evm import EVM_CHAINS, Node
 from seed_scan.identify import identify
@@ -60,7 +63,11 @@ from .scan_test import eth_address
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator
 
+    from btclib_wallet.fetch.electrum import ElectrumFetcher
+    from btclib_wallet.fetch.history import BlockRef
     from btclib_wallet.fetch.transport import LineTransport
+
+    from seed_scan._proof import Rule
 
     from .evm_test import Exchange
 
@@ -103,6 +110,28 @@ FORKED = (
     "482e3b88861c21eece6ad6843bc0cbea9d9f6729e71aac37f12f7eb37473c34231f6876a"
     "64810218827d3529"
 )
+
+
+def at_genesis(
+    fetcher: ElectrumFetcher, checkpoint: tuple[int, str], rule: Rule
+) -> TipProof:
+    """Return the proof of a tip on the genesis block, whatever the checkpoint.
+
+    :param fetcher: what asks the server.
+    :param checkpoint: the chain's last checkpoint, unread.
+    :param rule: the chain's rule.
+    :returns: the proof.
+    """
+    return TipProof(fetcher, (0, GENESIS.hash.hex()), rule)
+
+
+@pytest.fixture(autouse=True)
+def proved_at_genesis(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Have the command prove each tip on the genesis block, the fake's tip.
+
+    :param monkeypatch: what replaces the command's proof.
+    """
+    monkeypatch.setattr(cli, "TipProof", at_genesis)
 
 
 def scripthash(script: ScriptPubKey) -> str:
@@ -324,11 +353,14 @@ def test_scan_writes_the_result_and_a_summary(
 #: A whole `scan` in an interpreter of its own, against a server that
 #: answers Bitcoin's headers and no history, then its exit status and
 #: whether `seed_scan.identify` was loaded. The bundle file, the genesis
-#: header and the checkpoint's, as JSON, are its arguments
+#: header and the checkpoint's, as JSON, are its arguments. Each tip is
+#: proved on the genesis block, as `proved_at_genesis` has it
 _SCAN_ALONE = """
-import contextlib, io, json, sys
-from seed_scan import cli
+import contextlib, hashlib, io, json, sys
+from seed_scan import _proof, cli
 bundle, genesis, headers = sys.argv[1], sys.argv[2], json.loads(sys.argv[3])
+genesis_id = hashlib.sha256(hashlib.sha256(bytes.fromhex(genesis)).digest()).digest()
+cli.TipProof = lambda f, _, r: _proof.TipProof(f, (0, genesis_id[::-1].hex()), r)
 def server(request, timeout):
     parsed = json.loads(request)
     result = {
@@ -1195,6 +1227,109 @@ def test_a_read_whose_tip_moved_is_read_again(
     assert result[0] == status
     assert server.moves == 0
     if status:
+        said = "the server's tip moved during every read of a history"
+        assert result[2] == f"seed-scan scan: {said}\n"
+
+
+class Scripted:
+    """A proof answering each tip with the next of its reasons, then none.
+
+    It stands for `TipProof` in the command, and records how the command
+    built it and each tip it was asked.
+    """
+
+    def __init__(self, *reasons: str) -> None:
+        """Hold the reasons.
+
+        :param reasons: what `refusal` answers, in order.
+        """
+        self.reasons = list(reasons)
+        self.built: list[tuple[tuple[int, str], Rule]] = []
+        self.tips: list[BlockRef] = []
+
+    def __call__(
+        self, fetcher: ElectrumFetcher, checkpoint: tuple[int, str], rule: Rule
+    ) -> Scripted:
+        """Record the checkpoint and the rule, as `TipProof` takes them.
+
+        :param fetcher: unread.
+        :param checkpoint: the chain's last checkpoint.
+        :param rule: the chain's rule.
+        :returns: this proof.
+        """
+        self.built.append((checkpoint, rule))
+        return self
+
+    def refusal(self, tip: BlockRef) -> str:
+        """Answer the next reason, or none once they are all answered.
+
+        :param tip: the tip asked.
+        :returns: the reason.
+        """
+        self.tips.append(tip)
+        return self.reasons.pop(0) if self.reasons else ""
+
+
+def test_the_proof_is_on_the_last_checkpoint_under_bitcoin_s_rule(
+    capsys: pytest.CaptureFixture[str], bundle: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Each history's tip is asked of a proof on Bitcoin's checkpoint."""
+    proof = Scripted()
+    monkeypatch.setattr(cli, "TipProof", proof)
+    status, _, _ = run(capsys, [bundle, "--server", "h:1"], Connections(Electrum()))
+    assert status == 0
+    assert proof.built == [(max(cli._BITCOIN_CHECKPOINTS), RULES["bitcoin"])]
+    assert proof.tips
+    assert {tip.block_id for tip in proof.tips} == {GENESIS.hash}
+
+
+def test_a_tip_below_the_checkpoint_is_refused(
+    capsys: pytest.CaptureFixture[str], bundle: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The fake's tip, its genesis block, is below Bitcoin's checkpoint."""
+    monkeypatch.setattr(cli, "TipProof", TipProof)
+    status, out, err = run(capsys, [bundle, "--server", "h:1"], Connections(Electrum()))
+    said = f"the server's history does not prove on Bitcoin's mainnet: {BELOW}"
+    assert (status, out, err) == (1, "", f"seed-scan scan: {said}\n")
+
+
+def test_a_tip_that_does_not_prove_is_refused_at_once(
+    capsys: pytest.CaptureFixture[str], bundle: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A reason other than a moved tip ends the scan, in fixed text."""
+    proof = Scripted(OFF)
+    monkeypatch.setattr(cli, "TipProof", proof)
+    status, out, err = run(capsys, [bundle, "--server", "h:1"], Connections(Electrum()))
+    said = f"the server's history does not prove on Bitcoin's mainnet: {OFF}"
+    assert (status, out, err) == (1, "", f"seed-scan scan: {said}\n")
+    assert len(proof.tips) == 1
+
+
+@pytest.mark.parametrize("moves, status", [(2, 0), (3, 1)])
+def test_a_tip_that_moved_during_the_proof_is_read_again(
+    capsys: pytest.CaptureFixture[str],
+    bundle: str,
+    monkeypatch: pytest.MonkeyPatch,
+    moves: int,
+    status: int,
+) -> None:
+    """Up to three reads of one history, then a line of fixed text.
+
+    :param capsys: pytest's capture of the standard streams.
+    :param bundle: the bundle's file.
+    :param monkeypatch: what replaces the command's proof.
+    :param moves: how many proofs in a row see the tip move.
+    :param status: the exit status.
+    """
+    proof = Scripted(*[MOVED] * moves)
+    monkeypatch.setattr(cli, "TipProof", proof)
+    result = run(capsys, [bundle, "--server", "h:1"], Connections(Electrum()))
+    assert result[0] == status
+    # the first history is read three times either way, and a scan that
+    # goes on reads others
+    assert len(proof.tips) > 3 - status
+    if status:
+        assert len(proof.tips) == 3
         said = "the server's tip moved during every read of a history"
         assert result[2] == f"seed-scan scan: {said}\n"
 

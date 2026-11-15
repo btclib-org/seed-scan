@@ -8,8 +8,9 @@
 asks a `btclib_wallet.fetch.history.HistoryReader` on a chain forked
 from Bitcoin which of the bundle's accounts have history there. It reads
 no secret, as `seed_scan.scan` reads none. `seed_scan.cli` gives it an
-Electrum server the user names for that chain, and refuses one whose
-blocks at the chain's checkpoints are another chain's.
+Electrum server the user names for that chain, refuses one whose blocks
+at the chain's checkpoints are another chain's, and proves each history
+it answers on the chain's last checkpoint, under the chain's rule.
 
 `CHAINS` holds the chains read. A key's coins at a fork are on both
 chains, at the same script, and a wallet of the new chain may since have

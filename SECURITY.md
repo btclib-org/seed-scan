@@ -118,18 +118,26 @@ person running `identify` holds the keys to funds:
     memory until garbage collection, and may have been copied by the
     interpreter meanwhile.
 - **Nothing here is constant-time.** The package is pure Python.
-- **The Electrum server is trusted for what it answers.** `scan` and
-    `forks` take each history as the server the user names answers it.
-    Each confirmed transaction's merkle branch is checked against a
-    header the same server answers, so a server that lies can answer a
-    history of its own making. `scan` and `forks` compare the server's
-    genesis block with Bitcoin's, and its blocks at checkpoints with
-    those of the chain read: that refuses an honest server of a chain
-    whose blocks differ at those heights, as Bitcoin Cash's for `scan`,
-    and not one of a chain that parts from the one read above its last
-    checkpoint. It does not prove that a history answered is that
-    chain's. Proving each history against the chain is
-    [btclib-org/seed-scan#34](https://github.com/btclib-org/seed-scan/issues/34).
+- **The Electrum server is trusted for what it leaves out of a history,
+    and for the mempool's transactions.** `scan` and `forks` prove each
+    confirmed transaction of a history the server the user names
+    answers: its merkle branch commits it to a block header, and the
+    headers from the last checkpoint of the chain read up to the
+    history's tip each name the one before, the one at the checkpoint
+    being the chain's block. Each after the checkpoint carries the bits
+    the chain's difficulty rule gives it, and a hash within them. A
+    history whose tip does not prove is refused, so a server that
+    answers a confirmed transaction of its own making mines a block at
+    the difficulty the chain's rule gives after that checkpoint. The
+    server can still leave a transaction out of a history, and a
+    mempool transaction it answers, which no block holds, may never
+    confirm. Before any address is asked, `scan` and `forks` also
+    compare the server's genesis block with Bitcoin's, and its blocks at
+    checkpoints with those of the chain read: that refuses an honest
+    server of a chain whose blocks differ at those heights, as Bitcoin
+    Cash's for `scan`. Neither that comparison nor the proof refuses a
+    server of a chain that parts from the one read above its last
+    checkpoint and keeps its difficulty rule.
 - **`--tcp` is neither encrypted nor authenticated.** Its connection
     stays on the machine, and anything there that can read loopback
     traffic learns every address asked. A process listening on the port
