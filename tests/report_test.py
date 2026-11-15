@@ -838,6 +838,24 @@ def test_a_purpose_cut_short_names_the_rerun() -> None:
     ) in report(text, result)
 
 
+def test_a_layout_cut_short_names_the_rerun() -> None:
+    """Three of MyEtherWallet's keys, the second used: write more of them."""
+    text = dumps(identify(ABANDON, [""], no_share, accounts=1, keys=3))
+    mew = eth_address(text, "m/44h/60h", 1, legacy=True)
+    fake = Ethereum({mew: 5})
+    result = scan_module.dumps(scan_module.scan(text, None, node=node(fake)))
+    lines = report(text, result).splitlines()
+    (opening,) = [n for n, line in enumerate(lines) if "ethereum, legacy" in line]
+    assert lines[opening : opening + 3] == [
+        (
+            "  ethereum, legacy account, on Ethereum: accounts 0 to 1 read, 1 used,"
+            " cut short: run identify with --keys above 3, then scan"
+        ),
+        "    account 1, m/44h/60h: 5 wei",
+        f"      address m/44h/60h/1 {mew}: 5 wei, nonce 0, block 16",
+    ]
+
+
 def test_an_electrum_reading_has_its_account() -> None:
     """An Electrum reading names no languages and no purpose."""
     text = dumps(identify(SEGWIT, [""], no_share, accounts=1))
@@ -888,6 +906,9 @@ def test_every_documented_line_is_one_a_report_writes(
     chain = Chain(HistoryTx(pay(1, (script(one, "m/86h/0h/0h", 0, 0), 5)), BLOCK))
     own = HistoryTx(pay(1, (p2pkh("m/44h/145h/0h/0/0"), 5)), OWN)
     standard = dumps(identify(STANDARD, [""], no_share, accounts=1))
+    # one key of MyEtherWallet's layout, fewer than the gap limit
+    few = dumps(identify(ABANDON, [""], no_share, accounts=1, keys=1))
+    fake = Ethereum()
     reports = "".join(
         [
             report(abandon, result, [forked]),
@@ -903,6 +924,9 @@ def test_every_documented_line_is_one_a_report_writes(
             report(dumps(identify(OLD, [""], no_share, address="not an address"))),
             report(dumps(identify("qzx qzx", [""], no_share))),
             report(MISSED),
+            report(
+                few, scan_module.dumps(scan_module.scan(few, None, node=node(fake)))
+            ),
         ]
     )
     unmatched = [
@@ -1164,7 +1188,7 @@ def test_the_report_of_the_stable_account(abandon: str) -> None:
 def test_an_address_alone_is_counted_apart_from_its_keys_children(
     abandon: str,
 ) -> None:
-    """The Stable Account's key edited to be MyEtherWallet's: two addresses.
+    """The Stable Account's key edited to be Ledger Live's: two addresses.
 
     One key, read below at index 0 for Ethereum's legacy layout and at
     index 9999 alone for the Stable Account, gives two addresses whose
@@ -1172,12 +1196,14 @@ def test_an_address_alone_is_counted_apart_from_its_keys_children(
     """
     document = json.loads(abandon)
     accounts = document["readings"][0]["accounts"]
-    (mew,) = [a for a in accounts if a["path"] == "m/44h/60h"]
+    (ledger,) = [
+        a for a in accounts if (a["path"], a["purpose"]) == ("m/44h/60h/0h", None)
+    ]
     (stable,) = [a for a in accounts if a["index"] is not None]
-    stable["xpub"] = mew["xpub"]
+    stable["xpub"] = ledger["xpub"]
     text = json.dumps(document)
-    low = eth_address(text, "m/44h/60h", 0, legacy=True)
-    high = eth_address(text, "m/44h/60h", 9999, legacy=True)
+    low = eth_address(text, "m/44h/60h/0h", 0, legacy=True)
+    high = eth_address(text, "m/44h/60h/0h", 9999, legacy=True)
     fake = Ethereum({low: 2, high: 3}, chain_id=56)
     result = scan_module.scan(text, None, node=node(fake), evm_chain="bnb-smart-chain")
     lines = report(text, scan_module.dumps(result)).splitlines()
@@ -1187,23 +1213,25 @@ def test_an_address_alone_is_counted_apart_from_its_keys_children(
 
 
 def test_an_address_two_keys_list_is_counted_once(abandon: str) -> None:
-    """The Stable Account edited to MyEtherWallet's key at index 0.
+    """The Stable Account edited to Ledger Live's key at index 0.
 
     Two accounts of two keys, "legacy" and "index 0", each list the one
     address that holds wei: the total counts its balance once.
     """
     document = json.loads(abandon)
     accounts = document["readings"][0]["accounts"]
-    (mew,) = [a for a in accounts if a["path"] == "m/44h/60h"]
+    (ledger,) = [
+        a for a in accounts if (a["path"], a["purpose"]) == ("m/44h/60h/0h", None)
+    ]
     (stable,) = [a for a in accounts if a["index"] is not None]
-    stable.update(xpub=mew["xpub"], index=0)
+    stable.update(xpub=ledger["xpub"], index=0)
     text = json.dumps(document)
-    first = eth_address(text, "m/44h/60h", 0, legacy=True)
+    first = eth_address(text, "m/44h/60h/0h", 0, legacy=True)
     fake = Ethereum({first: 7}, chain_id=56)
     result = scan_module.scan(text, None, node=node(fake), evm_chain="bnb-smart-chain")
     assert result.evm is not None
     assert [(u.path, u.balance) for u in result.evm.used] == [
-        ("m/44h/60h", "7"),
+        ("m/44h/60h/0h", "7"),
         ("m/44h/60h/9172h/3604", "7"),
     ]
     lines = report(text, scan_module.dumps(result)).splitlines()

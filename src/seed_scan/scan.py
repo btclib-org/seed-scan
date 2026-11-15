@@ -29,20 +29,23 @@ The caller names the EVM chain the node serves, a key of
 another chain id is refused before any address is asked. The accounts
 read are those of the coins its `seed_scan.evm.EvmChain` lists, as
 `seed_scan.evm` says; an account of a coin one chain alone reads is
-listed as not checked on any other. Each coin's accounts are
-read the same way as Bitcoin's, purpose by purpose and with the same two
-bounds, on the receive branch alone: the addresses of an account are
-those of the keys ``0/0``, ``0/1`` and on below its ``xpub``, as
+listed as not checked on any other. Each coin's accounts are read the
+same way as Bitcoin's, purpose by purpose and with the same two bounds,
+on the receive branch alone: the addresses of an account are those of
+the keys ``0/0``, ``0/1`` and on below its ``xpub``, as
 `coin_addresses.evm` writes them. A legacy layout, of purpose ``null``,
 is one account, read on no branch: its addresses are those of the keys
-``0``, ``1`` and on below its ``xpub``. An address its wallets derive
-alone is one more such account, whose ``index`` names the one child of
-its ``xpub`` read. A coin's legacy layouts and addresses alone are each
-read, whatever ``account_gap``, and are never cut short. Each address
-is asked its balance, its nonce and its balance of each ERC-20 token
-the chain's `seed_scan.evm.EvmChain` lists, all at the scan's block,
-the latest block, asked once before the first address. It is used where
-any of them is not zero.
+``0``, ``1`` and on below its ``xpub``, or, for a layout the bundle
+holds key by key, those of its ``keys``, which end the read where they
+end. An address its wallets derive alone is one more such account, whose
+``index`` names the one child of its ``xpub`` read. A coin's legacy
+layouts and addresses alone are each read, whatever ``account_gap``.
+They are cut short only where a layout held key by key ends before
+``gap_limit`` of its keys in a row are unused, since a later child may
+be used. Each address is asked its balance, its nonce and its balance of
+each ERC-20 token the chain's `seed_scan.evm.EvmChain` lists, all at the
+scan's block, the latest block, asked once before the first address. It
+is used where any of them is not zero.
 
 One block for every address keeps a node whose backends answer from
 different heights from listing an address at a block before the scan's,
@@ -89,7 +92,8 @@ only. Its members:
   position of the reading in the bundle; ``purpose``, ``null`` for an
   Electrum reading; ``accounts``, how many accounts were read, from 0;
   and ``cut_short``, true where the bundle's accounts end before the
-  account gap was reached.
+  account gap was reached, or, for an EVM coin's accounts of purpose
+  ``null``, where a layout's keys end before the gap limit was.
 - ``used``: one object per Bitcoin account with history, in the order
   read:
   ``reading``, ``purpose``, ``account`` and ``path``, as the bundle has
@@ -118,8 +122,9 @@ only. Its members:
   account with a used address: ``coin``, ``reading``, ``purpose``,
   ``account`` and ``path``, as the bundle has them; ``addresses``, each
   used address as ``index``, its index on the receive branch or, for a
-  legacy layout, below the key itself, and for an address alone the
-  bundle's ``index``, ``address``, ``balance``, ``nonce``, ``block``,
+  legacy layout, below the key itself, which for a layout held key by
+  key is the position of its key in ``keys``, and for an address alone
+  the bundle's ``index``, ``address``, ``balance``, ``nonce``, ``block``,
   the block they were read at, and ``tokens``, its token balances;
   ``balance``, the sum of the addresses' balances; and ``tokens``, the
   sum of their balances of each token.
@@ -161,7 +166,7 @@ from seed_scan.evm import EVM_CHAINS, EvmChain, EvmToken, Node
 from seed_scan.exceptions import SeedScanTypeError, SeedScanValueError
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Iterable
 
 __all__ = [
     "ACCOUNT_GAP",
@@ -194,7 +199,7 @@ __all__ = [
 FORMAT = "seed-scan-scan"
 
 #: The value of the ``version`` member this module writes.
-VERSION = 1
+VERSION = 2
 
 #: BIP44's gap limit, the default of ``gap_limit``.
 GAP_LIMIT = 20
@@ -439,6 +444,48 @@ def _key(account: Account, where: str) -> BIP32KeyData:
     return key
 
 
+#: Where an EVM account's addresses are: the key whose children they are,
+#: or, for a layout the bundle holds key by key, the addresses of its keys
+#: in their order.
+_Source = BIP32KeyData | tuple[str, ...]
+
+
+def _source(account: Account, where: str) -> _Source:
+    """Return where an EVM account's addresses are, its keys decoded.
+
+    The receive branch below the account's key; the key itself for a
+    legacy layout or an address alone, of purpose None; or the addresses
+    of the ``keys`` of a layout held key by key. `_key` decodes a key,
+    and a key of ``keys`` that is no point of the curve is refused as it
+    refuses one, outside `suppress`.
+    """
+    if not account.keys:
+        key = _key(account, where)
+        return key if account.purpose is None else key.derive(0)
+    addresses: tuple[str, ...] = ()
+    with contextlib.suppress(TypeError, ValueError):
+        addresses = tuple(address_from_pub_key(bytes.fromhex(k)) for k in account.keys)
+    if not addresses:
+        raise SeedScanValueError(f"bundle: {where}: a key that does not decode")
+    return addresses
+
+
+def _end(source: _Source) -> int:
+    """Return the index past a source's last address.
+
+    An extended public key's unhardened children end at 2^31; a layout
+    held key by key ends with its keys.
+    """
+    return len(source) if isinstance(source, tuple) else _HARDENED
+
+
+def _address_at(source: _Source, index: int) -> str:
+    """Return a source's address at an index below `_end`."""
+    if isinstance(source, tuple):
+        return source[index]
+    return address_from_pub_key(source.derive(index).sec)
+
+
 #: A reading's accounts of one coin, by purpose, each beside what it is
 #: read with.
 _Purposes = dict[int | None, list[tuple[Account, _T]]]
@@ -461,7 +508,7 @@ def _numbered(position: int, purposes: _Purposes[_T], *, electrum: bool = True) 
 
 
 #: A reading's accounts of each EVM coin, by coin, in the bundle's order.
-_EvmCoins = dict[str, _Purposes[BIP32KeyData]]
+_EvmCoins = dict[str, _Purposes[_Source]]
 
 #: A reading's Bitcoin accounts, its EVM coins' and its other coins.
 _Plan = tuple[_Purposes[tuple[Descriptor, ...]], _EvmCoins, list[str]]
@@ -478,9 +525,9 @@ def _plan(position: int, reading: Reading) -> _Plan:
             descriptors = _descriptors(account, where)
             bitcoin.setdefault(account.purpose, []).append((account, descriptors))
         elif account.coin in _EVM_COINS:
-            key = _key(account, where)
+            source = _source(account, where)
             purposes = evm.setdefault(account.coin, {})
-            purposes.setdefault(account.purpose, []).append((account, key))
+            purposes.setdefault(account.purpose, []).append((account, source))
         elif account.coin not in others:
             others.append(account.coin)
     _numbered(position, bitcoin)
@@ -710,7 +757,7 @@ def _token_sums(
 def _evm_account(
     reading: int,
     account: Account,
-    key: BIP32KeyData,
+    source: _Source,
     *,
     node: Node,
     tokens: Sequence[EvmToken],
@@ -719,16 +766,13 @@ def _evm_account(
 ) -> EvmAccount | None:
     """Return an EVM account's used addresses, or None where none is.
 
-    The receive branch, or the key itself for a legacy layout, is read
-    from index 0 until `gap_limit` indexes in a row are unused. An
-    address alone is read at its account's index, and nowhere else. Each
-    address is read as `_evm_address` reads it.
+    `source` is read as `_evm_branch` reads it. An address alone is read
+    at its account's index, and nowhere else, as `_evm_address` reads it.
     """
-    branch = _branch(account, key)
     if account.index is None:
-        addresses = _evm_branch(node, tokens, block, branch, gap_limit)
+        addresses = _evm_branch(node, tokens, block, source, gap_limit)
     else:
-        address = address_from_pub_key(branch.derive(account.index).sec)
+        address = _address_at(source, account.index)
         alone = _evm_address(node, tokens, block, account.index, address)
         addresses = [] if alone is None else [alone]
     if not addresses:
@@ -749,18 +793,19 @@ def _evm_branch(
     node: Node,
     tokens: Sequence[EvmToken],
     block: int,
-    branch: BIP32KeyData,
+    source: _Source,
     gap_limit: int,
 ) -> list[EvmAddress]:
-    """Return a branch's used addresses.
+    """Return the used addresses of a branch, or of a layout's keys.
 
-    The branch is read from index 0 until `gap_limit` indexes in a row
-    are unused, each address as `_evm_address` reads it.
+    They are read from index 0 until `gap_limit` indexes in a row are
+    unused, or until the source's addresses end, each address as
+    `_evm_address` reads it.
     """
     addresses: list[EvmAddress] = []
     index = unused = 0
-    while unused < gap_limit:
-        address = address_from_pub_key(branch.derive(index).sec)
+    while unused < gap_limit and index < _end(source):
+        address = _address_at(source, index)
         found = _evm_address(node, tokens, block, index, address)
         if found is None:
             unused += 1
@@ -769,15 +814,6 @@ def _evm_branch(
             unused = 0
         index += 1
     return addresses
-
-
-def _branch(account: Account, key: BIP32KeyData) -> BIP32KeyData:
-    """Return the key whose children are an EVM account's addresses.
-
-    The receive branch below the account's key, or the key itself for a
-    legacy layout or an address alone, of purpose None.
-    """
-    return key if account.purpose is None else key.derive(0)
 
 
 def _discover(
@@ -794,7 +830,8 @@ def _discover(
     refuses a purpose whose accounts end before the gap, dropping what it
     found (btclib-org/btclib-wallet#859): here that purpose is cut short.
     The accounts of purpose None are each a layout of its own, so each
-    is read, and none is cut short.
+    is read, and none is cut short by the account gap: `_ends_short`
+    says where a layout held key by key is cut short.
     """
     used: list[_U] = []
     unused = done = 0
@@ -810,6 +847,26 @@ def _discover(
             used.append(found)
     cut_short = purpose is not None and unused < account_gap
     return Searched(reading, purpose, done, cut_short), used
+
+
+def _ends_short(
+    accounts: Iterable[Account],
+    used: Sequence[UsedAccount | EvmAccount],
+    gap_limit: int,
+) -> bool:
+    """Answer whether a layout held key by key ends before its read does.
+
+    Its keys are read from index 0 until `gap_limit` indexes in a row are
+    unused: where fewer than `gap_limit` keys follow its last used one,
+    or its first where none is used, the keys end first, and a later
+    child may be used. `used` are the used accounts of `accounts`.
+    """
+    last = {u.account: max(a.index for a in u.addresses) for u in used}
+    return any(
+        len(account.keys) - last.get(account.account, -1) - 1 < gap_limit
+        for account in accounts
+        if account.keys
+    )
 
 
 def _backends(
@@ -849,8 +906,9 @@ def scan(
     Refused, as `seed_scan.bundle.loads` refuses it: text that is not a
     bundle. Refused as a `SeedScanValueError` too: a descriptor that
     does not parse, as one whose key is no point of the curve, an
-    extended public key that does not decode, accounts not numbered from
-    0, and a `server` that `parse_server` refuses. A bound below 1 is
+    extended public key that does not decode, a key of a layout held key
+    by key that is no point of the curve, accounts not numbered from 0,
+    and a `server` that `parse_server` refuses. A bound below 1 is
     refused, and one that is no integer is a `SeedScanTypeError`, as is
     a `server` that is no string beside a `reader`. Refused once
     `reader` is asked: an account whose history lists two transactions
@@ -940,8 +998,11 @@ def _scan_evm(
                 continue
             for purpose, accounts in purposes.items():
                 done, found = _discover(n, purpose, accounts, read, account_gap)
+                short = _ends_short((a for a, _ in accounts), found, gap_limit)
                 searched.append(
-                    EvmSearched(n, coin, purpose, done.accounts, done.cut_short)
+                    EvmSearched(
+                        n, coin, purpose, done.accounts, done.cut_short or short
+                    )
                 )
                 used += found
     return EvmScan(
@@ -1255,21 +1316,22 @@ def _evm_addresses(
 
     Each holds a balance, a nonce or a token balance, as `scan` lists no
     other, read at `block`, the scan's, or later. An address alone is at
-    its account's index, read with no gap.
+    its account's index, read with no gap; one of a layout held key by
+    key is at one of its keys.
     """
-    branch = _branch(account, _key(account, f"account {account.path}"))
+    source = _source(account, f"account {account.path}")
     addresses: list[EvmAddress] = []
     for position in _objects(document, "addresses"):
         index = _count(position, "index")
         if index in {a.index for a in addresses}:
             raise SeedScanValueError("scan result: an address listed twice")
         address: str = _member(position, "address", str)
-        # an index of 2^31 and above would be hardened, a key the xpub
-        # does not derive
+        # an index from `_end` on is none of the source's: 2^31 and above
+        # would be hardened, a key the xpub does not derive
         if (
-            index >= _HARDENED
+            index >= _end(source)
             or account.index not in (None, index)
-            or address != address_from_pub_key(branch.derive(index).sec)
+            or address != _address_at(source, index)
         ):
             err_msg = "scan result: an address is not the bundle's at its position"
             raise SeedScanValueError(err_msg)
@@ -1324,16 +1386,19 @@ def _evm_used(
     )
 
 
-def _agrees(done: Searched, used: set[int], held: int, account_gap: int) -> bool:
+def _agrees(done: Searched, used: set[int], held: int, gaps: tuple[int, bool]) -> bool:
     """Answer whether a search's accounts, used ones and ``cut_short`` agree.
 
-    `scan` reads a purpose's accounts from 0 and stops once `account_gap`
-    of them in a row are unused, or once the bundle's `held` accounts run
-    out: then, and only then, the purpose is cut short. The accounts of
-    purpose None are each read, whatever the gap, and never cut short.
+    `gaps` are the account gap, and whether a layout held key by key ends
+    short, as `_ends_short` answers. `scan` reads a purpose's accounts
+    from 0 and stops once the account gap of them in a row are unused, or
+    once the bundle's `held` accounts run out: then, and only then, the
+    purpose is cut short. The accounts of purpose None are each read,
+    whatever the gap, and cut short where a layout of them ends short.
     """
+    account_gap, short = gaps
     if done.purpose is None:
-        return not done.cut_short and done.accounts == held
+        return done.cut_short == short and done.accounts == held
     unused = 0
     for number in range(done.accounts):
         if unused == account_gap:
@@ -1348,15 +1413,19 @@ def _check_searches(
     searched: dict[tuple[int, int | None], Searched],
     used: Sequence[UsedAccount | EvmAccount],
     accounts: _Held,
-    account_gap: int,
+    bounds: tuple[int, int],
 ) -> None:
-    """Refuse a search whose accounts and ``cut_short`` are not `scan`'s."""
+    """Refuse a search whose accounts and ``cut_short`` are not `scan`'s.
+
+    `bounds` are the result's ``gap_limit`` and ``account_gap``.
+    """
+    gap_limit, account_gap = bounds
     for (reading, purpose), done in searched.items():
-        numbers = {
-            u.account for u in used if (u.reading, u.purpose) == (reading, purpose)
-        }
-        held = sum((r, p) == (reading, purpose) for r, p, _ in accounts)
-        if not _agrees(done, numbers, held, account_gap):
+        of_search = [u for u in used if (u.reading, u.purpose) == (reading, purpose)]
+        held = [a for (r, p, _), a in accounts.items() if (r, p) == (reading, purpose)]
+        short = _ends_short(held, of_search, gap_limit)
+        numbers = {u.account for u in of_search}
+        if not _agrees(done, numbers, len(held), (account_gap, short)):
             err_msg = "scan result: a search's accounts and 'cut_short' do not agree"
             raise SeedScanValueError(err_msg)
 
@@ -1411,7 +1480,7 @@ def _evm(
 
     `bounds` are the result's ``gap_limit`` and ``account_gap``.
     """
-    gap_limit, account_gap = bounds
+    gap_limit = bounds[0]
     evm: dict[str, Any] | None = _member(document, "evm", (dict, type(None)))
     if evm is None:
         return None
@@ -1452,9 +1521,7 @@ def _evm(
     for coin in chain.coins:
         of_coin = [u for u in used if u.coin == coin]
         _keyed(of_coin)
-        _check_searches(
-            searched.get(coin, {}), of_coin, _held(bundle, coin), account_gap
-        )
+        _check_searches(searched.get(coin, {}), of_coin, _held(bundle, coin), bounds)
     return EvmScan(
         node=node,
         chain=chain.name,
@@ -1557,7 +1624,7 @@ def loads(text: str, bundle: str) -> ScanResult:
         for item in _objects(document, "used")
     ]
     _keyed(used)
-    _check_searches(searched, used, accounts, account_gap)
+    _check_searches(searched, used, accounts, (gap_limit, account_gap))
     evm = _evm(document, read, (gap_limit, account_gap))
     if server is None and evm is None:
         raise SeedScanValueError("scan result: it names neither a server nor a node")

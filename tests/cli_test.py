@@ -97,6 +97,17 @@ def test_the_summary_says_an_address_was_not_searched(
     assert "address not searched: not a Bitcoin address" in err
 
 
+def test_the_keys_written_are_the_option_s(capsys: pytest.CaptureFixture[str]) -> None:
+    """``--keys`` bounds the keys of MyEtherWallet's layout, 100 without it."""
+    for argv, keys in ((["--keys", "2"], 2), ([], 100)):
+        status, out, _ = run(
+            capsys, ["identify", "--accounts", "1", *argv], ABANDON, ""
+        )
+        assert status == 0
+        (reading,) = loads(out).readings
+        assert [len(a.keys) for a in reading.accounts if a.keys] == [keys]
+
+
 def test_a_refusal_is_a_status_and_a_line(capsys: pytest.CaptureFixture[str]) -> None:
     """A bound below one is refused with status 1 and nothing on stdout."""
     status, out, err = run(capsys, ["identify", "--accounts", "0"], ABANDON, "")

@@ -670,7 +670,8 @@ def eth_address(text: str, path: str, index: int, *, legacy: bool = False) -> st
     :param text: the bundle's text.
     :param path: the account's path.
     :param index: the index on the receive branch, or below the key
-        itself for a legacy layout.
+        itself for a legacy layout, the position of its key for one held
+        key by key.
     :param legacy: whether the account is a legacy layout, of no purpose,
         whose key can also be an account's of a purpose.
     :returns: the address, EIP-55 encoded.
@@ -681,6 +682,8 @@ def eth_address(text: str, path: str, index: int, *, legacy: bool = False) -> st
         for a in r.accounts
         if a.path == path and (a.purpose is None) == legacy
     ]
+    if account.keys:
+        return address_from_pub_key(bytes.fromhex(account.keys[index]))
     below = f"m/{index}" if legacy else f"m/0/{index}"
     key = BIP32KeyData.b58decode(account.xpub).derive(below)
     return address_from_pub_key(key.sec)
@@ -792,6 +795,72 @@ def test_each_legacy_layout_is_read_whatever_the_account_gap(abandon: str) -> No
     assert evm is not None
     assert [(u.path, u.account) for u in evm.used] == [("m/44h/60h", 1)]
     assert evm.searched[-1] == EvmSearched(0, "ethereum", None, 2, cut_short=False)
+
+
+@pytest.fixture(scope="module")
+def few_keys() -> str:
+    """Return the bundle of BIP84's mnemonic with 25 of MyEtherWallet's keys.
+
+    One account of each purpose, so that a test reads few addresses.
+
+    :returns: its text.
+    """
+    return dumps(identify(ABANDON, [""], no_share, accounts=1, keys=25))
+
+
+@pytest.mark.parametrize("used, short", [(None, False), (4, False), (5, True)])
+def test_mews_layout_is_cut_short_where_its_keys_end_first(
+    few_keys: str, used: int | None, short: bool
+) -> None:
+    """Read no further than its keys: cut short where the gap would pass them.
+
+    Of 25 keys, a gap limit of 20 after index 4 ends at the last key, and
+    after index 5 would pass it, where child 25 may be used.
+
+    :param few_keys: the bundle.
+    :param used: the index of the one address used, or None.
+    :param short: whether the layout is cut short.
+    """
+    balances = (
+        {}
+        if used is None
+        else {eth_address(few_keys, "m/44h/60h", used, legacy=True): 1}
+    )
+    fake = Ethereum(balances)
+    evm = scan(few_keys, None, node=node(fake)).evm
+    assert evm is not None
+    assert evm.searched[-1] == EvmSearched(0, "ethereum", None, 2, cut_short=short)
+    assert [a.index for u in evm.used for a in u.addresses] == (
+        [] if used is None else [used]
+    )
+    read = 20 if used is None else min(used + 21, 25)
+    tokens = len(EVM_CHAINS["ethereum"].tokens)
+    assert len(fake.asked) == 2 + (2 + tokens) * (20 + 20 + read)
+
+
+def test_the_summary_says_a_layout_is_cut_short() -> None:
+    """Three keys, fewer than the gap limit: the summary says they end first."""
+    bundle = dumps(identify(ABANDON, [""], no_share, accounts=1, keys=3))
+    result = scan(bundle, None, node=node(Ethereum()))
+    assert (
+        "reading 0, ethereum legacy: accounts read: 2, cut short: a layout's keys"
+        " in the bundle end before the gap limit"
+    ) in cli._scan_summary(result).splitlines()
+
+
+def test_a_key_of_mews_layout_that_does_not_decode_is_refused(few_keys: str) -> None:
+    """No point of the curve: refused as an xpub is, the node not asked."""
+    (mew,) = [a for r in loads(few_keys).readings for a in r.accounts if a.keys]
+    text = edited(few_keys, "m/44h/60h", keys=[*mew.keys[:-1], "02" + "ff" * 32])
+    loads(text)
+    fake = Ethereum()
+    with pytest.raises(SeedScanValueError) as caught:
+        scan(text, None, node=node(fake))
+    assert (
+        str(caught.value) == "bundle: reading 0, account 6: a key that does not decode"
+    )
+    assert caught.value.__context__ is None
+    assert not fake.asked
 
 
 def test_without_a_server_bitcoin_is_not_checked(abandon: str) -> None:

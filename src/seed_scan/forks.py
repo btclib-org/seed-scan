@@ -645,7 +645,7 @@ def _used_accounts(
 
     `bounds` are the result's ``gap_limit`` and ``account_gap``.
     """
-    gap_limit, account_gap = bounds
+    gap_limit = bounds[0]
     found: dict[str, list[UsedAccount]] = {coin: [] for coin in held}
     used: list[ForkAccount] = []
     for item in _objects(document, "used"):
@@ -655,7 +655,7 @@ def _used_accounts(
         used.append(_forked(coin, account, _held_at_fork(item, account, fork_height)))
     for coin, accounts in found.items():
         _keyed(accounts)
-        _check_searches(searched[coin], accounts, held[coin], account_gap)
+        _check_searches(searched[coin], accounts, held[coin], bounds)
     return tuple(used)
 
 

@@ -58,7 +58,9 @@ every other character is literal.
     it, or no result is given;
   - or ``: accounts 0 to <n> read, <n> used``, then ``, cut short: run
     identify with --accounts above <n>, then scan`` where the bundle's
-    accounts end before the account gap was reached.
+    accounts end before the account gap was reached, or, for a legacy
+    account, ``, cut short: run identify with --keys above <n>, then
+    scan`` where a layout's keys end before the gap limit was.
 
   Four spaces in, per used Bitcoin account, ``account <n>, <path>: <n>
   sat confirmed, <n> sat unconfirmed, <n> transactions, read up to
@@ -158,7 +160,7 @@ __all__ = [
 ]
 
 #: The version the first line names.
-VERSION = 1
+VERSION = 2
 
 #: Why an account is not checked where no scan result is given.
 NO_SCAN = "no scan result was given"
@@ -290,18 +292,22 @@ def _evm_used(used: EvmAccount) -> list[str]:
 def _read(
     done: Searched | EvmSearched | ForkSearched,
     used: int,
-    held: int,
+    held: tuple[int, int],
     command: str = "scan",
 ) -> str:
     """Return what a search read, and the rerun a cut short one asks for.
 
+    `held` is how many accounts of the search the bundle holds, and how
+    many keys its layouts held key by key hold, the most of any.
     `command` is the one that wrote the result, run again after identify.
     """
+    accounts, keys = held
     line = f": accounts 0 to {done.accounts - 1} read, {used} used"
+    bound = f"--accounts above {accounts}"
+    if done.purpose is None:
+        bound = f"--keys above {keys}"
     if done.cut_short:
-        line += (
-            f", cut short: run identify with --accounts above {held}, then {command}"
-        )
+        line += f", cut short: run identify with {bound}, then {command}"
     return line
 
 
@@ -333,12 +339,17 @@ def _found(result: ScanResult | None) -> tuple[_Searches, _Found]:
     return searched, lines
 
 
-def _groups(reading: Reading) -> dict[tuple[str, int | None], int]:
-    """Return how many accounts a reading holds of each coin and purpose."""
-    groups: dict[tuple[str, int | None], int] = {}
+def _groups(reading: Reading) -> dict[tuple[str, int | None], tuple[int, int]]:
+    """Return what a reading holds of each coin and purpose.
+
+    How many accounts, and the most keys a layout of them held key by key
+    holds.
+    """
+    groups: dict[tuple[str, int | None], tuple[int, int]] = {}
     for account in reading.accounts:
         key = (account.coin, account.purpose)
-        groups[key] = groups.get(key, 0) + 1
+        accounts, keys = groups.get(key, (0, 0))
+        groups[key] = (accounts + 1, max(keys, len(account.keys)))
     return groups
 
 
@@ -470,8 +481,10 @@ def _scripts(account: Account) -> tuple[str, ...]:
     and its addresses are those of its xpub's receive branch, whatever its
     coin, or of its xpub itself for a legacy layout, of purpose None, so
     the layout is part of what gives them; for an address alone, the one
-    index it names.
+    index it names; for a layout held key by key, its keys.
     """
+    if account.keys:
+        return account.keys
     if account.descriptors:
         return (
             account.xpub,

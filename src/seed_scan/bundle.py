@@ -66,19 +66,32 @@ An account object holds:
   with ``h``;
 - ``xpub``: the extended public key at ``path``, in BIP32's mainnet
   version whatever the coin, so that each reader decodes one spelling;
+  empty for a layout held key by key;
 - ``descriptors``: for Bitcoin, the receive and change output
   descriptors, checksum included, as Bitcoin Core imports them; empty
-  for the other coins, whose account key is ``xpub`` alone;
+  for the other coins;
 - ``index``: ``null``, or, for an address alone, its index below
   ``xpub``: the one child of the key that is an address. Only an
-  account of no purpose and of a coin other than Bitcoin has one.
+  account of no purpose and of a coin other than Bitcoin has one;
+- ``keys``: empty, or, for a layout held key by key, the compressed
+  public keys of the children ``0``, ``1`` and on of the key at
+  ``path``, as 66 hex characters each, the n-th being child n's. Only
+  an account of no purpose, of a coin other than Bitcoin and with no
+  ``index`` has them.
+
+A layout is held key by key where its key is above hardened accounts, as
+`seed_scan.identify`'s ``COINS`` says, and README.md's *What touches the
+secret* says why. Each other ``xpub`` is three levels below the master
+key, the depth of BIP44's accounts, or deeper, except an Electrum
+reading's, the master key or its child ``0h``: that is the reading's one
+account, whose addresses are on the key's own unhardened branches.
 """
 
 from __future__ import annotations
 
 import json
 import re
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from hashlib import sha256
 from typing import Any
 
@@ -107,7 +120,7 @@ __all__ = [
 FORMAT = "seed-scan-bundle"
 
 #: The value of the ``version`` member this module writes and reads.
-VERSION = 1
+VERSION = 2
 
 #: The schemes a claim, or a scheme not checked, names.
 CLAIMS = (
@@ -171,6 +184,8 @@ _HARDENED = 0x80000000
 # the version bytes of a BIP32 mainnet extended public key, the one
 # spelling the bundle writes
 _XPUB_VERSION = bytes.fromhex("0488b21e")
+# a compressed public key, as a layout held key by key writes each
+_PUBLIC_KEY = re.compile(r"0[23][0-9a-f]{64}")
 _BASE58 = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"
 # the version bytes of a base58 address: p2pkh and p2sh, mainnet and test
 _ADDRESS_VERSIONS = (0x00, 0x05, 0x6F, 0xC4)
@@ -222,6 +237,7 @@ class Account:
     xpub: str
     descriptors: tuple[str, ...]
     index: int | None = None
+    keys: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -362,12 +378,14 @@ def _base58check(text: str) -> bytes | None:
 
 
 def _xpub(document: dict[str, Any]) -> str:
-    """Return a BIP32 mainnet extended public key, refusing any other text.
+    """Return a BIP32 mainnet extended public key, or the empty text.
 
     The version bytes, the length, the checksum and the prefix of the key
     are checked: an extended private key, or anything else, is refused.
     """
     value: str = _member(document, "xpub", str)
+    if not value:
+        return value
     payload = _base58check(value)
     public = (
         payload is not None
@@ -540,13 +558,37 @@ def _index(document: dict[str, Any], coin: str, purpose: int | None) -> int | No
     return index
 
 
+def _keys(document: dict[str, Any], account: Account) -> tuple[str, ...]:
+    """Return an account's ``keys``, refusing them where the format has none.
+
+    The account holds an ``xpub`` or keys, never both, and keys only where
+    it is of no purpose, of a coin other than Bitcoin and with no
+    ``index``. A key's form is checked, not that it is a point of the
+    curve. Two children are two keys, so a key listed twice is refused:
+    its address would be read, and its balance summed, twice.
+    """
+    values = _strings(document, "keys")
+    if not all(_PUBLIC_KEY.fullmatch(value) for value in values):
+        raise SeedScanValueError("bundle: member 'keys' is not a list of public keys")
+    if len(set(values)) != len(values):
+        raise SeedScanValueError("bundle: member 'keys' holds a key twice")
+    if bool(values) == bool(account.xpub):
+        err_msg = "bundle: an account holds neither or both of 'xpub' and 'keys'"
+        raise SeedScanValueError(err_msg)
+    placed = (account.purpose, account.index) == (None, None)
+    if values and (not placed or account.coin == "bitcoin"):
+        err_msg = "bundle: member 'keys' is not a layout's of no purpose"
+        raise SeedScanValueError(err_msg)
+    return values
+
+
 def _account(document: dict[str, Any]) -> Account:
     """Read one account object."""
     purpose = _member(document, "purpose", (int, type(None)))
     coin = _one_of(document, "coin", COIN_NAMES)
     xpub = _xpub(document)
     purpose = None if purpose is None else _count(document, "purpose")
-    return Account(
+    account = Account(
         coin=coin,
         coin_type=_count(document, "coin_type"),
         purpose=purpose,
@@ -556,6 +598,7 @@ def _account(document: dict[str, Any]) -> Account:
         descriptors=_descriptors(document, coin, xpub),
         index=_index(document, coin, purpose),
     )
+    return replace(account, keys=_keys(document, account))
 
 
 def _reading(document: dict[str, Any]) -> Reading:
@@ -605,10 +648,13 @@ def loads(text: str) -> Bundle:
     coin or a reason among `CLAIMS`, `READ_SCHEMES`, `LANGUAGES`,
     `COIN_NAMES` and `REASONS`; a path of `m` and indexes below 2^31; an
     ``xpub`` whose Base58Check, version bytes, length and key prefix are
-    a BIP32 mainnet public key's; a Bitcoin account's two descriptors
-    over that ``xpub``, and none for another coin; an address that is a
-    base58 or a segwit one, or empty. An ``index`` is below 2^31, of an
-    account of no purpose and of a coin other than Bitcoin.
+    a BIP32 mainnet public key's, or empty; a key of ``keys`` of 66 hex
+    characters, ``02`` or ``03`` first; a Bitcoin account's two
+    descriptors over that ``xpub``, and none for another coin; an
+    address that is a base58 or a segwit one, or empty. An ``index`` is
+    below 2^31, of an account of no purpose and of a coin other than
+    Bitcoin. An account holds an ``xpub`` or ``keys``, not both, and
+    ``keys`` only as the module docstring says, each key once.
     """
     if not isinstance(text, str):
         raise SeedScanTypeError(f"bundle: text of type {type(text).__name__}")
@@ -631,8 +677,7 @@ def loads(text: str) -> Bundle:
         raise SeedScanTypeError(f"bundle: a JSON {type(document).__name__}")
     if _member(document, "format", str) != FORMAT:
         raise SeedScanValueError(f"bundle: format is not {FORMAT!r}")
-    # the value is not quoted: no other version is defined, and a number
-    # handed in by mistake may be a key
+    # the value is not quoted: a number handed in by mistake may be a key
     if _member(document, "version", int) != VERSION:
         raise SeedScanValueError(f"bundle: version is not {VERSION}")
     search = _member(document, "search", (dict, type(None)))

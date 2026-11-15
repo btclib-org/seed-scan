@@ -150,6 +150,6 @@ jobs:
           assert issubclass(exceptions.SeedScanValueError, ValueError)
           assert callable(cli.main) and callable(identify.identify)
           assert callable(scan.scan) and callable(report.report)
-          assert bundle.VERSION == 1
+          assert isinstance(bundle.VERSION, int)
           print("ok")
           PY

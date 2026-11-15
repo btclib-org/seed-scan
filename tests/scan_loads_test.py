@@ -227,6 +227,35 @@ def test_a_legacy_layout_result_reads_back(bundle: str) -> None:
         loads(json.dumps(document), bundle)
 
 
+def test_a_cut_short_mew_result_reads_back() -> None:
+    """MyEtherWallet's layout, cut short where its keys end first.
+
+    Its ``cut_short`` is what its keys, its used addresses and the gap
+    limit give, and is refused flipped. An address past its keys is
+    none of the bundle's, though a key below m/44h/60h would derive it.
+    """
+    bundle = dumps(identify(ABANDON, [""], no_share, accounts=1, keys=3))
+    mew = eth_address(bundle, "m/44h/60h", 1, legacy=True)
+    text = scan_dumps(scan(bundle, None, node=node(Ethereum({mew: 5}))))
+    read = loads(text, bundle)
+    assert scan_dumps(read) == text
+    document = json.loads(text)
+    (legacy,) = [
+        s
+        for s in document["evm"]["searched"]
+        if (s["coin"], s["purpose"]) == ("ethereum", None)
+    ]
+    assert legacy["cut_short"]
+    legacy["cut_short"] = False
+    with pytest.raises(SeedScanValueError, match=DISAGREE):
+        loads(json.dumps(document), bundle)
+    document = json.loads(text)
+    position = document["evm"]["used"][0]["addresses"][0]
+    position["index"] = 3
+    with pytest.raises(SeedScanValueError, match="not the bundle's at its position"):
+        loads(json.dumps(document), bundle)
+
+
 def test_a_stable_account_result_reads_back(bundle: str) -> None:
     """Its one address, at index 9999 and under no gap limit.
 
@@ -497,7 +526,7 @@ DISAGREE = "a search's accounts and 'cut_short' do not agree"
 
 VALUE_ERRORS = [
     (setter("format", PLANTED), "format is not 'seed-scan-scan'"),
-    (setter("version", 2), "version is not 1"),
+    (setter("version", 1), "version is not 2"),
     (deleter("server"), "missing member 'server'"),
     (setter("bundle", PLANTED), "made from another bundle"),
     (setter("server", f"{PLANTED} :1"), "member 'server' is not host:port"),
@@ -749,7 +778,11 @@ def test_a_bitcoin_address_past_the_gap_limit_is_refused(
 def test_an_ethereum_address_past_the_gap_limit_is_refused(
     bundle: str, evm_result: str
 ) -> None:
-    """Index 1000 after index 0: past a gap of 20, not past one of 1000."""
+    """Index 1000 after index 0: past a gap of 20, not past one of 1000.
+
+    A gap of 1000 passes MyEtherWallet's last key, so its layout is then
+    cut short.
+    """
     document = json.loads(evm_result)
     position = document["evm"]["used"][0]["addresses"][1]
     position["index"] = 1000
@@ -757,6 +790,9 @@ def test_an_ethereum_address_past_the_gap_limit_is_refused(
     with pytest.raises(SeedScanValueError, match="an address past the gap limit"):
         loads(json.dumps(document), bundle)
     document["gap_limit"] = 1000
+    for search in document["evm"]["searched"]:
+        if search["purpose"] is None:
+            search["cut_short"] = True
     assert loads(json.dumps(document), bundle).gap_limit == 1000
     document["gap_limit"] = 999
     with pytest.raises(SeedScanValueError, match="an address past the gap limit"):

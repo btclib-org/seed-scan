@@ -8,7 +8,8 @@
 passphrases at a second one until an empty answer, and writes the public
 bundle `seed_scan.bundle` describes to standard output. What it found is
 summarized on standard error. Its options are public: the address the
-user knows, and the bounds of the accounts written and of the search.
+user knows, and the bounds of the accounts and keys written and of the
+search.
 
 The secret is read from the terminal alone, never from an argument, a
 file, standard input or the environment: where no terminal can be
@@ -297,12 +298,18 @@ def _searched(
     """Return the line that says how many accounts of a purpose were read.
 
     `layout` names the layout of no purpose: Electrum's for Bitcoin, the
-    legacy one for an EVM coin.
+    legacy one for an EVM coin, which is cut short where a layout's keys
+    end before the gap limit.
     """
     purpose = layout if done.purpose is None else _purpose(done.purpose)
     line = f"reading {done.reading}, {coin}{purpose}: accounts read: {done.accounts}"
     if done.cut_short:
-        line += ", cut short: the bundle's accounts end before the account gap"
+        why = (
+            "a layout's keys in the bundle end before the gap limit"
+            if done.purpose is None
+            else "the bundle's accounts end before the account gap"
+        )
+        line += f", cut short: {why}"
     return line
 
 
@@ -754,6 +761,7 @@ def _identify_command(
             accounts=args.accounts,
             address=args.address,
             indexes=args.indexes,
+            keys=args.keys,
         )
     except (KeyboardInterrupt, EOFError):
         # first: an interrupt that is also a refusal says "interrupted",
@@ -822,6 +830,15 @@ def _parser() -> argparse.ArgumentParser:
         type=int,
         default=20,
         help="indexes of each branch the address search reads (default: 20)",
+    )
+    identify_parser.add_argument(
+        "--keys",
+        type=int,
+        default=100,
+        help=(
+            "public keys written for each layout held key by key, from its"
+            " first address: MyEtherWallet's m/44h/60h/<n> (default: 100)"
+        ),
     )
     scan_parser = commands.add_parser(
         "scan",

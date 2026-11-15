@@ -52,7 +52,7 @@ KEYWORD_ONLY: dict[str, list[str]] = {
     "seed_scan.cli:main": ["prompt", "forbid_network", "connect"],
     "seed_scan.evm:Node.__init__": ["transport", "timeout"],
     "seed_scan.forks:forks": ["chain", "server", "gap_limit", "account_gap"],
-    "seed_scan.identify:identify": ["accounts", "address", "indexes"],
+    "seed_scan.identify:identify": ["accounts", "address", "indexes", "keys"],
     "seed_scan.scan:scan": ["server", "node", "evm_chain", "gap_limit", "account_gap"],
 }
 
