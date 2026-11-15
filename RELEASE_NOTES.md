@@ -12,9 +12,9 @@ before upgrading, rather than a digit.
 ## v2026.11.15
 
 The first release of `seed-scan`: there is no earlier version to upgrade
-from. It finds what a mnemonic of unknown scheme holds, in two steps, so
-that the mnemonic is typed on one machine and every later step reads
-public data alone.
+from. It finds what a mnemonic of unknown scheme holds, so that the
+mnemonic is typed on one machine and every later step reads public data
+alone.
 
 - `seed-scan identify`, offline, reads the mnemonic at a hidden prompt
   and writes a public bundle of account public keys.
