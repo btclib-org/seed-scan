@@ -334,19 +334,23 @@ gh api repos/<owner>/<repo>/git/tags/<sha> --jq .verification
 ## Merge methods
 
 **Squash is the only method GitHub can be asked for**, and auto-merge
-is off, so no pull request can be armed; the call is the one under
-*Creating the repository*. Read back:
+is off, [for the reason section 11
+gives](https://github.com/btclib-org/.github#merge-method); the call is
+the one under *Creating the repository*. Read back:
 
 ```shell
 gh api repos/btclib-org/seed-scan \
   --jq '{allow_squash_merge, allow_merge_commit, allow_rebase_merge,
          allow_auto_merge, squash_merge_commit_title,
          squash_merge_commit_message, delete_branch_on_merge}'
-# {"allow_auto_merge":false,"allow_merge_commit":false,
-#  "allow_rebase_merge":false,"allow_squash_merge":true,
-#  "delete_branch_on_merge":true,
-#  "squash_merge_commit_message":"COMMIT_MESSAGES",
-#  "squash_merge_commit_title":"COMMIT_OR_PR_TITLE"}
+```
+
+```json
+{"allow_auto_merge":false,"allow_merge_commit":false,
+ "allow_rebase_merge":false,"allow_squash_merge":true,
+ "delete_branch_on_merge":true,
+ "squash_merge_commit_message":"COMMIT_MESSAGES",
+ "squash_merge_commit_title":"COMMIT_OR_PR_TITLE"}
 ```
 
 Read on 2026-11-14T16:32Z.
@@ -513,7 +517,10 @@ redirect. The site answers:
 ```shell
 curl -sL -o /dev/null -w '%{http_code} %{url_effective}\n' \
   https://seed-scan.readthedocs.io/
-# 200 https://seed-scan.readthedocs.io/en/latest/
+```
+
+```text
+200 https://seed-scan.readthedocs.io/en/latest/
 ```
 
 The project's public API answers without a token:
@@ -521,9 +528,21 @@ The project's public API answers without a token:
 ```shell
 p=https://app.readthedocs.org/api/v3/projects/seed-scan
 curl -s -o /dev/null -w '%{http_code}\n' "$p/"
-# 200
+```
+
+```text
+200
+```
+
+```shell
 curl -s "$p/" | jq -c '{default_branch, repository: .repository.url}'
-# {"default_branch":"main","repository":"https://github.com/btclib-org/seed-scan.git"}
+```
+
+```json
+{"default_branch":"main","repository":"https://github.com/btclib-org/seed-scan.git"}
+```
+
+```shell
 curl -s "$p/" | jq -c '[.programming_language.code, .homepage]'
 diff <(curl -s "$p/" | jq -r '.tags[]' | sort) \
      <(gh api repos/btclib-org/seed-scan --jq '.topics[]' | sort)

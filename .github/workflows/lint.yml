@@ -46,14 +46,18 @@ on:
 permissions:
   contents: read
 
-# cancel superseded runs on the same branch or pull request. Named
-# literally rather than with github.workflow, which in a called workflow
-# is the caller's name. A pull_request run groups by the pull request's
-# own number, which no push's github.ref can equal. The suffix keeps a
-# release run out of the branch groups, github.ref being the caller's
-# inside a called workflow (btclib-org/.github#1083)
+# cancel superseded runs of one pull request, or of one ref's dispatched
+# runs. Named literally rather than with github.workflow, which in a
+# called workflow is the caller's name. A pull_request run groups by the
+# pull request's own number, which no dispatch's github.ref can equal. A
+# push run is keyed on its commit and its ref, as test.yml says. The
+# suffix keeps a release run out of the branch groups, github.ref being
+# the caller's inside a called workflow (btclib-org/.github#1083)
 concurrency:
-  group: lint-${{ github.event.pull_request.number || github.ref }}${{ inputs.concurrency-suffix }}
+  group: >-
+    lint-${{ github.event_name == 'push'
+    && format('{0}-{1}', github.sha, github.ref)
+    || github.event.pull_request.number || github.ref }}${{ inputs.concurrency-suffix }}
   cancel-in-progress: true
 
 jobs:

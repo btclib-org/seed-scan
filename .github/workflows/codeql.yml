@@ -47,11 +47,15 @@ on:
 permissions:
   contents: read
 
-# cancel superseded runs on the same branch or pull request, named
-# literally and keyed on the pull request's own number, for the reasons
-# test.yml gives
+# cancel superseded runs of one pull request, or of one ref's scheduled
+# and dispatched runs, named literally and keyed on the pull request's
+# own number, for the reasons test.yml gives. A push run is keyed on its
+# commit and its ref, as test.yml says
 concurrency:
-  group: codeql-${{ github.event.pull_request.number || github.ref }}
+  group: >-
+    codeql-${{ github.event_name == 'push'
+    && format('{0}-{1}', github.sha, github.ref)
+    || github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 jobs:
