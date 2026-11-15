@@ -23,7 +23,7 @@ from btclib.script import ScriptPubKey
 from btclib.tx import OutPoint, Tx, TxIn, TxOut
 from btclib_wallet.bip44 import discover_account
 from btclib_wallet.descriptors import add_checksum, parse
-from btclib_wallet.exceptions import FetchError
+from btclib_wallet.exceptions import FetchError, RpcError
 from btclib_wallet.fetch.history import (
     BlockRef,
     HistoryTx,
@@ -35,7 +35,7 @@ from coin_addresses.evm import address_from_pub_key
 from seed_scan import cli
 from seed_scan import scan as scan_module
 from seed_scan.bundle import dumps, loads
-from seed_scan.evm import EVM_CHAINS, Node
+from seed_scan.evm import EVM_CHAINS, Node, quantity
 from seed_scan.exceptions import SeedScanTypeError, SeedScanValueError
 from seed_scan.identify import identify
 from seed_scan.report import report
@@ -750,10 +750,10 @@ def test_the_ethereum_bounds_are_the_bitcoin_ones(abandon: str) -> None:
     assert [u.account for u in evm.used] == [0, 3]
     nothing = Ethereum()
     scan(abandon, None, node=node(nothing))
-    # two requests ahead, then per address its block, balance and nonce
-    # and one per token: three accounts of 20, and each legacy layout's 20
+    # two requests ahead, then per address its balance and nonce and one
+    # per token: three accounts of 20, and each legacy layout's 20
     tokens = len(EVM_CHAINS["ethereum"].tokens)
-    assert len(nothing.asked) == 2 + (3 + tokens) * 20 * (3 + 2)
+    assert len(nothing.asked) == 2 + (2 + tokens) * 20 * (3 + 2)
 
 
 def test_mews_mnemonic_addresses_are_read_below_m_44h_60h(abandon: str) -> None:
@@ -1074,11 +1074,11 @@ def test_the_stable_account_is_one_address_read_on_bnb_smart_chain(
     assert used.addresses == (EvmAddress(9999, stable, "11", 1, 16, held),)
     assert used.tokens == held
     assert evm.searched[-1] == EvmSearched(0, "bnb", None, 1, cut_short=False)
-    # two requests ahead, then per address its block, balance and nonce
-    # and one per token: twenty per account of Ethereum's three, its two
-    # legacy layouts and BNB's three, and the Stable Account's one address
+    # two requests ahead, then per address its balance and nonce and one
+    # per token: twenty per account of Ethereum's three, its two legacy
+    # layouts and BNB's three, and the Stable Account's one address
     read = 20 * (3 + 2 + 3) + 1
-    assert len(fake.asked) == 2 + (3 + len(chain.tokens)) * read
+    assert len(fake.asked) == 2 + (2 + len(chain.tokens)) * read
     assert fake.asked.count("eth_getBalance") == read
 
 
@@ -1181,11 +1181,12 @@ def test_an_accounts_token_balances_are_summed(abandon: str) -> None:
     )
 
 
-def test_each_address_is_read_at_one_block(abandon: str) -> None:
-    """Its balance, nonce and tokens at the block asked as its read begins.
+def test_each_address_is_read_at_the_scans_block(abandon: str) -> None:
+    """Its balance, nonce and tokens at the block asked before the first.
 
-    The block moves on between addresses, as a chain's head does. The
-    legacy layouts' first addresses are read last.
+    The node's block would move on between addresses, as a chain's head
+    does, were it asked again. The legacy layouts' first addresses are
+    read last.
     """
     first = eth_address(abandon, "m/44h/60h/0h", 0)
     second = eth_address(abandon, "m/44h/60h/0h", 1)
@@ -1195,11 +1196,85 @@ def test_each_address_is_read_at_one_block(abandon: str) -> None:
     assert evm is not None
     assert evm.block == 16
     (account,) = evm.used
-    assert [(a.index, a.block) for a in account.addresses] == [(0, 17), (1, 18)]
+    assert [(a.index, a.block) for a in account.addresses] == [(0, 16), (1, 16)]
     per_address = 2 + len(EVM_CHAINS["ethereum"].tokens)
-    assert fake.blocks == [
-        hex(block) for block in (17, 18, 19, 20, 21, 22) for _ in range(per_address)
-    ]
+    assert fake.blocks == ["0x10"] * 6 * per_address
+    assert fake.asked.count("eth_blockNumber") == 1
+
+
+def lagging(fake: Ethereum, *, lacks: bool) -> Node:
+    """Return a node behind which a backend one block behind `fake` answers.
+
+    A load balancer's: the first ``eth_blockNumber`` is `fake`'s, and
+    every later request goes to the backend behind it. That backend
+    answers ``eth_blockNumber`` with the block below `fake`'s. Where it
+    `lacks` `fake`'s block, it answers a state read at a block past its
+    own with a JSON-RPC error; it answers every other request as `fake`
+    does.
+
+    :param fake: the backend ahead, whose block is not moved.
+    :param lacks: whether the backend behind refuses a block past its own.
+    :returns: the node.
+    """
+    first = True
+
+    def transport(request: Request, timeout: float) -> tuple[int, bytes]:
+        nonlocal first
+        assert isinstance(request.data, bytes)
+        asked = json.loads(request.data)
+        method, params = asked["method"], asked["params"]
+        behind = fake.block - 1
+        if method == "eth_blockNumber" and first:
+            first = False
+            return fake(request, timeout)
+        answer = None
+        if method == "eth_blockNumber":
+            answer = response(id=asked["id"], result=hex(behind))
+        elif lacks and method != "eth_chainId" and quantity(params[-1]) > behind:
+            error = {"code": -32000, "message": "no such block"}
+            answer = response(id=asked["id"], result=..., error=error)
+        if answer is None:
+            return fake(request, timeout)
+        fake.asked.append(method)
+        return 200, json.dumps(answer).encode()
+
+    return Node("https://node.example/rpc", transport=transport)
+
+
+def test_a_backend_a_block_behind_leaves_each_address_at_the_scans_block(
+    abandon: str,
+) -> None:
+    """Block 16 is asked once, and every address is read at it.
+
+    The backend behind answers block 15 to a later ``eth_blockNumber``,
+    which `loads` and `report` would refuse as an address read before the
+    scan. The result reads back.
+    """
+    first = eth_address(abandon, "m/44h/60h/0h", 0)
+    third = eth_address(abandon, "m/44h/60h/2h", 0)
+    fake = Ethereum({first: 1, third: 2})
+    lagged = lagging(fake, lacks=False)
+    result = scan(abandon, None, node=lagged)
+    text = scan_module.dumps(result)
+    assert scan_module.dumps(scan_module.loads(text, abandon)) == text
+    written = report(abandon, text)
+    assert f" {first}: 1 wei, nonce 0, block 16\n" in written
+    assert f" {third}: 2 wei, nonce 0, block 16\n" in written
+    assert result.evm is not None
+    assert result.evm.block == 16
+    assert {a.block for u in result.evm.used for a in u.addresses} == {16}
+    assert fake.asked.count("eth_blockNumber") == 1
+    assert set(fake.blocks) == {"0x10"}
+    assert lagged.block_number() == 15
+
+
+def test_a_backend_that_lacks_the_scans_block_fails_the_scan(abandon: str) -> None:
+    """Its error for the first read at block 16 ends the scan, unwritten."""
+    fake = Ethereum()
+    with pytest.raises(RpcError) as caught:
+        scan(abandon, None, node=lagging(fake, lacks=True))
+    assert caught.value.code == -32000
+    assert fake.asked == ["eth_chainId", "eth_blockNumber", "eth_getBalance"]
 
 
 def test_a_chain_with_no_token_asks_no_call(abandon: str) -> None:

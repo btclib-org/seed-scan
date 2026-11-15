@@ -114,6 +114,20 @@ def test_an_ethereum_result_reads_back(bundle: str, evm_result: str) -> None:
     assert read.evm.tokens == EVM_CHAINS["polygon-pos"].tokens
 
 
+def test_an_address_read_after_the_scans_block_reads_back(
+    bundle: str, evm_result: str
+) -> None:
+    """`scan` writes the scan's block; the format takes a later one too."""
+    document = json.loads(evm_result)
+    in_evm_address("block", 17)(document)
+    text = json.dumps(document)
+    read = loads(text, bundle)
+    assert read.evm is not None
+    assert read.evm.block == 16
+    assert [a.block for a in read.evm.used[0].addresses] == [17, 16]
+    assert ", nonce 0, block 17\n" in report(bundle, text)
+
+
 def test_a_result_of_both_reads_back(bundle: str) -> None:
     """A server and a node, each coin read."""
     receive = script(bundle, "m/84h/0h/0h", 0, 0)
@@ -906,7 +920,7 @@ def test_token_sums_past_one_word_read_back(bundle: str) -> None:
     read = loads(text, bundle)
     assert read.evm is not None
     (used,) = read.evm.used
-    assert [a.block for a in used.addresses] == [17, 18]
+    assert [a.block for a in used.addresses] == [16, 16]
     assert [t.balance for t in used.tokens] == [str(2**256)]
     assert scan_dumps(read) == text
     total = f"total: polygon-pos, USDT {USDT.contract}: {2**256}, 6 decimals,"

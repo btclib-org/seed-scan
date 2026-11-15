@@ -71,9 +71,10 @@ every other character is literal.
   no branch; and eight spaces in, per token it holds, ``<symbol>
   <contract>: <n>, <n> decimals``, the balance in units of 10**-decimals
   of the token. What an address holds is the node's answer at the block
-  its line names, the latest when that address was read: the addresses
-  of an account may be read at different blocks, so their sum is no
-  state of one block, and the node's line marks when the EVM scan began.
+  its line names. `seed_scan.scan` reads every address at the block of
+  the node's line; `seed_scan.scan.loads` also reads a result whose
+  addresses name a later one, and an account's sum is then no state of
+  one block.
 
   Then, per forks result, two spaces in, per coin and purpose of the
   reading's accounts of each coin `seed_scan.forks` reads, ``<coin>,
