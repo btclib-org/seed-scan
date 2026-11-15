@@ -137,8 +137,7 @@ a server of a chain whose blocks differ there, as one of Bitcoin's, is
 refused. Each history it answers is then proved on the chain's last
 checkpoint, under the chain's own difficulty rule, as for `scan`.
 SECURITY.md's *Limitations, not vulnerabilities* says what the proof
-holds, and what the server is still trusted for: what it leaves out of
-a history, and the mempool's transactions.
+holds, and what the server is still trusted for.
 
 `seed_scan.forks` documents the result and which accounts are read, and
 `seed-scan forks --help` the bounds of the search.
