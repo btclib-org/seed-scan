@@ -103,11 +103,13 @@ _NO_WITNESS = (
 )
 
 #: The reason `seed_scan.bundle.slip39_passphrase` writes, its number any:
-#: the first ``0`` of the reason of passphrase 0 is that number.
-_SLIP39_REASON = re.escape(bundle.slip39_passphrase(0)).replace("0", r"\d+", 1)
+#: the first ``0`` of the reason of passphrase 0 is that number. Its fixed
+#: text is two groups, and the number is in none, so it is searched.
+_SLIP39_HEAD, _SLIP39_TAIL = bundle.slip39_passphrase(0).split("0", 1)
+_SLIP39_REASON = rf"{_either([_SLIP39_HEAD])}\d+{_either([_SLIP39_TAIL])}"
 
 #: The reasons a bundle writes.
-_BUNDLE_REASON = _group(*map(re.escape, bundle.REASONS.values()), _SLIP39_REASON)
+_BUNDLE_REASON = f"(?:{_either(bundle.REASONS.values())}|{_SLIP39_REASON})"
 
 _COIN = _either(COIN_NAMES)
 _EVM_NAME = _either(EVM_CHAINS)
@@ -123,9 +125,6 @@ _TITLE = _either(
 )
 _SCAN_REASON = _either(SCAN_REASONS)
 _FORKS_REASON = _group(_NO_WITNESS)
-_PROTOCOLS = _either(
-    names for tokens in report.CHAIN_TOKENS.values() for names, _ in tokens
-)
 _TOKENS_REASON = _either((report.TOKENS_IN_SCRIPT, report.TOKENS_IN_OP_RETURN))
 _REPORT_REASON = _group(
     *map(
@@ -141,9 +140,9 @@ TOKEN_SYMBOLS = tuple(
 )
 _TOKEN = _either(TOKEN_SYMBOLS)
 
-#: The members whose value JSON writes as a defined word, and the words
-#: each may hold, whole: a coin's name, a chain's, a token's symbol or a
-#: reason.
+#: The members whose value JSON writes as a defined word, and the pattern
+#: each value matches whole: a coin's name, a chain's, a token's symbol or
+#: a reason. Each group of a pattern is a defined word.
 DEFINED_VALUES = {
     "coin": re.compile(_COIN),
     "chain": re.compile(_CHAIN),
@@ -152,10 +151,34 @@ DEFINED_VALUES = {
 }
 
 
-def _defined(name: str, value: object) -> bool:
-    """Return whether a member's value is a word `DEFINED_VALUES` holds."""
+def _ungrouped(found: re.Match[str]) -> str:
+    """Return the text of a whole match without its groups.
+
+    :param found: a match of a whole text.
+    :returns: the characters of that text in none of the groups matched.
+    """
+    spans = [found.span(group) for group in range(1, found.re.groups + 1)]
+    return "".join(
+        char
+        for at, char in enumerate(found.string)
+        if not any(start <= at < end for start, end in spans)
+    )
+
+
+def _value_kept(name: str, value: object) -> object:
+    """Return a member's value without the defined words it holds.
+
+    A text its member's pattern of `DEFINED_VALUES` matches whole loses
+    the groups, and becomes ``None`` where nothing is left. Every other
+    value is kept whole.
+
+    :param name: the member's name.
+    :param value: its value.
+    :returns: what of the value is searched.
+    """
     words = DEFINED_VALUES.get(name)
-    return isinstance(value, str) and words is not None and bool(words.fullmatch(value))
+    found = words.fullmatch(value) if isinstance(value, str) and words else None
+    return value if found is None else _ungrouped(found) or None
 
 
 def _members(pairs: list[tuple[str, object]]) -> list[tuple[str | None, object]]:
@@ -163,8 +186,8 @@ def _members(pairs: list[tuple[str, object]]) -> list[tuple[str | None, object]]
 
     `json.loads` calls this on each object, the innermost first, and the
     list it returns keeps a member whose name is written twice. A name of
-    `MEMBERS` becomes ``None``, and so does a value `_defined` says is a
-    defined word. Every other name and value is kept.
+    `MEMBERS` becomes ``None``, and every other name is kept. A value loses
+    its defined words, as `_value_kept` says.
 
     :param pairs: the object's members, as names and values.
     :returns: the members kept.
@@ -172,7 +195,7 @@ def _members(pairs: list[tuple[str, object]]) -> list[tuple[str | None, object]]
     return [
         (
             None if name in MEMBERS else name,
-            None if _defined(name, value) else value,
+            _value_kept(name, value),
         )
         for name, value in pairs
     ]
@@ -242,7 +265,11 @@ LINE_SHAPES = tuple(
         ),
         rf"{_EVM_TITLE} tokens: not checked: {_either([report.NO_TOKENS])}",
         rf"chain: {_FORK_TITLE}, forked from (Bitcoin) at height {_N}",
-        rf"{_PROTOCOLS}: not checked: {_TOKENS_REASON}",
+        *(
+            rf"({re.escape(names)}): not checked: ({re.escape(reason)})"
+            for tokens in report.CHAIN_TOKENS.values()
+            for names, reason in tokens
+        ),
         rf"not derived: [^:]+: {_BUNDLE_REASON}",
         rf"address search: not run: {_BUNDLE_REASON}",
         (
@@ -346,11 +373,7 @@ def _line_kept(line: str) -> str:
     """
     for shape in LINE_SHAPES:
         if found := shape.fullmatch(line):
-            for group in reversed(range(1, shape.groups + 1)):
-                start, end = found.span(group)
-                if start >= 0:
-                    line = line[:start] + line[end:]
-            return line
+            return _ungrouped(found)
     return line
 
 
@@ -563,6 +586,10 @@ SEARCHES = {"json": assert_json_secret_free, "lines": assert_lines_secret_free}
 ETHEREUM_TOKENS = EVM_CHAINS["ethereum"].tokens
 WETH = next(token for token in ETHEREUM_TOKENS if token.symbol == "WETH")
 
+#: A secret of digits, and the SLIP-0039 reason with it in its number's place.
+DIGITS = "731942865184203976"
+NUMBERED = bundle.slip39_passphrase(0).replace("0", DIGITS, 1)
+
 
 @pytest.mark.parametrize(
     "form, text, secret",
@@ -612,6 +639,8 @@ WETH = next(token for token in ETHEREUM_TOKENS if token.symbol == "WETH")
             "class",
         ),
         ("lines", "  bnb, purpose 44: not checked: on BNB Smart Chain", "smart"),
+        ("json", f'{{"reason": "{NUMBERED}"}}', DIGITS),
+        ("lines", f"not derived: slip39: {NUMBERED}", DIGITS),
     ],
 )
 def test_a_defined_word_elsewhere_is_found(
@@ -755,3 +784,19 @@ def test_a_line_of_no_shape_naming_a_defined_word_is_listed() -> None:
         "for a base58 address",
     ]
     assert unshaped("\n".join(lines)) == ["passphrase: bitcoin"]
+
+
+@pytest.mark.parametrize(
+    "names, reason",
+    [pair for tokens in report.CHAIN_TOKENS.values() for pair in tokens],
+)
+def test_a_protocol_with_the_other_reason_is_unshaped(names: str, reason: str) -> None:
+    """A token line has a shape only with its protocol's own reason.
+
+    :param names: a protocol's names, as a report writes them.
+    :param reason: why its tokens are not checked.
+    """
+    (other,) = {report.TOKENS_IN_SCRIPT, report.TOKENS_IN_OP_RETURN} - {reason}
+    own = f"{names}: not checked: {reason}"
+    swapped = f"{names}: not checked: {other}"
+    assert unshaped(f"{own}\n{swapped}") == [swapped]
