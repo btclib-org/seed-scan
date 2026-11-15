@@ -122,13 +122,27 @@ def _aserti3_2d_bits(height: int, header_at: Callable[[int], BlockHeader]) -> by
     parent's time and height, for a parent at the anchor or above it
     (https://gitlab.com/bitcoin-cash-node/bitcoin-cash-node/-/blob/e13b48e37b3005dca9a316f75aea456697a5dfd6/src/pow.cpp#L101-L267,
     https://github.com/Bitcoin-ABC/bitcoin-abc/blob/988b903deb04311b12ba067734dab3ff9f5411a7/src/pow/aserti32d.cpp#L28-L169).
-    The exponent's division truncates toward zero, as C++'s does, and its
+    """
+    parent = header_at(height - 1)
+    return _asert_bits(
+        _ANCHOR_BITS,
+        _seconds(parent) - _ANCHOR_PARENT_TIME,
+        height - 1 - _ANCHOR_HEIGHT,
+    )
+
+
+def _asert_bits(anchor_bits: bytes, time_diff: int, height_diff: int) -> bytes:
+    """Return the bits aserti3-2d gives the block after a parent.
+
+    Bitcoin Cash Node's `CalculateASERT`, at Bitcoin Cash's spacing,
+    half-life and limit, with the result in bits
+    (https://gitlab.com/bitcoin-cash-node/bitcoin-cash-node/-/blob/e13b48e37b3005dca9a316f75aea456697a5dfd6/src/pow.cpp#L185-L268).
+    `time_diff` is the parent's time less that of the anchor's parent,
+    and `height_diff` the parent's height less the anchor's. The
+    exponent's division truncates toward zero, as C++'s does, and its
     shift floors. A target shifted past 256 bits, which the nodes' check
     of the shift sets to the limit, is clamped to it here.
     """
-    parent = header_at(height - 1)
-    time_diff = _seconds(parent) - _ANCHOR_PARENT_TIME
-    height_diff = height - 1 - _ANCHOR_HEIGHT
     numerator = (time_diff - _SPACING * (height_diff + 1)) * 65536
     exponent = abs(numerator) // _HALF_LIFE
     if numerator < 0:
@@ -138,7 +152,7 @@ def _aserti3_2d_bits(height: int, header_at: Callable[[int], BlockHeader]) -> by
     factor = 65536 + (
         (195766423245049 * frac + 971821376 * frac**2 + 5127 * frac**3 + 2**47) >> 48
     )
-    target = int.from_bytes(target_from_bits(_ANCHOR_BITS)) * factor
+    target = int.from_bytes(target_from_bits(anchor_bits)) * factor
     target = target << shifts if shifts > 0 else target >> -shifts
     target = min(max(target, 1), _POW_LIMIT)
     return bits_from_target(target.to_bytes(32))

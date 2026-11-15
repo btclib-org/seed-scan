@@ -75,9 +75,14 @@ repos:
       # no derogation for markdown's two-space line break: nothing here
       # spells one. README.md's badge block groups its rows with blank
       # lines, the same convention every repository of the organization
-      # uses, so a trailing space anywhere in this tree is an accident
+      # uses, so a trailing space anywhere else in this tree is an
+      # accident. The vendored aserti3-2d files are upstream's bytes,
+      # which tests/_data/README.md pins: some carry a trailing space,
+      # and each run file ends in a blank line
       - id: trailing-whitespace
+        exclude: ^tests/_data/aserti3-2d/
       - id: end-of-file-fixer
+        exclude: ^tests/_data/aserti3-2d/
       - id: mixed-line-ending
         # not the default --fix=auto, which normalizes a file to its own
         # most frequent ending: a file entirely in CRLF is consistent by

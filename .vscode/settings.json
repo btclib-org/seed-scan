@@ -113,6 +113,12 @@
   "files.insertFinalNewline": true,
   "files.trimFinalNewlines": true,
   "files.eol": "\n",
+  // trailing-whitespace and end-of-file-fixer skip tests/_data/aserti3-2d/,
+  // upstream's bytes, which tests/_data/README.md pins: the editor opens
+  // them read-only rather than trim them on save
+  "files.readonlyInclude": {
+    "tests/_data/aserti3-2d/**": true
+  },
   // fix-byte-order-marker: "utf8bom" writes the mark that hook removes
   "files.encoding": "utf8"
 }

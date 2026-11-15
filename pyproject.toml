@@ -268,8 +268,11 @@ skip = ".secrets.baseline,uv.lock"
 # not a misspelling: `intoto`, in-toto's own spelling in the bundle's name
 # `<tag>.intoto.jsonl`. RELEASING.md writes it in fenced commands, outside
 # the backticks `ignore-regex` below hides, and the dictionary offers
-# "into" for it, which --write-changes applies
-ignore-words-list = "intoto"
+# "into" for it, which --write-changes applies. Nor is `asert`, the name
+# of Bitcoin Cash's and eCash's difficulty adjustment, which
+# [tool.typos.default.extend-words] below writes out of backticks, and
+# for which the dictionary offers "assert"
+ignore-words-list = "asert,intoto"
 # a misspelling written on purpose goes in backticks, which hides it from
 # this hook: what is inside backticks is an identifier, typos' half of the
 # work and not this hook's
@@ -298,6 +301,10 @@ extend-ignore-re = ['[0-9A-Za-z+/]{26,}={0,2}']
 # `intoto` in the bundle's name `<tag>.intoto.jsonl`, as for codespell above:
 # typos' dictionary offers "into" for it too
 intoto = "intoto"
+# `asert`, the difficulty adjustment of Bitcoin Cash and eCash, in Bitcoin
+# Cash Node's `CalculateASERT` and `seed_scan._proof`'s `_asert_bits`:
+# typos' dictionary offers "assert" for it
+asert = "asert"
 
 [tool.typos.type.verbatim]
 # the files that quote a word rather than use it: a changelog entry quotes

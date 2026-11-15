@@ -6,18 +6,23 @@
 
 Each rule is checked against real headers of its chain, each naming the
 one before it, and a test checks that the vectors of Bitcoin, Bitcoin
-Cash and eCash hold the last checkpoint the tree pins. The proof of a
-tip is checked against a fake Electrum server of a chain mined here at
-regtest's easiest target, whose proof of work a test can produce,
-through an `ElectrumFetcher` on regtest, and a rule of the test's own
-that reads headers below the one it answers for.
+Cash and eCash hold the last checkpoint the tree pins. aserti3-2d is
+also held to Bitcoin Cash Node's run files, which
+`tests/_data/README.md` pins. The proof of a tip is checked against a
+fake Electrum server of a chain mined here at regtest's easiest target,
+whose proof of work a test can produce, through an `ElectrumFetcher` on
+regtest, and a rule of the test's own that reads headers below the one
+it answers for.
 """
 
 from __future__ import annotations
 
+import hashlib
 import json
+import re
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
+from pathlib import Path
 
 import pytest
 from btclib.block.block_header import BlockHeader
@@ -37,6 +42,7 @@ from seed_scan._proof import (
     UNRULED,
     Rule,
     TipProof,
+    _asert_bits,
 )
 from seed_scan.forks import BITCOIN_CASH, BITCOIN_SV, CHAINS, ECASH
 
@@ -277,6 +283,77 @@ def test_aserti3_2d_is_bounded(seconds: int, bits: str) -> None:
     """
     parent = {970892: bare(seconds, bytes.fromhex("1802260a"))}
     assert ASERTI3_2D.bits(970893, parent.__getitem__).hex() == bits
+
+
+#: Bitcoin Cash Node's aserti3-2d vectors, and the pins of the vendored
+#: files.
+ASERT_DATA = Path(__file__).parent / "_data" / "aserti3-2d"
+PINS = Path(__file__).parent / "_data" / "README.md"
+
+
+def asert_run(path: Path) -> tuple[dict[str, str], list[list[str]]]:
+    """Return a run file's header and its vectors.
+
+    A header line is ``##   <name>: <value>``. A vector is the
+    iteration, the parent's height and time, and the bits of the block
+    after it, as hex after ``0x``.
+
+    :param path: the run file.
+    :returns: the header's values by name, and the vectors.
+    """
+    header, vectors = {}, []
+    for line in path.read_text(encoding="ascii").splitlines():
+        if line.startswith("##   "):
+            name, value = line.removeprefix("##   ").split(": ")
+            header[name] = value
+        elif line and not line.startswith("#"):
+            vectors.append(line.split(" "))
+    return header, vectors
+
+
+@pytest.mark.parametrize(
+    "path", sorted(ASERT_DATA.glob("run*")), ids=lambda path: path.name
+)
+def test_aserti3_2d_gives_bitcoin_cash_node_s_vectors(path: Path) -> None:
+    """The bits of each vector of a run, from the run's anchor.
+
+    The vectors are numbered from one to the iterations the header
+    gives, as Bitcoin Cash Node's own reader of them asks.
+
+    :param path: the run file.
+    """
+    header, vectors = asert_run(path)
+    assert [int(v[0]) for v in vectors] == list(range(1, int(header["iterations"]) + 1))
+    bits = bytes.fromhex(header["anchor nBits"].removeprefix("0x"))
+    height = int(header["anchor height"])
+    seconds = int(header["anchor parent time"])
+    wrong = [
+        v
+        for v in vectors
+        if _asert_bits(bits, int(v[2]) - seconds, int(v[1]) - height).hex()
+        != v[3].removeprefix("0x")
+    ]
+    assert not wrong
+
+
+def test_the_aserti3_2d_vectors_are_the_bytes_pinned() -> None:
+    """Each file of the vectors has one pin, and is the blob it gives.
+
+    The blob is git's id of the file, which `git hash-object` gives.
+    """
+    pins = re.findall(
+        r"^### `tests/_data/aserti3-2d/([^`]+)`\n\n```text\n(?:.+\n)*?"
+        r"blob    ([0-9a-f]{40})$",
+        PINS.read_text(encoding="utf-8"),
+        re.MULTILINE,
+    )
+    assert sorted(name for name, _ in pins) == sorted(
+        path.name for path in ASERT_DATA.iterdir()
+    )
+    for name, pinned in pins:
+        data = (ASERT_DATA / name).read_bytes()
+        blob = hashlib.sha1(b"blob %d\0" % len(data) + data, usedforsecurity=False)
+        assert blob.hexdigest() == pinned, name
 
 
 @pytest.mark.parametrize("height", [773040, 773041])
