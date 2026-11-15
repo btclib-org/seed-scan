@@ -7,6 +7,10 @@ what an entry holds. `tests/proof_test.py` holds each file to the
 `blob` its entry gives. No workflow re-checks the pins against upstream
 yet: btclib-org/.github#2319.
 
+A vendored file takes `-text` in `.gitattributes`: a checkout with
+`core.autocrlf=true` otherwise writes it with CRLF, and its bytes no
+longer hash to its `blob`.
+
 [s7]: https://github.com/btclib-org/.github#test-data-is-vendored-never-fetched
 
 ## Bitcoin Cash Node's aserti3-2d vectors
