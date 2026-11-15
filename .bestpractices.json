@@ -113,7 +113,7 @@
   "english_status": "Met",
   "enhancement_responses_justification": "The repository opened on 2026-11-12, and every enhancement request in it is the maintainer's own, so none from anybody else waits for an answer. Read with gh issue list -R btclib-org/seed-scan -s all -L 500 --json author -q '[.[] | select(.author.login != \"fametrano\")] | length'. https://github.com/btclib-org/seed-scan/issues",
   "enhancement_responses_status": "Met",
-  "external_dependencies_justification": "pyproject.toml declares the runtime dependencies, bip39-slip39, bip32-descriptors, btclib-wallet, coin-addresses and btclib, each with a lower bound, and the test and tooling dependencies in its dependency-groups, all resolved and pinned in the committed uv.lock. https://github.com/btclib-org/seed-scan/blob/main/pyproject.toml",
+  "external_dependencies_justification": "pyproject.toml declares the runtime dependencies, bip39-slip39, bip32-descriptors, btclib-wallet, coin-addresses, btclib and bitcoin-core-rpc, each with a lower bound, and the test and tooling dependencies in its dependency-groups, all resolved and pinned in the committed uv.lock. https://github.com/btclib-org/seed-scan/blob/main/pyproject.toml",
   "external_dependencies_status": "Met",
   "floss_license_justification": "The MIT license is approved by the Open Source Initiative (OSI).",
   "floss_license_osi_justification": "The MIT license is approved by the Open Source Initiative (OSI).",

@@ -17,6 +17,7 @@ from __future__ import annotations
 import contextlib
 import functools
 import gc
+import http.client
 import json
 import re
 import socket
@@ -29,6 +30,7 @@ import warnings
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import TYPE_CHECKING, Any
 from unittest.mock import Mock
+from urllib.error import URLError
 
 import pytest
 from btclib_wallet.exceptions import FetchError, HttpError, RpcError
@@ -965,6 +967,38 @@ def test_a_failure_keeps_its_class_and_drops_its_message() -> None:
     assert cause_.args == ()
     assert cause_.__cause__ is None
     assert cause_.__context__ is None
+
+
+@pytest.mark.parametrize(
+    "failure, kind",
+    [
+        (ssl.SSLCertVerificationError(MARK), ssl.SSLCertVerificationError),
+        (ssl.SSLError(MARK), ssl.SSLError),
+        (TimeoutError(MARK), TimeoutError),
+        (ConnectionRefusedError(MARK), ConnectionRefusedError),
+        (URLError(ConnectionRefusedError(MARK)), ConnectionRefusedError),
+        (socket.gaierror(MARK), OSError),
+        (URLError(MARK), OSError),
+        (http.client.BadStatusLine(MARK), None),
+    ],
+)
+def test_a_failure_is_caused_by_the_first_class_it_is_of(
+    failure: BaseException, kind: type[BaseException] | None
+) -> None:
+    """The class of what the transport raised picks the cause, or none.
+
+    The cause is a fresh, empty error of that class, and a ``URLError``
+    is read by its reason where that is an error.
+
+    :param failure: what the transport raises.
+    :param kind: the class of the cause, or None for no cause.
+    """
+    node = Node("https://node.example", transport=Mock(side_effect=failure))
+    with pytest.raises(FetchError) as caught:
+        node.chain_id()
+    cause_ = caught.value.__cause__
+    assert (None if cause_ is None else type(cause_)) is kind
+    assert MARK not in everything_said(caught.value)
 
 
 def test_a_failed_exchange_leaves_no_socket_to_the_collector(

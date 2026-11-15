@@ -107,6 +107,7 @@ from types import MappingProxyType
 from typing import TYPE_CHECKING
 from urllib.parse import urlsplit
 
+from bitcoin_core_rpc import FetchError as RpcFetchError
 from btclib_wallet.exceptions import FetchError, HttpError, RpcError
 from btclib_wallet.fetch.fetcher import client_errors
 from btclib_wallet.fetch.transport import (
@@ -150,10 +151,10 @@ _BALANCE_OF = "0x70a08231"
 _OK = 200
 
 # what a failure below the answer is reported as caused by: the first
-# class here that anything in its chain is of. A fresh instance of the
-# class, holding no message, stands for it: the original's message, and
-# those of the exceptions it chains, can quote what the node sent, as a
-# status line that does not parse does
+# class here that its `failure_type` is or derives from. A fresh
+# instance of the class, holding no message, stands for it: the
+# failure's message can quote what the node sent, as a status line that
+# does not parse does
 _CAUSES: tuple[type[OSError], ...] = (
     ssl.SSLCertVerificationError,
     ssl.SSLError,
@@ -439,13 +440,18 @@ def _chain(error: BaseException) -> Iterator[BaseException]:
         todo += [found.__cause__, found.__context__, getattr(found, "reason", None)]
 
 
-def _stand_in(error: BaseException) -> OSError | None:
-    """Return a fresh error of the class `_CAUSES` finds in a chain, or None."""
-    chain = list(_chain(error))
-    return next(
-        (kind() for kind in _CAUSES if any(isinstance(link, kind) for link in chain)),
-        None,
-    )
+def _stand_in(error: FetchError) -> OSError | None:
+    """Return a fresh error of the class `_CAUSES` finds for a failure, or None.
+
+    `error` is what `client_errors` makes of `bitcoin_core_rpc`'s
+    `FetchError`, its cause. That error's `failure_type` is the class of
+    what failed where the exchange did not complete, and None elsewhere.
+    """
+    cause = error.__cause__
+    if not isinstance(cause, RpcFetchError) or cause.failure_type is None:
+        return None
+    failed = cause.failure_type
+    return next((kind() for kind in _CAUSES if issubclass(failed, kind)), None)
 
 
 def _release(error: BaseException) -> None:
