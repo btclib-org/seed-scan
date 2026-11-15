@@ -277,7 +277,7 @@ LINE_SHAPES = tuple(
             rf"(?:, on {_TITLE})?"
             rf"(?:: not checked: {_REPORT_REASON}"
             rf"|: accounts 0 to {_N} read, {_N} used"
-            rf"(?:, cut short: run identify with --accounts above {_N}, then"
+            rf"(?:, cut short: run identify with --(?:accounts|keys) above {_N}, then"
             r" (?:scan|forks))?)"
         ),
         (
@@ -322,7 +322,8 @@ LINE_SHAPES = tuple(
         (
             rf"reading {_N}, {_COIN} (?:purpose {_N}|Electrum|legacy): accounts read:"
             rf" {_N}"
-            r"(?:, cut short: the bundle's accounts end before the account gap)?"
+            r"(?:, cut short: (?:the bundle's accounts end before the account gap"
+            r"|a layout's keys in the bundle end before the gap limit))?"
         ),
         rf"not checked: reading {_N}, {_COIN}: {_SCAN_REASON}",
         # seed_scan.cli, the summary of forks: its chain's line is the

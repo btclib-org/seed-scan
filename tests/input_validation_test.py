@@ -154,7 +154,7 @@ _WRONG_VALUE: dict[str, tuple[Any, ...]] = {
 # the parameters that bound a search, each an int from 1 with no upper
 # limit: the large ints `_WRONG_VALUE` gives are valid there, and a search
 # that long would not end
-_BOUNDS = frozenset({"accounts", "account_gap", "gap_limit", "indexes"})
+_BOUNDS = frozenset({"accounts", "account_gap", "gap_limit", "indexes", "keys"})
 _WRONG_BOUND = (0, -1)
 
 
@@ -372,6 +372,7 @@ _VALID: dict[str, Callable[[_Texts], dict[str, Any]]] = {
         "prompt": no_share,
         "accounts": 1,
         "indexes": 1,
+        "keys": 1,
     },
     "seed_scan.report.report": lambda t: {"bundle": t.bundle},
     "seed_scan.scan.dumps": lambda t: {

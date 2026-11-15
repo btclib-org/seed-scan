@@ -555,7 +555,7 @@ assert seed_scan.__version__ == version('seed-scan')
 assert issubclass(exceptions.SeedScanValueError, ValueError)
 assert callable(cli.main) and callable(identify.identify)
 assert callable(scan.scan) and callable(report.report)
-assert bundle.VERSION == 1
+assert bundle.VERSION == 2
 "
 ```
 

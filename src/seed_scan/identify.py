@@ -9,10 +9,11 @@ and derives a seed for each one this version reads, with the empty
 passphrase and each one typed: BIP39 in every word-list, a set of
 SLIP-0039 shares, and Electrum's "standard" and "segwit" seeds. From
 each seed it writes the master fingerprint and the account public keys
-`COINS` declares. A scheme the words claim and no reading covers is
-written as not checked, with the reason: Electrum's pre-2.0 and two-factor
-seeds, a BIP39 sentence whose checksum fails, an incomplete set of
-shares.
+`COINS` declares, and, for a layout whose key is above hardened
+accounts, the public keys of its first addresses in place of that key.
+A scheme the words claim and no reading covers is written as not
+checked, with the reason: Electrum's pre-2.0 and two-factor seeds, a
+BIP39 sentence whose checksum fails, an incomplete set of shares.
 
 Given an address the user knows, it compares the address's script with
 those of every Bitcoin account it wrote, within a bound written beside
@@ -71,16 +72,21 @@ class Coin:
     `legacy` holds the paths of the keys of its legacy layouts, of no
     BIP43 purpose: each key's own children are the addresses, and the
     bundle writes it as one account of purpose None, numbered from 0 in
-    this order. `alone` holds the paths of addresses its wallets derive
-    one by one, outside any account: the bundle writes each as one more
-    such account, whose key is the address's parent and whose index is
-    the address's.
+    this order. `listed` holds the paths of the keys of its legacy
+    layouts that are above hardened accounts: the bundle writes each as
+    one more such account, which holds the public keys of the key's
+    first children and not the key, README.md's *What touches the
+    secret* says why. `alone` holds the paths of addresses its wallets
+    derive one by one, outside any account: the bundle writes each as
+    one more such account, whose key is the address's parent and whose
+    index is the address's.
     """
 
     name: str
     coin_type: int
     purposes: tuple[int, ...]
     legacy: tuple[str, ...] = ()
+    listed: tuple[str, ...] = ()
     alone: tuple[str, ...] = ()
 
 
@@ -206,6 +212,9 @@ class Coin:
 # A Ledger behind MyEtherWallet takes m/44h/60h as the parent of
 # Ethereum's accounts instead, which purpose 44 reads:
 #   https://github.com/MyEtherWallet/MyEtherWallet/blob/3ea79d775b2dc3b530c19753192e1061e50f16e8/src/modules/access-wallet/hardware/handlers/hardwares/ledger/index.js#L53
+# So m/44h/60h is above Ethereum's hardened accounts, and is listed: the
+# bundle holds the public keys of m/44h/60h/<n>, for n below the bound
+# `identify` takes, and never the key at m/44h/60h.
 # m/44h/60h/0h and m/44h/60h are declared under Ethereum alone: an
 # Ethereum account is read on Ethereum Classic too, as `seed_scan.evm`
 # says. The key at m/44h/60h/0h is Ethereum's account 0 as well, whose
@@ -224,7 +233,7 @@ class Coin:
 #: alone those they derive one by one, the comments above citing them.
 COINS = (
     Coin("bitcoin", 0, (44, 49, 84, 86)),
-    Coin("ethereum", 60, (44,), ("m/44h/60h/0h", "m/44h/60h")),
+    Coin("ethereum", 60, (44,), ("m/44h/60h/0h",), ("m/44h/60h",)),
     Coin("ethereum-classic", 61, (44,), ("m/44h/60h/160720h/0h",)),
     Coin("bnb", 714, (44,), alone=("m/44h/60h/9172h/3604/9999",)),
     Coin("bitcoin-cash", 145, (44,)),
@@ -247,6 +256,17 @@ _ELECTRUM = {
 
 # the script types of a base58 address, which the forks below spell alike
 _BASE58 = ("p2pkh", "p2sh")
+
+# The default of how many children of a listed layout's key the bundle
+# holds. MyEtherWallet shows the addresses of a mnemonic a page at a
+# time, the next page a click away, and has no last page:
+#   https://github.com/MyEtherWallet/MyEtherWallet/blob/3ea79d775b2dc3b530c19753192e1061e50f16e8/src/modules/access-wallet/common/components/AccessWalletAddressNetwork.vue#L134-L143
+#   https://github.com/MyEtherWallet/MyEtherWallet/blob/3ea79d775b2dc3b530c19753192e1061e50f16e8/src/modules/access-wallet/common/components/AccessWalletAddressNetwork.vue#L199
+#   https://github.com/MyEtherWallet/MyEtherWallet/blob/3ea79d775b2dc3b530c19753192e1061e50f16e8/src/modules/access-wallet/common/components/AccessWalletAddressNetwork.vue#L474-L502
+# So no bound is the wallet's. 100 is five times `seed_scan.scan`'s
+# GAP_LIMIT, so that scan reads a used address at index 79 or below with
+# the whole gap after it, and costs the bundle a line per key and reading.
+_KEYS = 100
 
 # the coins forked from Bitcoin whose accounts a base58 address is
 # searched in
@@ -290,12 +310,12 @@ def _searched(
 
 
 def _accounts(
-    root: BIP32KeyData, accounts: int
+    root: BIP32KeyData, accounts: int, keys: int
 ) -> list[tuple[Account, tuple[Descriptor, ...]]]:
     """Return the account keys `COINS` declares, Bitcoin's with descriptors.
 
-    Each coin's purposes come first, then its legacy layouts, then its
-    addresses alone.
+    Each coin's purposes come first, then its legacy layouts, its listed
+    ones, of `keys` keys each, then its addresses alone.
     """
     master_fingerprint = fingerprint(root)
     found: list[tuple[Account, tuple[Descriptor, ...]]] = []
@@ -327,7 +347,15 @@ def _accounts(
             xpub = root.derive(path).xpub.b58encode()
             legacy = Account(coin.name, coin.coin_type, None, number, path, xpub, ())
             found.append((legacy, ()))
-        for number, path in enumerate(coin.alone, len(coin.legacy)):
+        for number, path in enumerate(coin.listed, len(coin.legacy)):
+            parent = root.derive(path)
+            children = tuple(parent.derive(n).sec.hex() for n in range(keys))
+            listed = Account(
+                coin.name, coin.coin_type, None, number, path, "", (), None, children
+            )
+            found.append((listed, ()))
+        first = len(coin.legacy) + len(coin.listed)
+        for number, path in enumerate(coin.alone, first):
             above, _, index = path.rpartition("/")
             xpub = root.derive(above).xpub.b58encode()
             alone = Account(
@@ -469,7 +497,7 @@ def _read_slip39(
     mnemonic: str,
     passphrases: Sequence[str],
     prompt: Callable[[str], str],
-    accounts: int,
+    bounds: tuple[int, int],
 ) -> None:
     """Add a reading for each passphrase of a complete set of shares."""
     shares = _shares(mnemonic, prompt)
@@ -488,7 +516,7 @@ def _read_slip39(
             found.not_checked.append(NotChecked("slip39", reason))
             continue
         root = BIP32KeyData.from_seed(seed)
-        found.add("slip39", (), number, root, _accounts(root, accounts))
+        found.add("slip39", (), number, root, _accounts(root, *bounds))
 
 
 def _read(
@@ -496,13 +524,17 @@ def _read(
     mnemonic: str,
     passphrases: Sequence[str],
     prompt: Callable[[str], str],
-    accounts: int,
+    bounds: tuple[int, int],
 ) -> _Found:
-    """Return the readings of every scheme that claims the words."""
+    """Return the readings of every scheme that claims the words.
+
+    `bounds` are how many accounts of each coin and purpose, and how many
+    keys of each listed layout, are written.
+    """
     found = _Found([], [], [])
     for claim in claims:
         if claim == "slip39":
-            _read_slip39(found, mnemonic, passphrases, prompt, accounts)
+            _read_slip39(found, mnemonic, passphrases, prompt, bounds)
         elif claim in _ELECTRUM:
             for number, passphrase in enumerate(passphrases):
                 root = BIP32KeyData.from_seed(
@@ -520,7 +552,8 @@ def _read(
                 root = BIP32KeyData.from_seed(
                     bip39.seed_from_mnemonic(mnemonic, passphrase)
                 )
-                found.add("bip39", languages, number, root, _accounts(root, accounts))
+                accounts = _accounts(root, *bounds)
+                found.add("bip39", languages, number, root, accounts)
         else:
             found.not_checked.append(NotChecked(claim, _NOT_READ[claim]))
     return found
@@ -561,6 +594,7 @@ def identify(
     accounts: int = 5,
     address: str | None = None,
     indexes: int = 20,
+    keys: int = _KEYS,
 ) -> Bundle:
     """Return the public bundle of a mnemonic.
 
@@ -571,10 +605,12 @@ def identify(
 
     `accounts` is how many accounts of each coin and purpose are written,
     from account 0; the one key of a legacy layout or of an address alone
-    is written once. Where `address` is given, the receive and change
-    branches of each Bitcoin account written, and of each account at
-    Bitcoin Cash's, Bitcoin SV's, eCash's and SLP's coin types where it is
-    a base58 address, are searched for it, from index 0 to `indexes` - 1.
+    is written once. `keys` is how many public keys of a listed layout's
+    children are written, from child 0, in place of its key. Where
+    `address` is given, the receive and change branches of each Bitcoin
+    account written, and of each account at Bitcoin Cash's, Bitcoin SV's,
+    eCash's and SLP's coin types where it is a base58 address, are
+    searched for it, from index 0 to `indexes` - 1.
 
     A refusal names no secret: the words and the passphrases are never
     quoted.
@@ -583,7 +619,8 @@ def identify(
         raise SeedScanTypeError(f"invalid mnemonic type: {type(mnemonic).__name__}")
     _assert_bound(accounts, "accounts")
     _assert_bound(indexes, "indexes")
+    _assert_bound(keys, "keys")
     claims = tuple(dispatch.all_seed_types_from_mnemonic(mnemonic))
-    found = _read(claims, mnemonic, passphrases, prompt, accounts)
+    found = _read(claims, mnemonic, passphrases, prompt, (accounts, keys))
     search = None if address is None else _search(found, address, accounts, indexes)
     return Bundle(claims, tuple(found.readings), tuple(found.not_checked), search)

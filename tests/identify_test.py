@@ -157,8 +157,10 @@ def test_the_coins_declared_are_written_in_order() -> None:
     """Each coin, purpose and account of `COINS`, Bitcoin's with descriptors.
 
     Each coin's legacy layouts follow its purposes, one account each,
-    numbered from 0, and its addresses alone follow them, each written
-    as its parent's key and its own index.
+    numbered from 0, then its listed layouts, each written as the public
+    keys of its key's first children and no xpub, and its addresses
+    alone follow them, each written as its parent's key and its own
+    index.
     """
     bundle = identify(ABANDON, [""], no_share, accounts=2)
     (reading,) = bundle.readings
@@ -172,9 +174,12 @@ def test_the_coins_declared_are_written_in_order() -> None:
                 for n in range(2)
             ),
             *((None, n, path) for n, path in enumerate(coin.legacy)),
+            *((None, n, path) for n, path in enumerate(coin.listed, len(coin.legacy))),
             *(
                 (None, n, path.rpartition("/")[0])
-                for n, path in enumerate(coin.alone, len(coin.legacy))
+                for n, path in enumerate(
+                    coin.alone, len(coin.legacy) + len(coin.listed)
+                )
             ),
         ]
     ]
@@ -192,12 +197,17 @@ def test_the_coins_declared_are_written_in_order() -> None:
     legacy = [a for a in reading.accounts if a.purpose is None]
     assert [(a.coin, a.xpub) for a in legacy] == [
         ("ethereum", ethereum.xpub),
-        ("ethereum", master.derive("m/44h/60h").xpub.b58encode()),
+        ("ethereum", ""),
         ("ethereum-classic", master.derive("m/44h/60h/160720h/0h").xpub.b58encode()),
         ("bnb", master.derive("m/44h/60h/9172h/3604").xpub.b58encode()),
     ]
     assert [a.index for a in legacy] == [None, None, None, 9999]
     assert {a.index for a in reading.accounts if a.purpose is not None} == {None}
+    mew = legacy[1]
+    assert mew.keys == tuple(
+        master.derive(f"m/44h/60h/{n}").sec.hex() for n in range(100)
+    )
+    assert {a.keys for a in reading.accounts if a is not mew} == {()}
 
 
 def test_each_coin_takes_the_purposes_its_wallets_derive_at() -> None:
@@ -228,8 +238,11 @@ def test_each_legacy_layout_is_one_its_wallets_derive_at() -> None:
     pin moves with that comment.
     """
     assert {coin.name: coin.legacy for coin in COINS if coin.legacy} == {
-        "ethereum": ("m/44h/60h/0h", "m/44h/60h"),
+        "ethereum": ("m/44h/60h/0h",),
         "ethereum-classic": ("m/44h/60h/160720h/0h",),
+    }
+    assert {coin.name: coin.listed for coin in COINS if coin.listed} == {
+        "ethereum": ("m/44h/60h",),
     }
 
 
@@ -243,6 +256,53 @@ def test_each_address_alone_is_one_its_wallets_derive() -> None:
     assert {coin.name: coin.alone for coin in COINS if coin.alone} == {
         "bnb": ("m/44h/60h/9172h/3604/9999",),
     }
+
+
+@pytest.mark.parametrize("mnemonic", [ABANDON, STANDARD, SEGWIT])
+def test_no_xpub_is_above_a_hardened_account(mnemonic: str) -> None:
+    """Each xpub is an account's, or below one; MyEtherWallet's is not held.
+
+    BIP44's hardened accounts are three levels below the master key, and
+    README.md's *What touches the secret* says why no xpub is held above
+    them. An Electrum reading's one account is the master key or its
+    child 0h, whose addresses are its own branches.
+
+    :param mnemonic: a BIP39 mnemonic, or an Electrum standard or segwit
+        seed.
+    """
+    for reading in identify(mnemonic, [""], no_share, accounts=2).readings:
+        held = [a.path for a in reading.accounts if a.xpub]
+        if reading.scheme.startswith("electrum"):
+            assert held in (["m"], ["m/0h"])
+        else:
+            assert min(path.count("/") for path in held) == 3
+        assert "m/44h/60h" not in held
+
+
+def test_the_keys_bound_is_how_many_keys_a_listed_layout_holds() -> None:
+    """MyEtherWallet's first addresses, from m/44h/60h/0: `keys` of them."""
+    (reading,) = identify(ABANDON, [""], no_share, accounts=1, keys=3).readings
+    (mew,) = [a for a in reading.accounts if a.keys]
+    master = BIP32KeyData.from_seed(bip39.seed_from_mnemonic(ABANDON, ""))
+    assert mew.keys == tuple(
+        master.derive(f"m/44h/60h/{n}").sec.hex() for n in range(3)
+    )
+    assert (mew.path, mew.xpub, mew.account) == ("m/44h/60h", "", 1)
+
+
+@pytest.mark.parametrize(
+    "keys, error", [(0, SeedScanValueError), (True, SeedScanTypeError)]
+)
+def test_a_keys_bound_below_1_or_of_another_type_is_refused(
+    keys: object, error: type[Exception]
+) -> None:
+    """As the other bounds are refused.
+
+    :param keys: the bound.
+    :param error: what is raised.
+    """
+    with pytest.raises(error, match="keys"):
+        identify(ABANDON, [""], no_share, keys=keys)  # type: ignore[arg-type]
 
 
 def test_each_passphrase_is_a_reading_named_by_its_number() -> None:

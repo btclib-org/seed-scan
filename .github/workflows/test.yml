@@ -273,7 +273,7 @@ jobs:
           assert issubclass(exceptions.SeedScanValueError, ValueError)
           assert callable(cli.main) and callable(identify.identify)
           assert callable(scan.scan) and callable(report.report)
-          assert bundle.VERSION == 1
+          assert bundle.VERSION == 2
           "
       # the suite as the sdist ships it, unpacked outside the checkout and
       # gated at 100% on the interpreter the coverage job pins. A shipped

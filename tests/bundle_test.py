@@ -70,6 +70,13 @@ BUNDLE = Bundle(
 )
 
 
+#: A compressed public key, as a layout held key by key writes each.
+PUBLIC_KEY = BIP32KeyData.b58decode(BIP86_XPUB).key.hex()
+
+#: Bitcoin's descriptors over no xpub, whose shape and checksum hold.
+KEYLESS = tuple(add_checksum(f"wpkh([0a1b2c3d/0h]/{b}/*)") for b in (0, 1))
+
+
 def document() -> dict[str, Any]:
     """Return the bundle above as the JSON object it is written as.
 
@@ -90,7 +97,7 @@ def test_the_format_and_version_lead() -> None:
     keys = list(document())
     assert keys[:2] == ["format", "version"]
     assert document()["format"] == FORMAT == "seed-scan-bundle"
-    assert document()["version"] == VERSION == 1
+    assert document()["version"] == VERSION == 2
 
 
 def test_a_member_this_version_does_not_name_is_ignored() -> None:
@@ -122,7 +129,7 @@ def set_match_reading(d: dict[str, Any], reading: int) -> None:
         (
             lambda d: d.update(version=KEY_NUMBER),
             SeedScanValueError,
-            "version is not 1",
+            "version is not 2",
         ),
         (lambda d: d.pop("claims"), SeedScanValueError, "missing member 'claims'"),
         (lambda d: d.update(version="1"), SeedScanTypeError, "'version' of type str"),
@@ -202,6 +209,47 @@ def set_match_reading(d: dict[str, Any], reading: int) -> None:
             lambda d: d["readings"][0]["accounts"][0].update(index=5),
             SeedScanValueError,
             "'index' is not an address's index alone",
+        ),
+        (
+            lambda d: d["readings"][1]["accounts"][0].pop("keys"),
+            SeedScanValueError,
+            "missing member 'keys'",
+        ),
+        (
+            lambda d: d["readings"][1]["accounts"][0].update(keys=KEY_TEXT),
+            SeedScanTypeError,
+            "'keys' of type str",
+        ),
+        (
+            lambda d: d["readings"][1]["accounts"][0].update(keys=[PUBLIC_KEY]),
+            SeedScanValueError,
+            "neither or both of 'xpub' and 'keys'",
+        ),
+        (
+            lambda d: d["readings"][1]["accounts"][0].update(xpub=""),
+            SeedScanValueError,
+            "neither or both of 'xpub' and 'keys'",
+        ),
+        (
+            lambda d: d["readings"][1]["accounts"][0].update(
+                xpub="", keys=[PUBLIC_KEY]
+            ),
+            SeedScanValueError,
+            "'keys' is not a layout's of no purpose",
+        ),
+        (
+            lambda d: d["readings"][1]["accounts"][0].update(
+                purpose=None, account=0, index=5, xpub="", keys=[PUBLIC_KEY]
+            ),
+            SeedScanValueError,
+            "'keys' is not a layout's of no purpose",
+        ),
+        (
+            lambda d: d["readings"][0]["accounts"][0].update(
+                xpub="", descriptors=list(KEYLESS), keys=[PUBLIC_KEY]
+            ),
+            SeedScanValueError,
+            "'keys' is not a layout's of no purpose",
         ),
     ],
 )
@@ -287,6 +335,7 @@ MEMBERS = {
         ("readings", 1, "accounts", 0, "descriptors"),
         "'descriptors'",
     ),
+    "keys": (("readings", 1, "accounts", 0, "keys"), "'keys'"),
     "scheme": (("readings", 0, "scheme"), "'scheme'"),
     "language": (("readings", 1, "languages", 0), "'languages'"),
     "claim": (("claims", 0), "'claims'"),
@@ -315,7 +364,7 @@ def test_a_secret_in_a_text_member_is_refused_unquoted(
     """
     path, named = MEMBERS[member]
     changed = document()
-    value: Any = [secret] if member == "ethereum descriptors" else secret
+    value: Any = [secret] if member in {"ethereum descriptors", "keys"} else secret
     if member == "bitcoin descriptor":
         value = changed["readings"][0]["accounts"][0]["descriptors"][0].replace(
             BIP86_XPUB, secret
@@ -565,4 +614,45 @@ def test_an_address_alone_at_a_hardened_index_is_refused() -> None:
     account = changed["readings"][1]["accounts"][0]
     account.update(purpose=None, account=0, index=2**31)
     with pytest.raises(SeedScanValueError, match="not an address's index alone"):
+        loads(json.dumps(changed))
+
+
+def test_a_layout_held_key_by_key_reads_back() -> None:
+    """Its keys in place of an xpub: an EVM account of no purpose."""
+    other = "02" if PUBLIC_KEY.startswith("03") else "03"
+    keys = (PUBLIC_KEY, f"{other}{PUBLIC_KEY[2:]}")
+    listed = Account("ethereum", 60, None, 1, "m/44h/60h", "", (), None, keys)
+    bundle = Bundle(
+        (), (Reading("bip39", ("en",), 0, "0a1b2c3d", (listed,)),), (), None
+    )
+    assert loads(dumps(bundle)) == bundle
+    written = json.loads(dumps(bundle))["readings"][0]["accounts"][0]
+    assert (written["xpub"], written["keys"]) == ("", list(keys))
+    assert list(written)[-1] == "keys"
+
+
+def test_a_key_listed_twice_is_refused() -> None:
+    """Its address would be read twice, and its balance summed twice."""
+    changed = document()
+    changed["readings"][1]["accounts"][0].update(
+        purpose=None, account=0, xpub="", keys=[PUBLIC_KEY, PUBLIC_KEY]
+    )
+    with pytest.raises(SeedScanValueError, match="'keys' holds a key twice"):
+        loads(json.dumps(changed))
+
+
+@pytest.mark.parametrize(
+    "key",
+    [PUBLIC_KEY.upper(), f"04{PUBLIC_KEY[2:]}", PUBLIC_KEY[:-2], f"{PUBLIC_KEY}00"],
+)
+def test_a_key_of_another_form_is_refused(key: str) -> None:
+    """Lower-case hex, compressed: 66 characters, ``02`` or ``03`` first.
+
+    :param key: the key refused.
+    """
+    changed = document()
+    changed["readings"][1]["accounts"][0].update(
+        purpose=None, account=0, xpub="", keys=[PUBLIC_KEY, key]
+    )
+    with pytest.raises(SeedScanValueError, match="'keys' is not a list of public keys"):
         loads(json.dumps(changed))
