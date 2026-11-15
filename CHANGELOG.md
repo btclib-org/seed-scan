@@ -9,6 +9,54 @@ behind them.
 
 [std]: https://github.com/btclib-org/.github
 
+## v2026.11.16
+
+### The bundle holds MyEtherWallet's address keys, not the key above them
+
+The public key of each `m/44h/60h/<n>` below `identify --keys`. The
+bundle, the scan result and the report are format version 2; a bundle
+or a scan result of version 1 is refused (closes #83) (closes #93).
+
+### `scan` and `forks` prove each history's tip from the last checkpoint
+
+Each header after the chain's last checkpoint is held to its difficulty
+rule: Bitcoin's retarget, aserti3-2d for Bitcoin Cash and eCash, and
+cw-144 for Bitcoin SV (closes #34).
+
+### `scan` reads every EVM address at the block it asks first
+
+A node's lagging backend fails the scan rather than have it write a
+result `report` refuses (closes #79).
+
+### A failed exchange with an EVM node says why, from `failure_type`
+
+bitcoin-core-rpc's `FetchError.failure_type` names the class of what
+failed, and bitcoin-core-rpc is a declared dependency (closes #86).
+
+### The aserti3-2d rule is held to Bitcoin Cash Node's reference vectors
+
+Vendored under `tests/_data/aserti3-2d/`, each file pinned (closes #96).
+
+### The vendored aserti3-2d files are checked out byte for byte
+
+`.gitattributes` gives them `-text`, so a checkout with `core.autocrlf`
+converts nothing there (closes #99).
+
+### The secret search shapes each token line by its protocol's reason
+
+And searches the number of a SLIP-0039 passphrase's reason (closes #75)
+(closes #76).
+
+### The bestpractices.dev answers are measured on v2026.11.15
+
+They name the administrator's bypass, the vulnerabilities, and what the
+security mailbox received (closes #81) (#92).
+
+### The shared files follow btclib-org/.github@7369e8a
+
+The push runs' concurrency key, and `release-hold` in `CONTRIBUTING.md`
+and `RELEASING.md` (#91).
+
 ## v2026.11.15
 
 ### `seed-scan identify` writes a public bundle from a mnemonic
