@@ -49,6 +49,10 @@ So is a report that calls a scheme or a coin checked when it was not,
 since a user acts on its "nothing found", and so is a flaw in the
 distributions published to PyPI or in their provenance.
 
+A flaw in what this package scans or reports that lets funds be
+stolen, lost or locked belongs here too: locked includes an output
+that consensus can spend but standard relay policy refuses.
+
 What is beneath the command is not here: the mnemonic schemes, the
 derivation and the addresses are the business of the packages
 `README.md` names. Report a flaw wherever you found it, though: routing
