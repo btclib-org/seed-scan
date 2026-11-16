@@ -9,6 +9,34 @@ behind them.
 
 [std]: https://github.com/btclib-org/.github
 
+## v2026.11.17
+
+### seed-scan reads descriptors with bip32-descriptors
+
+And hands btclib-wallet's discovery each descriptor as text (closes #104).
+
+### seed-scan reads what btclib-wallet 2026.11.16 returns and raises
+
+`evm.Node`'s `FetchError` chains no exception: `failure_type` holds the
+class of what failed. btclib-wallet 2026.11.16 is the floor, and
+bitcoin-core-rpc moves to the test group (closes #103) (closes #109).
+
+### `README.md` says how to install seed-scan
+
+With pip or with uv, in a section *Installing*, which bestpractices.dev's
+documentation_basics names (closes #107).
+
+### `SECURITY.md` takes a flaw that lets funds be stolen, lost or locked
+
+In what the package scans or reports. Locked includes an output that
+consensus can spend and standard relay policy refuses (issue
+btclib-org/.github#2318).
+
+### The bestpractices.dev answers are measured on v2026.11.16
+
+And count the published advisories among the vulnerabilities (#98)
+(#106).
+
 ## v2026.11.16
 
 ### The bundle holds MyEtherWallet's address keys, not the key above them

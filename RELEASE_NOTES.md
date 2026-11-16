@@ -9,6 +9,31 @@ number says when a release was cut, and promises nothing about
 compatibility, so a breaking change is announced in this file — read it
 before upgrading, rather than a digit.
 
+## v2026.11.17
+
+A bundle, a scan result or a forks result written by v2026.11.16 is read
+as before: each keeps its format version.
+
+seed-scan requires btclib-wallet 2026.11.16 or later, so an upgrade
+installs it. Its
+[release notes](https://github.com/btclib-org/btclib-wallet/blob/main/RELEASE_NOTES.md#v20261116)
+say what that release changes for a caller of btclib-wallet.
+
+For a caller of the package:
+
+- A `FetchError` of `evm.Node` chains no exception, not even one the
+  caller is handling where it is raised
+  ([ISS 109](https://github.com/btclib-org/seed-scan/issues/109)). Its
+  `failure_type` is the class of what failed where the exchange did not
+  complete, and None elsewhere: read the class there, not in
+  `__cause__`.
+- seed-scan does not declare bitcoin-core-rpc. btclib-wallet 2026.11.16
+  requires it, so it is still installed; code that imports
+  `bitcoin_core_rpc` declares it itself.
+
+The release's assets are named as v2026.11.16's, with this version, and
+are verified the same way.
+
 ## v2026.11.16
 
 **A bundle, a scan result or a forks result written by v2026.11.15 is
