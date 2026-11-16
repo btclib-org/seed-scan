@@ -133,8 +133,8 @@ from hashlib import sha256
 from types import MappingProxyType
 from typing import Any
 
+from bip32_descriptors.descriptors import Descriptor, parse
 from btclib_wallet.bip44 import AccountUse
-from btclib_wallet.descriptors import Descriptor, parse
 from btclib_wallet.fetch.history import HistoryReader
 
 from seed_scan.bundle import Account, Bundle, Reading

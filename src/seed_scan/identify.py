@@ -36,10 +36,10 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from bip32_descriptors.bip32 import HARDENED_OFFSET, BIP32KeyData, fingerprint
+from bip32_descriptors.descriptors import add_checksum, parse
 from bip39_slip39 import bip39, dispatch, electrum, slip39
 from btclib.script import ScriptPubKey
 from btclib_wallet import bip44
-from btclib_wallet.descriptors import add_checksum, parse
 
 from seed_scan.bundle import (
     REASONS,
@@ -56,7 +56,7 @@ from seed_scan.exceptions import SeedScanTypeError, SeedScanValueError
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
 
-    from btclib_wallet.descriptors import Descriptor
+    from bip32_descriptors.descriptors import Descriptor
 
 __all__ = [
     "COINS",
@@ -299,10 +299,12 @@ def _searched(
     `_FORKS`, 44, gives p2pkh scripts, built here since
     `btclib_wallet.bip44` refuses their coin types; the bundle does not
     write them, as it writes descriptors for Bitcoin alone. Any other coin
-    answers none.
+    answers none. `btclib_wallet.bip44`'s descriptors are parsed again
+    from their text, so that every descriptor here is of one package.
     """
     if coin.coin_type == 0:
-        return bip44.account_descriptors(xpub, path, master_fingerprint)
+        pair = bip44.account_descriptors(xpub, path, master_fingerprint)
+        return tuple(parse(str(descriptor)) for descriptor in pair)
     if coin.name not in _FORKS:
         return ()
     origin = f"[{master_fingerprint.hex()}{path[1:]}]"

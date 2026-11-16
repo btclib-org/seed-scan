@@ -37,12 +37,12 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 import pytest
+from bip32_descriptors.descriptors import parse
 from bitcoin_core_rpc import FetchError as RpcFetchError
 from btclib.block.block_header import BlockHeader
 from btclib.network import NETWORKS
 from btclib.script import ScriptPubKey
 from btclib.tx import OutPoint, Tx, TxIn, TxOut
-from btclib_wallet.descriptors import parse
 from btclib_wallet.exceptions import FetchError
 from btclib_wallet.fetch.transport import (
     PersistentTlsLineTransport,

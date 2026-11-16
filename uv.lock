@@ -199,7 +199,7 @@ wheels = [
 
 [[package]]
 name = "btclib-wallet"
-version = "2026.11.14"
+version = "2026.11.16"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "base58-bech32" },
@@ -210,9 +210,9 @@ dependencies = [
     { name = "ecc" },
     { name = "typing-extensions" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/6c/7e/6ad300e96074bf3064c0db4b6955a3633922f9d3653822dcc251bc7bcad0/btclib_wallet-2026.11.14.tar.gz", hash = "sha256:a74777e4814593f9c0fad61011f275190c4fe827831f8a8ef4e1f1e6285afe7d", size = 5840978, upload-time = "2026-11-14T11:59:24.741Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/d5/c5/fffe9ea47669e87470214e1132f21589fa945cb8917c21fadcaebe7652fa/btclib_wallet-2026.11.16.tar.gz", hash = "sha256:a3485c3c1e6cb405a66cd7847666c35e7671a7021732c815003c95cd46e2aa4f", size = 6010839, upload-time = "2026-11-16T20:52:30.001Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/3f/13/faf0f798867b71f6c64d30e53416816894c8de6ebe45f13b1cc8cd4e4646/btclib_wallet-2026.11.14-py3-none-any.whl", hash = "sha256:199c47261af1ccd5cf7f3f2a040eb62114610960d940e4f0705dc6d90b559c24", size = 619197, upload-time = "2026-11-14T11:59:22.716Z" },
+    { url = "https://files.pythonhosted.org/packages/44/ff/5ea3ae127e8e06e7d05363e23e6a3fe3d8df3b34b2bce0d8f9d860d3e902/btclib_wallet-2026.11.16-py3-none-any.whl", hash = "sha256:c437136b4c90c5b8ab2742f881f04b86d2fb6850d2a036c4a24a6d5f888e77be", size = 667181, upload-time = "2026-11-16T20:52:28.423Z" },
 ]
 
 [[package]]
@@ -1845,7 +1845,7 @@ requires-dist = [
     { name = "bip39-slip39", specifier = ">=2026.11.13" },
     { name = "bitcoin-core-rpc", specifier = ">=2026.11.15" },
     { name = "btclib", specifier = ">=2026.11.12" },
-    { name = "btclib-wallet", specifier = ">=2026.11.14" },
+    { name = "btclib-wallet", specifier = ">=2026.11.16" },
     { name = "coin-addresses", specifier = ">=2026.11.14" },
 ]
 

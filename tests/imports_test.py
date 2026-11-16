@@ -353,3 +353,73 @@ def test_no_module_imports_what_it_does_not_declare() -> None:
     }
     assert "identify.py" in found
     assert not {file: names for file, names in found.items() if names}
+
+
+#: The modules of btclib-wallet that `bip32_descriptors` holds, and that
+#: btclib-org/btclib-wallet#634 deletes.
+_MOVED = ("btclib_wallet.bip32", "btclib_wallet.descriptors")
+
+
+def _imported_names(source: str) -> set[str]:
+    """Return the dotted name of everything one module's imports name.
+
+    ``from a import b`` names ``a.b``, whether ``b`` is a module or a
+    name ``a`` defines. A relative import names this package, so it is
+    left out.
+    """
+    names: set[str] = set()
+    for node in ast.walk(ast.parse(source)):
+        if isinstance(node, ast.Import):
+            names.update(alias.name for alias in node.names)
+        elif isinstance(node, ast.ImportFrom) and not node.level:
+            names.update(f"{node.module}.{alias.name}" for alias in node.names)
+    return names
+
+
+def _moved(source: str) -> list[str]:
+    """Return the names one module imports from `_MOVED`, sorted."""
+    return sorted(
+        name
+        for name in _imported_names(source)
+        if any(name == m or name.startswith(f"{m}.") for m in _MOVED)
+    )
+
+
+def test_the_moved_scan_finds_each_form() -> None:
+    """Each way of importing a module of `_MOVED` is named, and no other."""
+    source = (
+        "import btclib_wallet.bip32.bip32\n"
+        "import btclib_wallet.descriptors.miniscript as miniscript\n"
+        "from btclib_wallet.bip32.der_path import indexes_from_der_path\n"
+        "from btclib_wallet.descriptors import parse\n"
+        "from btclib_wallet import bip32, bip322, bip44, descriptors\n"
+        "from btclib_wallet.bip44 import discover_account\n"
+        "from bip32_descriptors.descriptors import add_checksum\n"
+        "from . import exceptions\n"
+    )
+    assert _moved(source) == [
+        "btclib_wallet.bip32",
+        "btclib_wallet.bip32.bip32",
+        "btclib_wallet.bip32.der_path.indexes_from_der_path",
+        "btclib_wallet.descriptors",
+        "btclib_wallet.descriptors.miniscript",
+        "btclib_wallet.descriptors.parse",
+    ]
+
+
+def test_nothing_imports_the_moved_modules() -> None:
+    """No file of the package or of the suite imports a module of `_MOVED`.
+
+    Their names come from `bip32_descriptors`. Every import is read, one
+    inside a function or behind `TYPE_CHECKING` included.
+    """
+    roots = (Path(seed_scan.__path__[0]), Path(__file__).parent)
+    found = {
+        f"{root.name}/{path.relative_to(root).as_posix()}": _moved(
+            path.read_text(encoding="utf-8")
+        )
+        for root in roots
+        for path in sorted(root.rglob("*.py"))
+    }
+    assert {"seed_scan/scan.py", "tests/imports_test.py"} <= found.keys()
+    assert not {file: names for file, names in found.items() if names}

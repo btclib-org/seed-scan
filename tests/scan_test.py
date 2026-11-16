@@ -18,11 +18,11 @@ from typing import TYPE_CHECKING, Any
 
 import pytest
 from bip32_descriptors.bip32 import BIP32KeyData, xpub_from_xprv
+from bip32_descriptors.descriptors import add_checksum, parse
 from bip39_slip39 import bip39
 from btclib.script import ScriptPubKey
 from btclib.tx import OutPoint, Tx, TxIn, TxOut
 from btclib_wallet.bip44 import discover_account
-from btclib_wallet.descriptors import add_checksum, parse
 from btclib_wallet.exceptions import FetchError, RpcError
 from btclib_wallet.fetch.history import (
     BlockRef,
@@ -79,7 +79,6 @@ if TYPE_CHECKING:
 
     from btclib.alias import Octets
     from btclib_wallet.bip44 import AccountUse
-    from btclib_wallet.descriptors import Descriptor
     from btclib_wallet.fetch.history import HistoryReader
 
 #: The block every confirmed payment is in, and the tip.
@@ -210,6 +209,32 @@ def test_used_addresses_transactions_and_balance(abandon: str) -> None:
     assert Searched(0, 44, 3, cut_short=False) in result.searched
 
 
+def test_discover_account_reads_text(
+    abandon: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Each branch reaches `discover_account` as a str, not a `Descriptor`.
+
+    It refuses a `Descriptor` of a package other than its own, and the
+    bundle's are parsed with `bip32_descriptors`.
+
+    :param abandon: the bundle's text.
+    :param monkeypatch: what records the type of each branch handed.
+    """
+    real = discover_account
+    handed: list[list[type]] = []
+
+    def discover(
+        descriptors: Sequence[str], reader: HistoryReader, *, gap_limit: int
+    ) -> AccountUse | None:
+        handed.append([type(descriptor) for descriptor in descriptors])
+        return real(descriptors, reader, gap_limit=gap_limit)
+
+    monkeypatch.setattr(scan_module, "discover_account", discover)
+    scan(abandon, Chain(), server="s:1")
+    assert handed
+    assert all(types == [str, str] for types in handed)
+
+
 def replacements(text: str) -> tuple[HistoryTx, HistoryTx, HistoryTx]:
     """Return a confirmed payment, and two replacements spending it to change.
 
@@ -241,7 +266,7 @@ def test_a_double_spend_is_read_again(
     real = discover_account
 
     def discover(
-        descriptors: Sequence[Descriptor], reader: HistoryReader, *, gap_limit: int
+        descriptors: Sequence[str], reader: HistoryReader, *, gap_limit: int
     ) -> AccountUse | None:
         use = real(descriptors, chains[0], gap_limit=gap_limit)
         if use is not None and len(chains) > 1:
@@ -266,7 +291,7 @@ def test_a_double_spend_in_both_reads_is_refused(
     found: list[AccountUse] = []
 
     def discover(
-        descriptors: Sequence[Descriptor], reader: HistoryReader, *, gap_limit: int
+        descriptors: Sequence[str], reader: HistoryReader, *, gap_limit: int
     ) -> AccountUse | None:
         use = real(descriptors, reader, gap_limit=gap_limit)
         if use is not None:
@@ -312,7 +337,7 @@ def test_a_use_past_the_gap_limit_is_read_again(
     found: list[AccountUse] = []
 
     def discover(
-        descriptors: Sequence[Descriptor], reader: HistoryReader, *, gap_limit: int
+        descriptors: Sequence[str], reader: HistoryReader, *, gap_limit: int
     ) -> AccountUse | None:
         use = real(descriptors, reader, gap_limit=gap_limit)
         if use is None:

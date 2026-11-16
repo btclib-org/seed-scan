@@ -17,9 +17,9 @@ from typing import TYPE_CHECKING
 
 import pytest
 from bip32_descriptors.bip32 import BIP32KeyData
+from bip32_descriptors.descriptors import parse
 from bip39_slip39 import bip39
 from btclib.script import ScriptPubKey
-from btclib_wallet.descriptors import parse
 from btclib_wallet.fetch.history import BlockRef, HistoryTx, ScriptHistory
 
 from seed_scan import forks as forks_module

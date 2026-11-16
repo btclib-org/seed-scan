@@ -17,9 +17,9 @@ from hashlib import sha256
 
 import pytest
 from bip32_descriptors.bip32 import BIP32KeyData
+from bip32_descriptors.descriptors import add_checksum, parse, strip_checksum
 from bip39_slip39 import bip39
 from btclib.script import ScriptPubKey
-from btclib_wallet.descriptors import add_checksum, parse, strip_checksum
 from btclib_wallet.fetch.history import BlockRef, HistoryTx
 from coin_addresses.evm import address_from_pub_key
 

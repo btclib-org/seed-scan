@@ -39,12 +39,15 @@ dependencies = [
     # what a sentence is under BIP39, SLIP-0039 and Electrum, and the seed
     # each reading gives
     "bip39-slip39>=2026.11.13",
-    # a seed to its master key and account keys
+    # a seed to its master key and account keys, and the descriptors:
+    # each parsed, its checksum, its scripts
     "bip32-descriptors>=2026.11.13",
     # the descriptors of an account, and for `scan` the discovery of the
     # accounts in use against an Electrum server over TLS or plain TCP,
-    # and the HTTP transport an EVM chain's node is asked over
-    "btclib-wallet>=2026.11.14",
+    # and the HTTP transport an EVM chain's node is asked over. This
+    # release is the first whose discover_account takes a descriptor's
+    # text, and whose discover_accounts returns an AccountDiscovery
+    "btclib-wallet>=2026.11.16",
     # the Ethereum address of a public key, `evm.address_from_pub_key`
     "coin-addresses>=2026.11.14",
     # Bitcoin's scripts, addresses and transactions

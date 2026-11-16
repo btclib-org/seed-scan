@@ -11,10 +11,10 @@ from typing import Any
 
 import pytest
 from bip32_descriptors.bip32 import BIP32KeyData
+from bip32_descriptors.descriptors import add_checksum
 from bip39_slip39 import electrum
 from bip39_slip39.mnemonic import BIP39_LANGUAGE_FILES
 from btclib.b58 import wif_from_prv_key
-from btclib_wallet.descriptors import add_checksum
 
 from seed_scan.bundle import (
     CLAIMS,

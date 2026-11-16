@@ -154,9 +154,9 @@ from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, TypeVar
 
 from bip32_descriptors.bip32 import BIP32KeyData
+from bip32_descriptors.descriptors import Descriptor, parse
 from btclib.tx import OutPoint, TxOut
 from btclib_wallet.bip44 import AccountUse, discover_account
-from btclib_wallet.descriptors import Descriptor, parse
 from btclib_wallet.fetch.history import HistoryReader, ScriptHistory
 from coin_addresses.evm import address_from_pub_key
 
@@ -638,11 +638,13 @@ def _read_account(
 ) -> AccountUse | None:
     """Return the discovery of an account, read again once where `_unsound`.
 
-    Refused where both reads are.
+    Refused where both reads are. `discover_account` gets the descriptors
+    as text: it refuses a `Descriptor` of a package other than its own.
     """
+    texts = [str(descriptor) for descriptor in descriptors]
     err_msg = ""
     for _ in range(2):
-        use = discover_account(descriptors, reader, gap_limit=gap_limit)
+        use = discover_account(texts, reader, gap_limit=gap_limit)
         if use is None or not (err_msg := _unsound(use, gap_limit)):
             return use
     raise SeedScanValueError(f"{where}: {err_msg}, in both reads of it")
@@ -826,12 +828,12 @@ def _discover(
     """Read the accounts of one purpose in order, until the account gap.
 
     `read` answers what an account used, or None where it used nothing.
-    `discover_accounts` reads Bitcoin's accounts the same way, and
-    refuses a purpose whose accounts end before the gap, dropping what it
-    found (btclib-org/btclib-wallet#859): here that purpose is cut short.
-    The accounts of purpose None are each a layout of its own, so each
-    is read, and none is cut short by the account gap: `_ends_short`
-    says where a layout held key by key is cut short.
+    `discover_accounts` reads Bitcoin's accounts the same way. In both,
+    a purpose whose accounts end before the gap is cut short, and its
+    used accounts are kept. The accounts of purpose None are each a
+    layout of its own, so each is read, and none is cut short by the
+    account gap: `_ends_short` says where a layout held key by key is
+    cut short.
     """
     used: list[_U] = []
     unused = done = 0
