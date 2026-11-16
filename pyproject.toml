@@ -46,15 +46,15 @@ dependencies = [
     # accounts in use against an Electrum server over TLS or plain TCP,
     # and the HTTP transport an EVM chain's node is asked over. This
     # release is the first whose discover_account takes a descriptor's
-    # text, and whose discover_accounts returns an AccountDiscovery
+    # text, whose discover_accounts returns an AccountDiscovery, and whose
+    # FetchError carries failure_type. It requires bitcoin-core-rpc
+    # 2026.11.15 or later, whose FetchError carries failure_type too, and
+    # which no module here imports
     "btclib-wallet>=2026.11.16",
     # the Ethereum address of a public key, `evm.address_from_pub_key`
     "coin-addresses>=2026.11.14",
     # Bitcoin's scripts, addresses and transactions
     "btclib>=2026.11.12",
-    # the `FetchError` btclib-wallet's transports raise: `evm` reads its
-    # `failure_type`, which this release is the first to carry
-    "bitcoin-core-rpc>=2026.11.15",
 ]
 keywords = [
     # the repository's topics, entry for entry
@@ -116,6 +116,10 @@ harness = [
 ]
 test = [
     { include-group = "harness" },
+    # the `FetchError` a transport raises, which the tests build as
+    # btclib-wallet's transports raise it: with the `failure_type` this
+    # release is the first to carry
+    "bitcoin-core-rpc>=2026.11.15",
     # tests/scan_cli_test.py makes the TLS server's key and certificates with
     # it, so that no key is committed; the marker is btclib-wallet's, which
     # leaves it out on Windows on ARM64, where it has no wheel

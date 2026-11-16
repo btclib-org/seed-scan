@@ -100,14 +100,12 @@ import contextlib
 import ipaddress
 import json
 import re
-import ssl
 import traceback
 from dataclasses import dataclass
 from types import MappingProxyType
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, NoReturn
 from urllib.parse import urlsplit
 
-from bitcoin_core_rpc import FetchError as RpcFetchError
 from btclib_wallet.exceptions import FetchError, HttpError, RpcError
 from btclib_wallet.fetch.fetcher import client_errors
 from btclib_wallet.fetch.transport import (
@@ -149,19 +147,6 @@ _WORD = re.compile(r"0x[0-9a-f]{64}")
 _BALANCE_OF = "0x70a08231"
 
 _OK = 200
-
-# what a failure below the answer is reported as caused by: the first
-# class here that its `failure_type` is or derives from. A fresh
-# instance of the class, holding no message, stands for it: the
-# failure's message can quote what the node sent, as a status line that
-# does not parse does
-_CAUSES: tuple[type[OSError], ...] = (
-    ssl.SSLCertVerificationError,
-    ssl.SSLError,
-    TimeoutError,
-    ConnectionRefusedError,
-    OSError,
-)
 
 
 @dataclass(frozen=True)
@@ -440,18 +425,17 @@ def _chain(error: BaseException) -> Iterator[BaseException]:
         todo += [found.__cause__, found.__context__, getattr(found, "reason", None)]
 
 
-def _stand_in(error: FetchError) -> OSError | None:
-    """Return a fresh error of the class `_CAUSES` finds for a failure, or None.
+def _raise_alone(refusal: FetchError) -> NoReturn:
+    """Raise `refusal`, clearing the context the raise gives it.
 
-    `error` is what `client_errors` makes of `bitcoin_core_rpc`'s
-    `FetchError`, its cause. That error's `failure_type` is the class of
-    what failed where the exchange did not complete, and None elsewhere.
+    Raised while the caller handles an exception of its own, it would
+    take that exception as its `__context__`, which ``from None`` keeps
+    and only hides.
     """
-    cause = error.__cause__
-    if not isinstance(cause, RpcFetchError) or cause.failure_type is None:
-        return None
-    failed = cause.failure_type
-    return next((kind() for kind in _CAUSES if issubclass(failed, kind)), None)
+    try:
+        raise refusal
+    finally:
+        refusal.__context__ = None
 
 
 def _release(error: BaseException) -> None:
@@ -491,15 +475,17 @@ class Node:
     refuse a bad one without asking anything.
 
     Each method asks one request. A failure below the answer is a
-    `btclib_wallet.exceptions.FetchError` that names the node alone,
-    caused by a fresh, empty error of the class that failed, of those
-    `_CAUSES` lists, or by nothing; neither it nor its chain keeps what
-    the transport raised, whose messages can quote the node. An HTTP
-    status other than 200 is its `HttpError`, and a JSON-RPC error object
-    its `RpcError`, with the code the node gave and neither the message
-    nor the data. An answer that is not a JSON-RPC 2.0 response to the
-    request, or whose result is not a quantity, or for a token balance
-    not one 32-byte word, is a `FetchError` too.
+    `btclib_wallet.exceptions.FetchError` that names the node alone. Its
+    `failure_type` is the one `client_errors` gives: the class of what
+    failed, which holds no message, where the exchange did not complete,
+    and None elsewhere. What the transport raised is not kept, as its
+    messages can quote the node. An HTTP status other than 200 is its
+    `HttpError`, and a JSON-RPC error object its `RpcError`, with the code
+    the node gave and neither the message nor the data. An answer that is
+    not a JSON-RPC 2.0 response to the request, or whose result is not a
+    quantity, or for a token balance not one 32-byte word, is a
+    `FetchError` too. None of these chains an exception, not even one the
+    caller is handling.
 
     `balance`, `nonce` and `token_balance` read the state at the block
     numbered `block`, or at ``latest`` where it is None. They refuse a
@@ -551,12 +537,13 @@ class Node:
             # raised outside the `except`, so that the failure caught is
             # not its context, and dropped from this frame, whose locals a
             # traceback keeps
-            cause = _stand_in(failed)
+            refusal = FetchError(f"{self._name}: no answer")
+            refusal.failure_type = failed.failure_type
             _release(failed)
             del failed
-            raise FetchError(f"{self._name}: no answer") from cause
+            _raise_alone(refusal)
         if status != _OK:
-            raise HttpError(f"{self._name}: HTTP status {status}", status)
+            _raise_alone(HttpError(f"{self._name}: HTTP status {status}", status))
         answer = None
         # the refusal is raised outside `suppress`, so that it chains no
         # decoding error, which quotes what it read. A body nested past
@@ -565,7 +552,7 @@ class Node:
             answer = json.loads(body, parse_constant=_refuse_constant)
         if not isinstance(answer, dict) or not _is_response(answer, self._id):
             err_msg = f"{self._name}: not a JSON-RPC 2.0 response to the request"
-            raise FetchError(err_msg)
+            _raise_alone(FetchError(err_msg))
         error = answer.get("error")
         if isinstance(error, dict):
             code, message = error.get("code"), error.get("message")
@@ -576,8 +563,8 @@ class Node:
             ):
                 err_msg = f"{self._name}: an error object with no integer code"
                 err_msg += " or no string message"
-                raise FetchError(err_msg)
-            raise RpcError(f"{self._name}: the node answered an error", code)
+                _raise_alone(FetchError(err_msg))
+            _raise_alone(RpcError(f"{self._name}: the node answered an error", code))
         return answer["result"]
 
     def _quantity(self, method: str, params: list[object]) -> int:
@@ -590,7 +577,7 @@ class Node:
         with contextlib.suppress(SeedScanTypeError, SeedScanValueError):
             value = quantity(result)
         if value is None:
-            raise FetchError(f"{self._name}: {method} answered no quantity")
+            _raise_alone(FetchError(f"{self._name}: {method} answered no quantity"))
         return value
 
     def chain_id(self) -> int:
@@ -626,7 +613,7 @@ class Node:
         call = {"to": _address(contract), "input": _BALANCE_OF + word}
         result = self._call("eth_call", [call, _block(block)])
         if not isinstance(result, str) or _WORD.fullmatch(result) is None:
-            raise FetchError(f"{self._name}: eth_call answered no 32-byte word")
+            _raise_alone(FetchError(f"{self._name}: eth_call answered no 32-byte word"))
         return int(result, 16)
 
 

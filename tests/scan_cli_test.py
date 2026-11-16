@@ -56,7 +56,7 @@ from seed_scan.evm import EVM_CHAINS, Node
 from seed_scan.identify import identify
 from seed_scan.scan import OTHER_CHAIN
 
-from .evm_test import Ethereum, cause, replying, serve, serving
+from .evm_test import Ethereum, replying, serve, serving
 from .identify_test import ABANDON, no_share
 from .scan_test import eth_address
 
@@ -528,14 +528,14 @@ class Failing:
         raise self.failure
 
 
-def caused(cause: BaseException) -> RpcFetchError:
-    """Return the transport's failure, caused by `cause`.
+def failed(kind: type[BaseException]) -> RpcFetchError:
+    """Return the transport's failure of an exchange that did not complete.
 
-    :param cause: what the socket raised.
+    :param kind: the class of what failed, its `failure_type`.
     :returns: the failure, quoting what a server could make it quote.
     """
     failure = RpcFetchError(f"no answer from h:1: {ABANDON}")
-    failure.__cause__ = cause
+    failure.failure_type = kind
     return failure
 
 
@@ -543,12 +543,12 @@ def caused(cause: BaseException) -> RpcFetchError:
     "failure, said",
     [
         (
-            caused(ssl.SSLCertVerificationError()),
+            failed(ssl.SSLCertVerificationError),
             "the server's certificate did not verify",
         ),
-        (caused(ssl.SSLError()), "the TLS handshake with the server failed"),
-        (caused(ConnectionRefusedError()), "no connection to the server"),
-        (caused(TimeoutError()), "the server did not answer in time"),
+        (failed(ssl.SSLError), "the TLS handshake with the server failed"),
+        (failed(ConnectionRefusedError), "no connection to the server"),
+        (failed(TimeoutError), "the server did not answer in time"),
         (
             RpcFetchError(f"h:1: line too long {ABANDON}"),
             "no usable answer from the server",
@@ -974,9 +974,9 @@ def test_a_failure_to_close_the_tls_connection_leaves_the_result_written(
 ) -> None:
     """The client's socket fails to close once the scan is done: dropped.
 
-    The transport raises `bitcoin_core_rpc`'s `FetchError` for it, which
-    no `except` of the command's catches: unhandled, it would end the
-    command with a traceback and no result.
+    The transport raises a `FetchError` for it once every answer is
+    read. Not dropped, it would fail the command, and no result would be
+    written.
     """
     closing = ssl.SSLSocket.close
 
@@ -1668,7 +1668,7 @@ def test_a_store_set_is_no_longer_trusted_once_undone(tls: Path) -> None:
                 assert Node(served.url("https"), transport=session).chain_id() == 1
         with SessionTransport() as session, pytest.raises(FetchError) as caught:
             Node(served.url("https"), transport=session).chain_id()
-    assert cause(caught.value, ssl.SSLCertVerificationError) is not None
+    assert caught.value.failure_type is ssl.SSLCertVerificationError
     assert len(served.requests) == 1
 
 
@@ -1699,7 +1699,7 @@ def test_a_node_certificate_that_does_not_verify_is_a_failure(
         pytest.raises(FetchError) as caught,
     ):
         Node(served.url("https", host), transport=session).chain_id()
-    assert cause(caught.value, ssl.SSLCertVerificationError) is not None
+    assert caught.value.failure_type is ssl.SSLCertVerificationError
     assert not served.requests
 
 

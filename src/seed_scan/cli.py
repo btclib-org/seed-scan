@@ -167,9 +167,9 @@ _READS = 3
 # what a failure says where it did, of every read
 _EVERY_READ = "the server's tip moved during every read of a history"
 
-# what a failure caused by each class says, the first class it is in,
-# of the server or the node
-_CAUSES: tuple[tuple[type[BaseException], str], ...] = (
+# what a failure says, of the server or the node, by the first class here
+# its `failure_type` is or derives from
+_FAILURE_TEXTS: tuple[tuple[type[BaseException], str], ...] = (
     (ssl.SSLCertVerificationError, "the {}'s certificate did not verify"),
     (ssl.SSLError, "the TLS handshake with the {} failed"),
     (TimeoutError, "the {} did not answer in time"),
@@ -512,9 +512,9 @@ def _failure(error: FetchError, who: str) -> str:
     """Return the fixed text that says how the server or the node failed.
 
     `who` is ``"server"`` or ``"node"``. The text is chosen by the class
-    of the error and of its causes, and for a tip that moved by comparing
-    the message with `_TIP_MOVED`. A message is never written: it can
-    hold the answers. An HTTP status is, being a number.
+    of the error and by its `failure_type`, and for a tip that moved by
+    comparing the message with `_TIP_MOVED`. A message is never written:
+    it can hold the answers. An HTTP status is, being a number.
     """
     if isinstance(error, RpcError):
         return f"the {who} refused a request"
@@ -522,13 +522,16 @@ def _failure(error: FetchError, who: str) -> str:
         return f"the {who} answered HTTP status {error.status}"
     if str(error) == _TIP_MOVED:
         return _EVERY_READ
-    cause = error.__cause__
-    while cause is not None:
-        for kind, text in _CAUSES:
-            if isinstance(cause, kind):
-                return text.format(who)
-        cause = cause.__cause__
-    return f"no usable answer from the {who}"
+    failed = error.failure_type
+    text = next(
+        (
+            said
+            for kind, said in _FAILURE_TEXTS
+            if failed is not None and issubclass(failed, kind)
+        ),
+        "no usable answer from the {}",
+    )
+    return text.format(who)
 
 
 def _read_text(name: str, what: str = "bundle") -> str:
@@ -553,8 +556,9 @@ def _close(transport: contextlib.AbstractContextManager[object]) -> None:
     so a failure then changes nothing the command writes: a complete result
     is still written, rather than dropped and asked again of the server.
     Where the command already failed, its own failure is the one said. A
-    failure to close is `bitcoin_core_rpc`'s `FetchError`, which
-    `client_errors` translates, or an `OSError` from the socket.
+    failure to close is a `FetchError`, the transport's own or what
+    `client_errors` makes of `bitcoin_core_rpc`'s, or an `OSError` from
+    the socket.
     """
     with contextlib.suppress(FetchError, OSError), client_errors():
         transport.__exit__(None, None, None)

@@ -43,7 +43,7 @@ from .scan_cli_test import (
     Failing,
     Scripted,
     at_genesis,
-    caused,
+    failed,
     pay,
 )
 
@@ -437,7 +437,7 @@ def test_the_bounds_are_the_options_given(
 @pytest.mark.parametrize(
     "failure, said",
     [
-        (caused(ConnectionRefusedError()), "no connection to the server"),
+        (failed(ConnectionRefusedError), "no connection to the server"),
         (ValueError(ABANDON), "refused by a dependency: ValueError"),
         (KeyboardInterrupt(), "interrupted"),
     ],

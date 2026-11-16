@@ -43,6 +43,8 @@ from seed_scan.evm import EVM_CHAINS, MAX_ANSWER, EvmToken, Node, quantity
 from seed_scan.exceptions import SeedScanTypeError, SeedScanValueError
 from seed_scan.scan import OTHER_CHAIN
 
+from .secret_free import assert_secret_free
+
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator
     from urllib.request import Request
@@ -804,7 +806,7 @@ def test_an_answer_past_the_bound_is_refused(
 def test_the_timeout_bounds_the_whole_exchange(
     server: Callable[..., HttpServer],
 ) -> None:
-    """A node slower than the timeout is a failure caused by the timeout.
+    """A node slower than the timeout is a failure of the timeout.
 
     The node answers once the client has given up. However the client
     ends, the test then releases the node, and waits up to 5 seconds for
@@ -838,20 +840,7 @@ def test_the_timeout_bounds_the_whole_exchange(
     (thread,) = handling
     assert not thread.is_alive()
     assert elapsed < 5 * timeout
-    assert isinstance(cause(caught.value, TimeoutError), TimeoutError)
-
-
-def cause(error: BaseException, kind: type[BaseException]) -> BaseException | None:
-    """Return the first error of a kind in the chain of causes.
-
-    :param error: where the chain starts.
-    :param kind: the class looked for.
-    :returns: the first cause of that class, or None.
-    """
-    found: BaseException | None = error
-    while found is not None and not isinstance(found, kind):
-        found = found.__cause__
-    return found
+    assert caught.value.failure_type is TimeoutError
 
 
 def test_no_proxy_is_taken_from_the_environment(
@@ -872,12 +861,12 @@ def test_no_proxy_is_taken_from_the_environment(
 
 
 def test_a_closed_port_is_no_connection() -> None:
-    """Nothing listens: a failure caused by the refused connection."""
+    """Nothing listens: a failure of the refused connection."""
     with socket.create_server(("127.0.0.1", 0)) as listening:
         port = listening.getsockname()[1]
     with SessionTransport() as session, pytest.raises(FetchError) as caught:
         Node(f"http://127.0.0.1:{port}", transport=session).chain_id()
-    assert cause(caught.value, ConnectionRefusedError) is not None
+    assert caught.value.failure_type is ConnectionRefusedError
 
 
 class _Reply(socketserver.StreamRequestHandler):
@@ -956,17 +945,75 @@ def test_a_reply_that_is_no_http_is_not_quoted(reply: bytes) -> None:
 
 
 def test_a_failure_keeps_its_class_and_drops_its_message() -> None:
-    """The refused connection is a fresh, empty error of its class."""
+    """The refused connection is the class it holds, and nothing is chained."""
     with socket.create_server(("127.0.0.1", 0)) as listening:
         port = listening.getsockname()[1]
     url = f"http://127.0.0.1:{port}"
     with pytest.raises(FetchError) as caught:
         Node(url).chain_id()
-    cause_ = caught.value.__cause__
-    assert type(cause_) is ConnectionRefusedError
-    assert cause_.args == ()
-    assert cause_.__cause__ is None
-    assert cause_.__context__ is None
+    assert caught.value.failure_type is ConnectionRefusedError
+    assert caught.value.__cause__ is None
+    assert caught.value.__context__ is None
+
+
+def test_a_failure_takes_no_exception_the_caller_handles() -> None:
+    """Asked inside an ``except`` of the caller's, the refusal holds none of it.
+
+    The caller's exception would be its context, which ``from None``
+    would keep.
+    """
+    caller = "the-caller-handles-this"
+    node = Node("https://node.example", transport=Mock(side_effect=TimeoutError(MARK)))
+    handled = Mock(side_effect=ValueError(caller))
+    with pytest.raises(FetchError) as caught:
+        try:
+            handled()
+        except ValueError:
+            node.chain_id()
+    assert caught.value.failure_type is TimeoutError
+    assert caught.value.__cause__ is None
+    assert caught.value.__context__ is None
+    assert_secret_free(caught.value, [caller, MARK])
+
+
+@pytest.mark.parametrize(
+    "status, body, method",
+    [
+        (503, response(), "chain_id"),
+        (200, response(id=2), "chain_id"),
+        (200, response(result=..., error={"code": -1, "message": MARK}), "chain_id"),
+        (200, response(result=..., error={"code": "1"}), "chain_id"),
+        (200, response(result=MARK), "chain_id"),
+        (200, response(result=MARK), "token_balance"),
+    ],
+)
+def test_a_refused_answer_takes_no_exception_the_caller_handles(
+    status: int, body: dict[str, object], method: str
+) -> None:
+    """Each refusal of what the node answered holds none of the caller's.
+
+    A status other than 200, no response to the request, an error
+    object with and without an integer code, no quantity and no word.
+
+    :param status: the HTTP status the node answers.
+    :param body: the response it sends.
+    :param method: the method of `Node` asked.
+    """
+    caller = "the-caller-handles-this"
+    reply = Mock(return_value=(status, json.dumps(body).encode()))
+    node = Node("https://node.example", transport=reply)
+    asked: Callable[[], int] = node.chain_id
+    if method == "token_balance":
+        asked = functools.partial(node.token_balance, CONTRACT, ADDRESS)
+    handled = Mock(side_effect=ValueError(caller))
+    with pytest.raises(FetchError) as caught:
+        try:
+            handled()
+        except ValueError:
+            asked()
+    assert caught.value.__cause__ is None
+    assert caught.value.__context__ is None
+    assert_secret_free(caught.value, [caller, MARK])
 
 
 @pytest.mark.parametrize(
@@ -977,27 +1024,27 @@ def test_a_failure_keeps_its_class_and_drops_its_message() -> None:
         (TimeoutError(MARK), TimeoutError),
         (ConnectionRefusedError(MARK), ConnectionRefusedError),
         (URLError(ConnectionRefusedError(MARK)), ConnectionRefusedError),
-        (socket.gaierror(MARK), OSError),
-        (URLError(MARK), OSError),
-        (http.client.BadStatusLine(MARK), None),
+        (socket.gaierror(MARK), socket.gaierror),
+        (URLError(MARK), URLError),
+        (http.client.BadStatusLine(MARK), http.client.BadStatusLine),
     ],
 )
-def test_a_failure_is_caused_by_the_first_class_it_is_of(
-    failure: BaseException, kind: type[BaseException] | None
+def test_a_failure_holds_the_class_that_failed(
+    failure: BaseException, kind: type[BaseException]
 ) -> None:
-    """The class of what the transport raised picks the cause, or none.
+    """The class of what the transport raised is the failure's `failure_type`.
 
-    The cause is a fresh, empty error of that class, and a ``URLError``
-    is read by its reason where that is an error.
+    A ``URLError`` is read by its reason where that is an error. Nothing
+    is chained, and nothing the transport said is kept.
 
     :param failure: what the transport raises.
-    :param kind: the class of the cause, or None for no cause.
+    :param kind: the failure's `failure_type`.
     """
     node = Node("https://node.example", transport=Mock(side_effect=failure))
     with pytest.raises(FetchError) as caught:
         node.chain_id()
-    cause_ = caught.value.__cause__
-    assert (None if cause_ is None else type(cause_)) is kind
+    assert caught.value.failure_type is kind
+    assert caught.value.__cause__ is None
     assert MARK not in everything_said(caught.value)
 
 
