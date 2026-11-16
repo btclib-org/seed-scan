@@ -32,6 +32,25 @@ down to the packages it is to build on,
 scheme or a coin they do not cover is to be reported as not checked,
 never passed over: the costly failure is a wrong "nothing found".
 
+## Installing
+
+The package installs the `seed-scan` command. pip installs it in the
+active virtual environment:
+
+```shell
+pip install seed-scan
+```
+
+uv installs it in an environment of its own:
+
+```shell
+uv tool install seed-scan
+```
+
+Both need a Python that `requires-python` in
+[pyproject.toml](https://github.com/btclib-org/seed-scan/blob/main/pyproject.toml)
+allows.
+
 ## Identifying a mnemonic
 
 ```shell
