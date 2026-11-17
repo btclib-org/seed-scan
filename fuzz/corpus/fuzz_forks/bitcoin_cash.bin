@@ -1,0 +1,102 @@
+{
+  "format": "seed-scan-forks",
+  "version": 1,
+  "bundle": "576814ef21c12fd83286251732d1c9e6c9cd0877b92518e8d4f422d46dedeb0f",
+  "chain": "bitcoin-cash",
+  "server": "[::1]:1",
+  "fork_height": 478559,
+  "gap_limit": 20,
+  "account_gap": 3,
+  "searched": [
+    {
+      "reading": 0,
+      "coin": "bitcoin",
+      "purpose": 44,
+      "accounts": 1,
+      "cut_short": true
+    },
+    {
+      "reading": 0,
+      "coin": "bitcoin-cash",
+      "purpose": 44,
+      "accounts": 1,
+      "cut_short": true
+    }
+  ],
+  "used": [
+    {
+      "coin": "bitcoin",
+      "reading": 0,
+      "purpose": 44,
+      "account": 0,
+      "path": "m/44h/0h/0h",
+      "addresses": [
+        {
+          "branch": 0,
+          "index": 0,
+          "address": "1LqBGSKuX5yYUonjxT5qGfpUsXKYYWeabA",
+          "confirmed": 4000,
+          "unconfirmed": 0
+        }
+      ],
+      "transactions": [
+        {
+          "tx_id": "e6ea35545c912d7756ad7f27add74b95c5a0dc3a3fd67cc862e65e21ac85f11f",
+          "height": 478558
+        },
+        {
+          "tx_id": "e1fc3fed39507380e2c855e7b0fa891fd1e7aedaa6d93e516996b987082f6f59",
+          "height": 478559
+        }
+      ],
+      "confirmed": 4000,
+      "unconfirmed": 0,
+      "tip": {
+        "height": 2,
+        "block_id": "0202020202020202020202020202020202020202020202020202020202020202"
+      },
+      "at_fork": 10000
+    },
+    {
+      "coin": "bitcoin-cash",
+      "reading": 0,
+      "purpose": 44,
+      "account": 0,
+      "path": "m/44h/145h/0h",
+      "addresses": [
+        {
+          "branch": 0,
+          "index": 1,
+          "address": "18Cp2ivkLHyJwHMm9NzDRBh6Gi7m4MC2we",
+          "confirmed": 7000,
+          "unconfirmed": 2
+        }
+      ],
+      "transactions": [
+        {
+          "tx_id": "dbaf2053a790fc5ff025ed43da748c1f7b8966f83c02669e2df74b99b2ef15c4",
+          "height": 478559
+        },
+        {
+          "tx_id": "f968b33cd7f45a748745c5cdb8a8af511fac5542fcdd6d05d027cc789b3a50aa",
+          "height": null
+        }
+      ],
+      "confirmed": 7000,
+      "unconfirmed": 2,
+      "tip": {
+        "height": 2,
+        "block_id": "0202020202020202020202020202020202020202020202020202020202020202"
+      },
+      "at_fork": 0
+    }
+  ],
+  "not_checked": [
+    {
+      "reading": 0,
+      "coin": "bitcoin",
+      "purpose": 84,
+      "reason": "a segwit script: Bitcoin Cash's transactions carry no witness, so a key does not sign for it there"
+    }
+  ]
+}

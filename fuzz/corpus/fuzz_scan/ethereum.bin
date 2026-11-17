@@ -1,0 +1,152 @@
+{
+  "format": "seed-scan-scan",
+  "version": 2,
+  "bundle": "576814ef21c12fd83286251732d1c9e6c9cd0877b92518e8d4f422d46dedeb0f",
+  "server": null,
+  "gap_limit": 20,
+  "account_gap": 3,
+  "searched": [],
+  "used": [],
+  "not_checked": [
+    {
+      "reading": 0,
+      "coin": "bitcoin",
+      "reason": "no Electrum server was named"
+    },
+    {
+      "reading": 0,
+      "coin": "bitcoin-cash",
+      "reason": "scan reads Bitcoin and the EVM chains' coins alone in this version"
+    }
+  ],
+  "evm": {
+    "node": "https://node.example",
+    "chain": "ethereum",
+    "chain_id": 1,
+    "block": 16,
+    "tokens": [
+      {
+        "contract": "0xdAC17F958D2ee523a2206206994597C13D831ec7",
+        "symbol": "USDT",
+        "decimals": 6
+      },
+      {
+        "contract": "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+        "symbol": "USDC",
+        "decimals": 6
+      },
+      {
+        "contract": "0x6B175474E89094C44Da98b954EedeAC495271d0F",
+        "symbol": "DAI",
+        "decimals": 18
+      },
+      {
+        "contract": "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
+        "symbol": "WETH",
+        "decimals": 18
+      },
+      {
+        "contract": "0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599",
+        "symbol": "WBTC",
+        "decimals": 8
+      }
+    ],
+    "searched": [
+      {
+        "reading": 0,
+        "coin": "ethereum",
+        "purpose": 44,
+        "accounts": 1,
+        "cut_short": true
+      },
+      {
+        "reading": 0,
+        "coin": "ethereum",
+        "purpose": null,
+        "accounts": 2,
+        "cut_short": true
+      }
+    ],
+    "used": [
+      {
+        "coin": "ethereum",
+        "reading": 0,
+        "purpose": 44,
+        "account": 0,
+        "path": "m/44h/60h/0h",
+        "addresses": [
+          {
+            "index": 0,
+            "address": "0x9858EfFD232B4033E47d90003D41EC34EcaEda94",
+            "balance": "1000000000000000000",
+            "nonce": 0,
+            "block": 16,
+            "tokens": [
+              {
+                "contract": "0xdAC17F958D2ee523a2206206994597C13D831ec7",
+                "symbol": "USDT",
+                "decimals": 6,
+                "balance": "9"
+              }
+            ]
+          },
+          {
+            "index": 2,
+            "address": "0xb6716976A3ebe8D39aCEB04372f22Ff8e6802D7A",
+            "balance": "0",
+            "nonce": 3,
+            "block": 16,
+            "tokens": []
+          }
+        ],
+        "balance": "1000000000000000000",
+        "tokens": [
+          {
+            "contract": "0xdAC17F958D2ee523a2206206994597C13D831ec7",
+            "symbol": "USDT",
+            "decimals": 6,
+            "balance": "9"
+          }
+        ]
+      },
+      {
+        "coin": "ethereum",
+        "reading": 0,
+        "purpose": null,
+        "account": 0,
+        "path": "m/44h/60h/0h",
+        "addresses": [
+          {
+            "index": 1,
+            "address": "0x94381955F4028159A477a107510618aDb6B79Eb7",
+            "balance": "5",
+            "nonce": 0,
+            "block": 16,
+            "tokens": []
+          }
+        ],
+        "balance": "5",
+        "tokens": []
+      },
+      {
+        "coin": "ethereum",
+        "reading": 0,
+        "purpose": null,
+        "account": 1,
+        "path": "m/44h/60h",
+        "addresses": [
+          {
+            "index": 1,
+            "address": "0x673CAa6DBF9cD07fCbffa2976A17aCa608813426",
+            "balance": "0",
+            "nonce": 1,
+            "block": 16,
+            "tokens": []
+          }
+        ],
+        "balance": "0",
+        "tokens": []
+      }
+    ]
+  }
+}

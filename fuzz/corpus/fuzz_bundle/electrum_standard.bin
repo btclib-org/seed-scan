@@ -1,0 +1,39 @@
+{
+  "format": "seed-scan-bundle",
+  "version": 2,
+  "claims": [
+    "electrum_standard",
+    "bip39_wordlist"
+  ],
+  "readings": [
+    {
+      "scheme": "electrum_standard",
+      "languages": [],
+      "passphrase": 0,
+      "master_fingerprint": "48adc7a0",
+      "accounts": [
+        {
+          "coin": "bitcoin",
+          "coin_type": 0,
+          "purpose": null,
+          "account": 0,
+          "path": "m",
+          "xpub": "xpub661MyMwAqRbcFWohJWt7PHsFEJfZAvw9ZxwQoDa4SoMgsDDM1T7WK3u9E4edkC4ugRnZ8E4xDZRpk8Rnts3Nbt97dPwT52CwBdDWroaZf8U",
+          "descriptors": [
+            "pkh([48adc7a0]xpub661MyMwAqRbcFWohJWt7PHsFEJfZAvw9ZxwQoDa4SoMgsDDM1T7WK3u9E4edkC4ugRnZ8E4xDZRpk8Rnts3Nbt97dPwT52CwBdDWroaZf8U/0/*)#5v8empnd",
+            "pkh([48adc7a0]xpub661MyMwAqRbcFWohJWt7PHsFEJfZAvw9ZxwQoDa4SoMgsDDM1T7WK3u9E4edkC4ugRnZ8E4xDZRpk8Rnts3Nbt97dPwT52CwBdDWroaZf8U/1/*)#9czcx5r4"
+          ],
+          "index": null,
+          "keys": []
+        }
+      ]
+    }
+  ],
+  "not_checked": [
+    {
+      "scheme": "bip39_wordlist",
+      "reason": "every word is in a BIP39 word-list, and the checksum or the word count fails"
+    }
+  ],
+  "search": null
+}

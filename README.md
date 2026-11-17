@@ -277,6 +277,7 @@ what it intends to do, and what it deliberately does not, is its
 [![lint workflow status](https://github.com/btclib-org/seed-scan/actions/workflows/lint.yml/badge.svg?branch=main)](https://github.com/btclib-org/seed-scan/actions/workflows/lint.yml?query=branch%3Amain)
 [![test workflow status](https://github.com/btclib-org/seed-scan/actions/workflows/test.yml/badge.svg?branch=main)](https://github.com/btclib-org/seed-scan/actions/workflows/test.yml?query=branch%3Amain)
 [![docs workflow status](https://github.com/btclib-org/seed-scan/actions/workflows/docs.yml/badge.svg?branch=main)](https://github.com/btclib-org/seed-scan/actions/workflows/docs.yml?query=branch%3Amain)
+[![fuzz workflow status](https://github.com/btclib-org/seed-scan/actions/workflows/fuzz.yml/badge.svg?branch=main)](https://github.com/btclib-org/seed-scan/actions/workflows/fuzz.yml?query=branch%3Amain)
 [![deps-latest workflow status](https://github.com/btclib-org/seed-scan/actions/workflows/deps-latest.yml/badge.svg?branch=main)](https://github.com/btclib-org/seed-scan/actions/workflows/deps-latest.yml?query=branch%3Amain)
 [![pypi-install workflow status](https://github.com/btclib-org/seed-scan/actions/workflows/pypi-install.yml/badge.svg?branch=main)](https://github.com/btclib-org/seed-scan/actions/workflows/pypi-install.yml?query=branch%3Amain)
 [![deps-oldest workflow status](https://github.com/btclib-org/seed-scan/actions/workflows/deps-oldest.yml/badge.svg?branch=main)](https://github.com/btclib-org/seed-scan/actions/workflows/deps-oldest.yml?query=branch%3Amain)

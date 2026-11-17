@@ -22,6 +22,22 @@ uv run pytest --no-cov
 
 runs the suite without measuring anything.
 
+## Property tests and fuzzing
+
+`fuzz.yml` runs each harness under `fuzz/` with atheris under
+ClusterFuzzLite, weekly and by hand, and never in `uv run pytest`. The
+suite runs the same harnesses two ways: `fuzz_corpus_test.py` on every
+seed of their corpus, and `fuzz_test.py`, section 7's property layer of
+[the organization's standard][std], on what hypothesis makes up and on
+seeds with one member changed. `tests/conftest.py` holds hypothesis's
+profiles; the deeper one is for a change to a reader:
+
+```shell
+HYPOTHESIS_PROFILE=thorough uv run pytest tests/fuzz_test.py
+```
+
+`fuzz.yml`'s comment says what a crash the fuzzer finds becomes.
+
 ## Convention tests
 
 Section 7 of [the organization's standard][std] lists conventions a

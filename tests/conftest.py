@@ -2,7 +2,11 @@
 # Distributed under the MIT software license, see the accompanying
 # LICENSE file or https://opensource.org/license/mit for the full text.
 
-"""What the whole suite shares: a gate.
+"""What the whole suite shares: hypothesis's profiles, and a gate.
+
+The profiles are the ones section 7 of the organization's standard
+gives, under *Property tests*, which says why each is what it is.
+`HYPOTHESIS_PROFILE=thorough` selects the deeper one.
 
 The gate is `coverage_fail_under` and the guard on it. coverage looks
 for its configuration in the directory the process started in, so a run
@@ -18,10 +22,16 @@ with `--cov-config`, a run from `tests/` still reads the directories
 so such a run is refused as well.
 """
 
+import os
 from pathlib import Path
 from typing import Protocol, cast
 
 import pytest
+from hypothesis import settings
+
+settings.register_profile("default", deadline=None, max_examples=500)
+settings.register_profile("thorough", deadline=None, max_examples=2_000)
+settings.load_profile(os.environ.get("HYPOTHESIS_PROFILE", "default"))
 
 # the tree that holds this file, which is where a refused run is sent and
 # where a `source` directory is looked for: no pytest or coverage flag

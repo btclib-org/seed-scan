@@ -439,6 +439,9 @@ that do not are deliberate:
   and `deps-oldest.yml` calls `reusable-deps-oldest.yml`, which re-locks to
   the floors; neither commits the lock.
 - `pypi-install.yml` runs `pip install` to test the published release.
+- `fuzz.yml`'s ClusterFuzzLite build installs
+  `.clusterfuzzlite/requirements.txt`, the lock exported with its hashes by
+  the `uv-export` hook, with `pip3 install --require-hashes`.
 - `test.yml`'s `dist` job smoke-tests the wheel with `uv pip install`,
   which resolves its dependencies from the index rather than from the
   lock.
@@ -468,6 +471,24 @@ command selects — `.venv-3.11` for `--python 3.11`.** Without it,
 `uv run --python <version>` removes `.venv`, builds it again on that
 interpreter and with that command's own group set, and leaves it there.
 `uv sync` restores it.
+
+### A Dependabot `uv` pull request
+
+Dependabot's `uv` ecosystem rewrites `uv.lock` alone. Where a bump moves a
+package that `.clusterfuzzlite/requirements.txt` pins, the `uv-export`
+hook fails the lint job. An owner, as [`GOVERNANCE.md`][governance] names them,
+then commits the hook's output to the pull request's branch before it
+lands, signed and signed off. On a checkout of that branch:
+
+```shell
+uv run --locked --only-group lint pre-commit run uv-export --all-files
+git commit -S -s -m "Export .clusterfuzzlite/requirements.txt from uv.lock" \
+    .clusterfuzzlite/requirements.txt
+git push origin HEAD:<branch>
+```
+
+The hook exits 1 when it rewrites the file. The push is a plain one, never
+a force, so a branch that moved meanwhile refuses it.
 
 ### The editor
 
@@ -643,6 +664,7 @@ which is the reliance `REVIEWING.md` provides for.
 | `deps-oldest` | weekly | the floor interpreter, dependencies at their floors |
 | `scorecard` | weekly, push to main | — |
 | `links` | weekly | — |
+| `fuzz` | weekly | — |
 | `pypi-install` | weekly, a release | what PyPI serves |
 | `sdist-rebuild` | weekly | the latest release's sdist, rebuilt |
 | `release` | a tag, and a rehearsal | the workflows it calls |

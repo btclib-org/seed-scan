@@ -1,0 +1,35 @@
+{
+  "format": "seed-scan-forks",
+  "version": 1,
+  "bundle": "576814ef21c12fd83286251732d1c9e6c9cd0877b92518e8d4f422d46dedeb0f",
+  "chain": "ecash",
+  "server": "h:1",
+  "fork_height": 478559,
+  "gap_limit": 20,
+  "account_gap": 3,
+  "searched": [
+    {
+      "reading": 0,
+      "coin": "bitcoin",
+      "purpose": 44,
+      "accounts": 1,
+      "cut_short": true
+    },
+    {
+      "reading": 0,
+      "coin": "bitcoin-cash",
+      "purpose": 44,
+      "accounts": 1,
+      "cut_short": true
+    }
+  ],
+  "used": [],
+  "not_checked": [
+    {
+      "reading": 0,
+      "coin": "bitcoin",
+      "purpose": 84,
+      "reason": "a segwit script: eCash's transactions carry no witness, so a key does not sign for it there"
+    }
+  ]
+}

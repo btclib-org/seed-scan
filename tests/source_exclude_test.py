@@ -2,10 +2,10 @@
 # Distributed under the MIT software license, see the accompanying
 # LICENSE file or https://opensource.org/license/mit for the full text.
 
-"""A test that reads `.github` off the tree is not in the sdist.
+"""A test that reads `.github` or `fuzz` off the tree is not in the sdist.
 
-The directory is not in the sdist, so a test module that loads a path
-under it fails when it is run from an unpacked sdist.
+Neither directory is in the sdist, so a test module that loads a path
+under one fails when it is run from an unpacked sdist.
 `[tool.uv.build-backend] source-exclude` in pyproject.toml is where such
 a module is named, so that the sdist does not ship it. What no comment
 there can show is that the list still names every module of that shape,
@@ -37,11 +37,11 @@ def _source_exclude() -> list[str]:
 
 
 def _reaches_outside_the_sdist(tree: ast.Module) -> bool:
-    """Whether a module reads `.github` off the tree.
+    """Whether a module reads `.github` or `fuzz` off the tree.
 
-    A string literal that is the directory's name, or opens with it and a
-    slash, is what marks the module. It is split on the slash rather than
-    matched as a substring, so a name merely starting with the same
+    A string literal that is one of the directory names, or opens with it
+    and a slash, is what marks the module. It is split on the slash rather
+    than matched as a substring, so a name merely starting with the same
     letters (".githubbookmark") is not mistaken for the directory. It is
     walked rather than matched on the formatted text, so a reflow across
     lines is still seen, and wherever in the module the literal sits: the
@@ -52,9 +52,9 @@ def _reaches_outside_the_sdist(tree: ast.Module) -> bool:
 
     Exempted is a literal that never leaves a closed membership test --
     an element of the tuple, list or set an `in` or `not in` comparison
-    reads its answer from, this function's own `(".github",)` included.
-    Comparing a value against a fixed set of names reads nothing off the
-    tree; joining a path on the name does.
+    reads its answer from, this function's own `(".github", "fuzz")`
+    included. Comparing a value against a fixed set of names reads nothing
+    off the tree; joining a path on the name does.
     """
     exempt = {
         id(elt)
@@ -70,7 +70,7 @@ def _reaches_outside_the_sdist(tree: ast.Module) -> bool:
         and isinstance(node.value, str)
         # a membership test and not `==`, for the exemption above: this
         # module's own literals are then ones the reading passes over
-        and node.value.split("/", 1)[0] in (".github",)  # noqa: FURB171 -- the exemption above
+        and node.value.split("/", 1)[0] in (".github", "fuzz")
         and id(node) not in exempt
         for node in ast.walk(tree)
     )

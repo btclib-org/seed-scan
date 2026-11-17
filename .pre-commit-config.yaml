@@ -78,29 +78,38 @@ repos:
       # uses, so a trailing space anywhere else in this tree is an
       # accident. The vendored aserti3-2d files are upstream's bytes,
       # which tests/_data/README.md pins: some carry a trailing space,
-      # and each run file ends in a blank line
+      # and each run file ends in a blank line. A seed of fuzz/corpus/ is
+      # the exact bytes a harness is handed, so an octet added to it or
+      # taken off it makes it another input: the hooks below that rewrite
+      # a file leave the seeds alone, and codespell and typos take the
+      # same exclusion from pyproject.toml
       - id: trailing-whitespace
-        exclude: ^tests/_data/aserti3-2d/
+        exclude: ^(tests/_data/aserti3-2d/|fuzz/corpus/)
       - id: end-of-file-fixer
-        exclude: ^tests/_data/aserti3-2d/
+        exclude: ^(tests/_data/aserti3-2d/|fuzz/corpus/)
       - id: mixed-line-ending
         # not the default --fix=auto, which normalizes a file to its own
         # most frequent ending: a file entirely in CRLF is consistent by
         # that measure, so it stays, and the LF lines added to it are
         # converted the wrong way. This repository is LF throughout
         args: [--fix=lf]
+        exclude: ^fuzz/corpus/
       - id: check-case-conflict
-      # execve, which reads a shebang, refuses a file without the
-      # executable bit (EACCES), so execve never starts the interpreter a
-      # shebang on such a file names. Its converse,
-      # check-executables-have-shebangs, is not here: no tracked file
-      # carries the bit, and check-hooks-apply above fails a hook with no
-      # file to read
+      # a file with the executable bit and no shebang does what its
+      # caller decides: execve refuses it ("Exec format error"), a shell
+      # runs it as a shell script, and libc's execvp hands it to sh.
+      # .clusterfuzzlite/build.sh carries the bit, and check-hooks-apply
+      # above fails this hook once no tracked file does
+      - id: check-executables-have-shebangs
+      # its converse: execve, which reads a shebang, refuses a file
+      # without the executable bit (EACCES), so execve never starts the
+      # interpreter a shebang on such a file names
       - id: check-shebang-scripts-are-executable
       # no byte order mark anywhere today: what it costs is one line, what
       # it buys is that an editor on another platform cannot quietly add
       # three bytes in front of a Python file
       - id: fix-byte-order-marker
+        exclude: ^fuzz/corpus/
       # this one *adds* "# -*- coding: utf-8 -*-" to every Python file.
       # UTF-8 has been the default source encoding since Python 3 and the
       # floor here is 3.11, so it is a dead line per file
@@ -641,6 +650,28 @@ repos:
     hooks:
       # keep uv.lock in sync with pyproject.toml
       - id: uv-lock
+      # keep .clusterfuzzlite/requirements.txt, which the fuzz container
+      # installs with --require-hashes, in sync with uv.lock: the
+      # package's own runtime dependencies and the `fuzz` group, hashes
+      # included. After uv-lock, so an --all-files run exports a re-lock
+      # in the same run; a commit staging pyproject.toml alone exports it
+      # on the next attempt, pre-commit having listed the files before
+      # uv-lock rewrote uv.lock. --frozen, the hook's own default, rather
+      # than --locked: uv-lock above is what refuses a stale lock, and
+      # --locked needs the interpreter .python-version names, where
+      # --frozen exports with none -- and the pre-commit.ci image does not
+      # carry it, which is why the ci: block skips uv-lock. `files:` adds
+      # the output itself to the hook's uv.lock, so a hand edit to it is
+      # rewritten too
+      - id: uv-export
+        args:
+          - --frozen
+          - --no-default-groups
+          - --group=fuzz
+          - --no-emit-project
+          - --output-file=.clusterfuzzlite/requirements.txt
+          - --quiet
+        files: ^(uv\.lock|\.clusterfuzzlite/requirements\.txt)$
   # what is tracked and not in the sdist, and what is in the sdist and not
   # tracked, both ways round, against the patterns of
   # [tool.uv.build-backend]. --no-isolation is in the hook's own entry, and

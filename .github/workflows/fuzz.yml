@@ -1,0 +1,108 @@
+---
+name: fuzz
+
+# ClusterFuzzLite over the readers of this package that take what somebody
+# else can write: `bundle.loads` (fuzz/fuzz_bundle.py), `scan.loads`
+# (fuzz/fuzz_scan.py) and `forks.loads` (fuzz/fuzz_forks.py), which read
+# the files a command is named, and `evm.Node`'s reading of a node's
+# answer (fuzz/fuzz_evm.py). Section 10 of the organization's
+# standard is where `fuzz` is named as a sentinel every tree parsing a
+# stranger's own input owes.
+#
+# Every `fuzz/fuzz_*.py` is a target this workflow builds and runs, and
+# `.clusterfuzzlite/` is ClusterFuzzLite's own configuration for building
+# them -- `project.yaml`, `Dockerfile` and `build.sh`, read by the two
+# actions below rather than by anything in this file, `build.sh`
+# discovering each target by its own glob rather than by a list this file
+# would have to keep in step with `fuzz/`'s contents.
+#
+# One job, ClusterFuzzLite's "batch" mode (google/clusterfuzzlite's
+# docs/running_clusterfuzzlite.md, "ClusterFuzz Lite Modes"), which is
+# what builds a corpus over time and is meant for a schedule. No pull
+# request trigger and no "code-change" job beside it: an hour of fuzzing
+# on every push is a wait a pull request would pay for a check that
+# gates nothing.
+#
+# The half a pull request does owe is the regression, and it is an
+# ordinary test of the suite: it names the input this fuzzer crashed on
+# and what the reader is expected to do with it now, which is usually to
+# refuse it in this package's own exception. Not `fuzz/corpus/`, which is
+# a seed corpus: `tests/fuzz_corpus_test.py` asserts that every seed there
+# is one its harness's reader accepts, so a crash input added to it is
+# refused by the very hardening that fixed the crash.
+#
+# Not `push: branches: [main]` either: ClusterFuzzLite's own
+# docs/running-clusterfuzzlite/github_actions.md calls batch fuzzing on
+# each push "not recommended", and with `fuzz-seconds: 3600` below one run
+# per push would queue faster than an hour-long job drains.
+# `workflow_dispatch` is what runs the batch on a pull request's own
+# branch where section 10's `fuzz` entry asks for it.
+on:
+  schedule:
+    # section 10's calendar in btclib-org/.github, and not this file's to
+    # restate
+    - cron: "42 4 * * 2"
+  workflow_dispatch:
+
+# least privilege for the GITHUB_TOKEN: the job below writes neither to
+# the repository nor to code scanning -- `output-sarif: true` only writes
+# the SARIF as a run artifact, uploading nothing on its own -- so nothing
+# elevates past the workflow default
+permissions:
+  contents: read
+
+# named literally rather than through github.workflow, which in a called
+# workflow is the caller's name. A scheduled run and a dispatch on the
+# same ref share the group, and cancel-in-progress means a manual run
+# does not wait behind the scheduled batch's own hour
+concurrency:
+  group: fuzz-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  batch_fuzzing:
+    name: Batch fuzzing
+    # the guard stays although both triggers above satisfy it: an hour of
+    # fuzzing then stays off any trigger added later until this line is
+    # widened on purpose
+    if: github.event_name == 'workflow_dispatch' || github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    # the docker build plus one hour of fuzzing (fuzz-seconds below), far
+    # above what either takes
+    timeout-minutes: 90
+    steps:
+      # every action pinned to a commit SHA, its tag trailing the pin.
+      #
+      # `v1` is the whole of what that comment can name: it is the only
+      # tag google/clusterfuzzlite publishes, so there is no point release
+      # to name in its place. A major is a name its owner is free to move,
+      # which leaves the comment reading the same on either side of a bump
+      # -- what says whether the pin is current is the tag and not the
+      # comment:
+      #
+      #   gh api repos/google/clusterfuzzlite/git/refs/tags --paginate \
+      #     --jq '.[].ref'
+      #   gh api repos/google/clusterfuzzlite/commits/v1 --jq .sha
+      #
+      # A tag beyond `v1` is the point release the comment names in its
+      # place; a sha other than the one both steps below carry is `v1`
+      # having moved; either is the day this pin is bumped. The second
+      # call peels the annotated tag to the commit a runner checks out,
+      # where `git/ref/tags/v1` answers the tag object's own sha
+      - name: Build fuzzers
+        uses: google/clusterfuzzlite/actions/build_fuzzers@884713a6c30a92e5e8544c39945cd7cb630abcd1 # v1
+        with:
+          language: python
+          sanitizer: address
+      - name: Run fuzzers
+        uses: google/clusterfuzzlite/actions/run_fuzzers@884713a6c30a92e5e8544c39945cd7cb630abcd1 # v1
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          fuzz-seconds: 3600
+          mode: batch
+          sanitizer: address
+          output-sarif: true
+
+  # no aggregate job: the job above is not a required check. A finding is
+  # an issue against the reader it was found on, not a block on an
+  # unrelated pull request's merge

@@ -110,6 +110,7 @@ pull_requests = "https://github.com/btclib-org/seed-scan/pulls"
 # `test` is the two together
 harness = [
     "coverage>=7.16.1",
+    "hypothesis>=6.170.15",
     "pytest>=9.1.1",
     "pytest-cov>=7.1.0",
     "pytest-randomly>=5.0.0",
@@ -153,6 +154,12 @@ check = [
     # fallback, which needs an index, is never asked for
     "uv_build>=0.12.0,<0.14",
 ]
+# the build backend .clusterfuzzlite/build.sh installs the package with, in
+# the fuzz container and non-isolated, so that the backend is a hashed
+# entry of .clusterfuzzlite/requirements.txt -- this lock exported --
+# rather than whatever an isolated build resolves off the index.
+# [build-system]'s own specifier, the way `check`'s is
+fuzz = ["uv_build>=0.12.0,<0.14"]
 # the marker because the `sphinx` release the lock resolves declares a
 # Requires-Python above requires-python's floor, and an unmarked bound
 # leaves the older interpreters no release to resolve
@@ -197,12 +204,14 @@ source-include = [
 # exclusions win over the inclusions above, and are unanchored unless a
 # pattern starts with "/"
 source-exclude = [
-    # tests whose subject the sdist does not carry: .github is not in it,
-    # so each of these reads a path an unpacked sdist does not have and
-    # fails there. Anchored, because a name this specific matching at some
-    # other depth would be an accident rather than a decision.
-    # tests/source_exclude_test.py checks that every test its reader finds
-    # reaching .github is named here
+    # tests whose subject the sdist does not carry: .github and fuzz/ are
+    # not in it, so each of these reads a path an unpacked sdist does not
+    # have and fails there. Anchored, because a name this specific
+    # matching at some other depth would be an accident rather than a
+    # decision. tests/source_exclude_test.py checks that every test its
+    # reader finds reaching .github or fuzz/ is named here
+    "/tests/fuzz_corpus_test.py",
+    "/tests/fuzz_test.py",
     "/tests/interpreters_test.py",
     "/tests/normalize_sdist_test.py",
     "/tests/release_digests_test.py",
@@ -234,14 +243,20 @@ package = ["src/seed_scan"]
 # reads for the uv backend: the workspaces of an editor and of an agent,
 # the attributes git reads at checkout, the file prettier reads its
 # ignores from, the bestpractices.dev answers, and COPYRIGHT, which
-# `project.license-files` does not name
+# `project.license-files` does not name.
+#
+# .clusterfuzzlite/ and fuzz/ join that reasoning: ClusterFuzzLite's
+# configuration and the harnesses it builds, which fuzz.yml reads and
+# nothing installed from the sdist runs
 git-only = [
     ".bestpractices.json",
     ".claude/",
+    ".clusterfuzzlite/",
     ".gitattributes",
     ".prettierignore",
     ".vscode/",
     "COPYRIGHT",
+    "fuzz/",
 ]
 
 [tool.pytest.ini_options]
@@ -272,8 +287,10 @@ xfail_strict = true
 filterwarnings = ["error"]
 
 [tool.codespell]
-# .secrets.baseline and uv.lock are hashes, not text to correct
-skip = ".secrets.baseline,uv.lock"
+# .secrets.baseline and uv.lock are hashes, not text to correct, and
+# fuzz/corpus/'s seeds are the exact bytes a harness is handed, which a
+# fix in place would make another input
+skip = ".secrets.baseline,uv.lock,fuzz/corpus/*"
 # not a misspelling: `intoto`, in-toto's own spelling in the bundle's name
 # `<tag>.intoto.jsonl`. RELEASING.md writes it in fenced commands, outside
 # the backticks `ignore-regex` below hides, and the dictionary offers
@@ -297,7 +314,13 @@ ignore-regex = '`[^`]*`'
 # to correct: typos flags `CPY` of the rule id CPY001 there, which it
 # leaves unflagged here only because it skips any file named
 # pyproject.toml
-extend-exclude = [".secrets.baseline", "uv.lock", ".bestpractices.json"]
+extend-exclude = [
+    ".secrets.baseline",
+    "uv.lock",
+    ".bestpractices.json",
+    # fuzz/corpus/'s seeds, for the reason [tool.codespell] skips them
+    "fuzz/corpus/**",
+]
 
 [tool.typos.default]
 # keys and addresses written inline in the test sources, as btclib-wallet
@@ -469,7 +492,10 @@ ignore = [
 # path, never an import
 ".github/scripts/*.py" = ["INP001"]
 "docs/source/conf.py" = ["INP001"]
-"**/__init__.py" = ["F401"]         # re-exported imports
+# ClusterFuzzLite's build.sh hands each harness to PyInstaller, never to
+# an import, so fuzz/ carries no __init__.py
+"fuzz/*.py" = ["INP001"]
+"**/__init__.py" = ["F401"] # re-exported imports
 # preview mode's undefined-export does not special-case a module-level
 # __getattr__ (astral-sh/ruff#18504, open): the root package publishes
 # its submodules that way, as its docstring says, and tests/all_test.py

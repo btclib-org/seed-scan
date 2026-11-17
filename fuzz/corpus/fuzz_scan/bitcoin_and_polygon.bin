@@ -1,0 +1,147 @@
+{
+  "format": "seed-scan-scan",
+  "version": 2,
+  "bundle": "576814ef21c12fd83286251732d1c9e6c9cd0877b92518e8d4f422d46dedeb0f",
+  "server": "electrum.example:50001",
+  "gap_limit": 20,
+  "account_gap": 3,
+  "searched": [
+    {
+      "reading": 0,
+      "purpose": 44,
+      "accounts": 1,
+      "cut_short": true
+    },
+    {
+      "reading": 0,
+      "purpose": 84,
+      "accounts": 1,
+      "cut_short": true
+    }
+  ],
+  "used": [
+    {
+      "reading": 0,
+      "purpose": 44,
+      "account": 0,
+      "path": "m/44h/0h/0h",
+      "addresses": [
+        {
+          "branch": 0,
+          "index": 0,
+          "address": "1LqBGSKuX5yYUonjxT5qGfpUsXKYYWeabA",
+          "confirmed": 11,
+          "unconfirmed": 0
+        }
+      ],
+      "transactions": [
+        {
+          "tx_id": "987b9e4b5bdca08948668d79045f798b5a2ceba133646bdbc49cf938ad8240a5",
+          "height": 1
+        }
+      ],
+      "confirmed": 11,
+      "unconfirmed": 0,
+      "tip": {
+        "height": 2,
+        "block_id": "0202020202020202020202020202020202020202020202020202020202020202"
+      }
+    }
+  ],
+  "not_checked": [
+    {
+      "reading": 0,
+      "coin": "bitcoin-cash",
+      "reason": "scan reads Bitcoin and the EVM chains' coins alone in this version"
+    }
+  ],
+  "evm": {
+    "node": "https://node.example",
+    "chain": "polygon-pos",
+    "chain_id": 137,
+    "block": 16,
+    "tokens": [
+      {
+        "contract": "0xc2132D05D31c914a87C6611C10748AEb04B58e8F",
+        "symbol": "USDT",
+        "decimals": 6
+      },
+      {
+        "contract": "0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359",
+        "symbol": "USDC",
+        "decimals": 6
+      },
+      {
+        "contract": "0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174",
+        "symbol": "USDC.e",
+        "decimals": 6
+      },
+      {
+        "contract": "0x8f3Cf7ad23Cd3CaDbD9735AFf958023239c6A063",
+        "symbol": "DAI",
+        "decimals": 18
+      },
+      {
+        "contract": "0x0d500B1d8E8eF31E21C99d1Db9A6444d3ADf1270",
+        "symbol": "WMATIC",
+        "decimals": 18
+      },
+      {
+        "contract": "0x1BFD67037B42Cf73acF2047067bd4F2C47D9BfD6",
+        "symbol": "WBTC",
+        "decimals": 8
+      }
+    ],
+    "searched": [
+      {
+        "reading": 0,
+        "coin": "ethereum",
+        "purpose": 44,
+        "accounts": 1,
+        "cut_short": true
+      },
+      {
+        "reading": 0,
+        "coin": "ethereum",
+        "purpose": null,
+        "accounts": 2,
+        "cut_short": true
+      }
+    ],
+    "used": [
+      {
+        "coin": "ethereum",
+        "reading": 0,
+        "purpose": 44,
+        "account": 0,
+        "path": "m/44h/60h/0h",
+        "addresses": [
+          {
+            "index": 0,
+            "address": "0x9858EfFD232B4033E47d90003D41EC34EcaEda94",
+            "balance": "2",
+            "nonce": 0,
+            "block": 16,
+            "tokens": [
+              {
+                "contract": "0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359",
+                "symbol": "USDC",
+                "decimals": 6,
+                "balance": "4"
+              }
+            ]
+          }
+        ],
+        "balance": "2",
+        "tokens": [
+          {
+            "contract": "0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359",
+            "symbol": "USDC",
+            "decimals": 6,
+            "balance": "4"
+          }
+        ]
+      }
+    ]
+  }
+}
