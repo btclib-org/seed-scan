@@ -1566,15 +1566,16 @@ def loads(text: str, bundle: str) -> ScanResult:
 
     `bundle` is the text of the bundle the result was made from, which
     `seed_scan.bundle.loads` reads. Refused, as a `SeedScanValueError`:
-    text that is not JSON, another ``format``, another ``version``, a
-    missing member, a negative count, a bound below 1, a result whose
-    ``bundle`` is not the SHA-256 of `bundle`, a result naming neither a
-    server nor a node, a Bitcoin search with no server, a purpose
-    searched twice, a used account or an address listed twice, and a
-    number too long for Python to read. The bundle is refused as `scan`
-    refuses it. A member of the wrong type is a `SeedScanTypeError`.
-    Members this version does not name are ignored. A refusal names the
-    member, never its value.
+    text that is not JSON, text nested too deep for Python to read,
+    another ``format``, another ``version``, a missing member, a
+    negative count, a bound below 1, a result whose ``bundle`` is not
+    the SHA-256 of `bundle`, a result naming neither a server nor a
+    node, a Bitcoin search with no server, a purpose searched twice, a
+    used account or an address listed twice, and a number too long for
+    Python to read. The bundle is refused as `scan` refuses it. A member
+    of the wrong type is a `SeedScanTypeError`. Members this version
+    does not name are ignored. A refusal names the member, never its
+    value.
 
     A reader echoes the text members, so each holds only what the format
     defines: a ``server`` that `parse_server` takes; a ``node`` that
@@ -1663,6 +1664,9 @@ def _document(text: str, form: str = FORMAT, version: int = VERSION) -> dict[str
     except ValueError:
         # an integer of more digits than `sys.get_int_max_str_digits`
         where = "a number too long to read"
+    except RecursionError:
+        # an array or an object nested past the interpreter's limit
+        where = "nested too deep to read"
     else:
         where = ""
     # raised outside the `except`, for `seed_scan.bundle.loads`'s reason

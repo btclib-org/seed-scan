@@ -26,6 +26,7 @@ from seed_scan.report import report
 from seed_scan.scan import NO_NODE, NO_SERVER, NOT_READ, OTHER_CHAIN, loads, scan
 from seed_scan.scan import dumps as scan_dumps
 
+from .bundle_test import NESTED
 from .evm_test import Ethereum
 from .identify_test import ABANDON, SEGWIT, no_share
 from .scan_test import BLOCK, Chain, eth_address, node, pay, script
@@ -884,6 +885,9 @@ def test_an_evm_member_of_a_wrong_type_is_refused(
         (f"[{'1' * 5000}]", SeedScanValueError, "a number too long to read"),
         ("[]", SeedScanTypeError, "a JSON list"),
         (b"{}", SeedScanTypeError, "text of type bytes"),
+        pytest.param(
+            NESTED, SeedScanValueError, "nested too deep to read", id="nested"
+        ),
     ],
 )
 def test_a_text_that_is_no_result_is_refused(

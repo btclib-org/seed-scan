@@ -112,6 +112,18 @@ def test_a_member_this_version_does_not_name_is_ignored() -> None:
 KEY_TEXT = "xprvMadeUpKeyTextHeldByNoWalletQwErTyUiOpAsDfGhJkLzXcVbNm"
 KEY_NUMBER = 0x1D2F3E4D5C6B7A8998A7B6C5D4E3F20112233445566778899AABBCCDDEEFF0A1
 
+#: A JSON object holding the key above, in both spellings, and an array
+#: nested past the interpreter's limit, which `json.loads` meets with a
+#: `RecursionError`. That limit need not be `sys.getrecursionlimit()`; an
+#: interpreter that reads this text refuses it for a missing member
+#: instead, and the tests sending it fail.
+NESTED = (
+    f'{{"key": "{KEY_TEXT}", "number": {KEY_NUMBER}, "nested": '
+    + "[" * 1_000_000
+    + "]" * 1_000_000
+    + "}"
+)
+
 
 def set_match_reading(d: dict[str, Any], reading: int) -> None:
     """Point the first match at a reading.
@@ -278,6 +290,9 @@ def test_a_document_that_is_no_bundle_is_refused(
         (f'{{"key": "{KEY_TEXT}", ', SeedScanValueError, "not JSON, at line 1"),
         (f"[{KEY_NUMBER}]", SeedScanTypeError, "a JSON list"),
         (KEY_TEXT.encode(), SeedScanTypeError, "text of type bytes"),
+        pytest.param(
+            NESTED, SeedScanValueError, "^bundle: nested too deep to read$", id="nested"
+        ),
     ],
 )
 def test_text_that_is_no_bundle_is_refused(

@@ -26,6 +26,7 @@ from seed_scan.forks import CHAINS, forks, loads
 from seed_scan.forks import dumps as forks_dumps
 from seed_scan.identify import identify
 
+from .bundle_test import NESTED
 from .forks_test import OWN, SHARED, p2pkh
 from .identify_test import ABANDON, STANDARD, no_share
 from .scan_loads_test import (
@@ -260,6 +261,9 @@ def test_a_member_of_a_wrong_type_is_refused(
         (f"[{'1' * 5000}]", SeedScanValueError, "a number too long to read"),
         ("[]", SeedScanTypeError, "a JSON list"),
         (b"{}", SeedScanTypeError, "text of type bytes"),
+        pytest.param(
+            NESTED, SeedScanValueError, "nested too deep to read", id="nested"
+        ),
     ],
 )
 def test_a_text_that_is_no_result_is_refused(

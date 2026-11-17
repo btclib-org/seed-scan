@@ -635,13 +635,13 @@ def _search(document: dict[str, Any], readings: int) -> Search:
 def loads(text: str) -> Bundle:
     """Read a bundle back from its JSON text.
 
-    Refused, as a `SeedScanValueError`: text that is not JSON, a number
-    too long for Python to read, another ``format``, another
-    ``version``, a missing member, a negative count, a fingerprint that
-    is not 8 lower-case hex characters, or a match naming no reading. A
-    member of the wrong type is a `SeedScanTypeError`. Members this
-    version does not name are ignored. A refusal names the member, never
-    its value.
+    Refused, as a `SeedScanValueError`: text that is not JSON, text
+    nested too deep for Python to read, a number too long for Python to
+    read, another ``format``, another ``version``, a missing member, a
+    negative count, a fingerprint that is not 8 lower-case hex
+    characters, or a match naming no reading. A member of the wrong type
+    is a `SeedScanTypeError`. Members this version does not name are
+    ignored. A refusal names the member, never its value.
 
     A reader echoes the text members, so each holds only what the format
     defines, and a key put in one is refused: a scheme, a language, a
@@ -666,6 +666,9 @@ def loads(text: str) -> Bundle:
     except ValueError:
         # an integer of more digits than `sys.get_int_max_str_digits`
         where = "a number too long to read"
+    except RecursionError:
+        # an array or an object nested past the interpreter's limit
+        where = "nested too deep to read"
     else:
         where = ""
     # raised here and not in the `except`: the decoding error would stay
