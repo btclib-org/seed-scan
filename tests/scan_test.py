@@ -53,6 +53,7 @@ from seed_scan.scan import (
     NotRead,
     Searched,
     Tip,
+    _too_deep,
     parse_server,
     scan,
 )
@@ -747,6 +748,31 @@ def test_a_fork_account_too_deep_is_refused_by_forks(abandon: str, depth: int) -
         == f"bundle: reading 0, account {number}: an xpub too deep to derive"
     )
     assert caught.value.__context__ is None
+
+
+def test_a_musig_reaches_as_far_as_its_deepest_participant() -> None:
+    """`tr(musig(...))` is as deep as its deepest key; a fixed one is not.
+
+    These two branches of `_reach` are read here rather than through a
+    bundle: an account's descriptors are over its own xpub, so a `musig()`
+    and a key fixed in the text never reach `seed_scan.scan._too_deep`
+    from a scan.
+    """
+    master = xpub_from_xprv(XPRV)
+    data = BIP32KeyData.b58decode(master)
+    deep = BIP32KeyData(
+        data.version,
+        254,
+        data.parent_fingerprint,
+        data.index,
+        data.chain_code,
+        data.key,
+    ).b58encode(check_validity=False)
+    # 254 below, then the branch and the index: 256.
+    assert _too_deep(parse(f"tr(musig({master}/0/*,{deep}/0/*))"))
+    # secp256k1's generator, fixed in the descriptor: no path to derive.
+    generator = "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798"
+    assert not _too_deep(parse(f"pkh({generator})"))
 
 
 def test_a_bitcoin_xpub_at_253_still_reads(abandon: str) -> None:
