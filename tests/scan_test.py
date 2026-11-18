@@ -37,6 +37,7 @@ from seed_scan import scan as scan_module
 from seed_scan.bundle import dumps, loads
 from seed_scan.evm import EVM_CHAINS, Node, quantity
 from seed_scan.exceptions import SeedScanTypeError, SeedScanValueError
+from seed_scan.forks import forks
 from seed_scan.identify import identify
 from seed_scan.report import report
 from seed_scan.scan import (
@@ -55,6 +56,7 @@ from seed_scan.scan import (
     parse_server,
     scan,
 )
+from seed_scan.scan import loads as scan_loads
 
 from .evm_test import Ethereum, response
 from .identify_test import (
@@ -636,6 +638,122 @@ def test_accounts_not_numbered_from_0_are_refused(abandon: str) -> None:
     text = edited(abandon, "m/84h/0h/1h", account=2)
     with pytest.raises(SeedScanValueError, match="accounts not numbered from 0"):
         scan(text, NEVER, server="s:1")
+
+
+def _deep_account(text: str, path: str, depth: int, purpose: int) -> tuple[str, int]:
+    """Return a bundle whose account at `path` has a key of `depth`.
+
+    Its number in its reading comes back with it.
+
+    The key's own checks are skipped, as a bundle is read with them
+    skipped: a key whose depth disagrees with the path above it still
+    decodes, and its descriptors are re-checksummed.
+
+    :param text: the bundle's text.
+    :param path: the account's path.
+    :param depth: the depth its xpub is re-encoded at.
+    :param purpose: which of the accounts at that path, as the kept one.
+    :returns: the edited bundle's text, and the account's place in its reading.
+    """
+    document = json.loads(text)
+    number = 0
+    for reading in document["readings"]:
+        for index, account in enumerate(reading["accounts"]):
+            if account["path"] != path or account["purpose"] != purpose:
+                continue
+            number = index
+            old = account["xpub"]
+            data = BIP32KeyData.b58decode(old, check_validity=False)
+            deep = BIP32KeyData(
+                data.version,
+                depth,
+                data.parent_fingerprint,
+                data.index,
+                data.chain_code,
+                data.key,
+                check_validity=False,
+            ).b58encode(check_validity=False)
+            account["xpub"] = deep
+            account["descriptors"] = [
+                add_checksum(d.split("#")[0].replace(old, deep))
+                for d in account["descriptors"]
+            ]
+    return json.dumps(document), number
+
+
+def _no_scan_result() -> str:
+    """Return the text of a scan result that searched and used nothing."""
+    return json.dumps(
+        {
+            "format": "seed-scan-scan",
+            "version": 1,
+            "bundle": "0" * 64,
+            "server": None,
+            "gap_limit": 20,
+            "account_gap": 5,
+            "searched": [],
+            "used": [],
+            "not_checked": [],
+            "evm": None,
+        }
+    )
+
+
+@pytest.mark.parametrize(
+    "path, purpose, depth",
+    [
+        ("m/84h/0h/0h", 84, 255),
+        ("m/84h/0h/0h", 84, 254),
+        ("m/44h/0h/0h", 44, 254),
+    ],
+)
+def test_a_bitcoin_xpub_too_deep_to_derive_is_refused(
+    abandon: str, path: str, purpose: int, depth: int
+) -> None:
+    """A Bitcoin account's key two levels above its addresses is refused.
+
+    Its addresses are two levels below the key (`/0/i`), and BIP32 stops
+    at depth 255, so a key at 254 or 255 cannot reach them: btclib-wallet
+    raised `BTClibValueError` there. `scan`, `scan.loads`, `report` and
+    `forks` refuse with `SeedScanValueError` before a reader is asked.
+    """
+    text, number = _deep_account(abandon, path, depth, purpose)
+    loads(text)
+    message = f"bundle: reading 0, account {number}: an xpub too deep to derive"
+    with pytest.raises(SeedScanValueError) as caught:
+        scan(text, NEVER, server="s:1")
+    assert str(caught.value) == message
+    assert caught.value.__context__ is None
+
+    with pytest.raises(SeedScanValueError, match="an xpub too deep to derive"):
+        scan_loads(_no_scan_result(), text)
+    with pytest.raises(SeedScanValueError, match="an xpub too deep to derive"):
+        report(text, _no_scan_result())
+
+
+@pytest.mark.parametrize("depth", [255, 254])
+def test_a_fork_account_too_deep_is_refused_by_forks(abandon: str, depth: int) -> None:
+    """`forks` builds a fork account's descriptors, and refuses one too deep.
+
+    Its own descriptors are two below the key, as Bitcoin's are, so a key
+    at 254 or 255 cannot reach them.
+    """
+    text, number = _deep_account(abandon, "m/44h/145h/0h", depth, 44)
+    loads(text)
+    with pytest.raises(SeedScanValueError) as caught:
+        forks(text, NEVER, chain="bitcoin-cash", server="s:1")
+    assert (
+        str(caught.value)
+        == f"bundle: reading 0, account {number}: an xpub too deep to derive"
+    )
+    assert caught.value.__context__ is None
+
+
+def test_a_bitcoin_xpub_at_253_still_reads(abandon: str) -> None:
+    """One level short of the limit, the addresses below it are read."""
+    text, _ = _deep_account(abandon, "m/84h/0h/0h", 253, 84)
+    result = scan(text, Chain(), server="s:1")
+    assert result.used == () and result.searched != ()
 
 
 def test_an_electrum_reading_with_two_accounts_is_refused() -> None:
