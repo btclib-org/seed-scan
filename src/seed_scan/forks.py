@@ -165,6 +165,7 @@ from seed_scan.scan import (
     _Purposes,
     _read_account,
     _searched,
+    _too_deep,
     _used,
     _used_account,
     _where,
@@ -367,6 +368,8 @@ def _own_descriptors(
 
     `parse` checks that the key is a point of the curve; its refusal may
     quote the key, so it is not kept, as `seed_scan.scan` does not keep it.
+    A key too deep to derive the addresses read below it is refused as
+    `seed_scan.scan` refuses one.
     """
     descriptors: tuple[Descriptor, ...] = ()
     with contextlib.suppress(TypeError, ValueError):
@@ -374,6 +377,8 @@ def _own_descriptors(
     if not descriptors:
         err_msg = f"bundle: {where}: a descriptor that does not parse"
         raise SeedScanValueError(err_msg)
+    if any(_too_deep(descriptor) for descriptor in descriptors):
+        raise SeedScanValueError(f"bundle: {where}: an xpub too deep to derive")
     return descriptors
 
 
@@ -488,7 +493,8 @@ def forks(
     chain. The bundle is read, and every account it reads checked, before
     `reader` is asked anything. Refused as `seed_scan.scan.scan` refuses
     them: text that is not a bundle, a descriptor or an xpub that does not
-    parse, accounts not numbered from 0, a `server` that
+    parse, an xpub too deep to derive the addresses read below it,
+    accounts not numbered from 0, a `server` that
     `seed_scan.scan.parse_server` refuses, a bound below 1, an account
     whose discovery `seed_scan.scan` refuses in both reads of it, and an
     account whose balance, or a used address's, is outside 0 to 21 million
