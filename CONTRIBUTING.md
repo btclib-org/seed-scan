@@ -490,6 +490,11 @@ git push origin HEAD:<branch>
 The hook exits 1 when it rewrites the file. The push is a plain one, never
 a force, so a branch that moved meanwhile refuses it.
 
+Once that commit is pushed, Dependabot stops rebasing the pull request, as
+[GitHub's documentation](https://docs.github.com/en/code-security/how-tos/secure-your-supply-chain/manage-your-dependency-security/manage-dependabot-prs#allowing-dependabot-to-rebase-and-force-push-over-extra-commits)
+says. `@dependabot recreate` in a comment rebuilds the branch without the
+commit, which is then made again.
+
 ### The editor
 
 `.vscode/settings.json` and `.vscode/extensions.json` are tracked, and they

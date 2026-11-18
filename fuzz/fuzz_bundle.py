@@ -21,8 +21,12 @@ of the bundle read reads back to the same bundle, and
 with a bundle alone. A different read raises `AssertionError`; an
 exception from either step propagates.
 
-The seed corpus is bundles `identify` wrote: of a BIP39 mnemonic, of an
-Electrum one, with an address found and with an address not searched.
+The seed corpus is bundles `seed_scan.identify.identify` wrote, without
+the newline `dumps` ends a text with: of a BIP39 mnemonic, `BUNDLE` of
+`_bundle.py`; of the same with an address found; of an Electrum one; and
+of the BIP39 one with an address not searched and no passphrase to try,
+which leaves it no reading. Those of the BIP39 mnemonic that hold a
+reading are cut to the accounts `_bundle.py` keeps.
 """
 
 from __future__ import annotations
