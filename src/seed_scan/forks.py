@@ -493,14 +493,14 @@ def forks(
     chain. The bundle is read, and every account it reads checked, before
     `reader` is asked anything. Refused as `seed_scan.scan.scan` refuses
     them: text that is not a bundle, a descriptor or an xpub that does not
-    parse, an xpub too deep to derive the addresses read below it,
-    accounts not numbered from 0, a `server` that
-    `seed_scan.scan.parse_server` refuses, a bound below 1, an account
-    whose discovery `seed_scan.scan` refuses in both reads of it, and an
-    account whose balance, or a used address's, is outside 0 to 21 million
-    bitcoin. So is one whose holding at the fork is outside that bound. A
-    `chain` not in `CHAINS` is refused too, without quoting it. A `chain`,
-    a `server` or a bound of a wrong type is a `SeedScanTypeError`.
+    parse, an xpub too deep to derive the addresses read below it, accounts
+    not numbered from 0, a `server` that `seed_scan.scan.parse_server`
+    refuses, a bound below 1, an account whose discovery `seed_scan.scan`
+    refuses in both reads of it, and an account whose balance, or a used
+    address's, is outside 0 to 21 million bitcoin. So is one whose holding
+    at the fork is outside that bound. A `chain` not in `CHAINS` is refused
+    too, without quoting it. A `chain`, a `server` or a bound of a wrong
+    type is a `SeedScanTypeError`.
     """
     bundle = bundle_loads(text)
     if not isinstance(chain, str):

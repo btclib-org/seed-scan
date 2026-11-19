@@ -435,11 +435,11 @@ def _too_deep(descriptor: Descriptor) -> bool:
     """Whether the addresses read below a descriptor's keys are out of reach.
 
     `parse` has checked the keys; what it does not check is that the
-    path below one stays within `_DEPTH_LIMIT`, and btclib-wallet raises
-    `BTClibValueError` when asked to derive past it. `_descriptors`
-    refuses such a descriptor, as `_key` refuses a key that does not
-    decode, so that the public surface raises its own error before a
-    reader is asked.
+    path below one stays within `_DEPTH_LIMIT`, and a derivation past it
+    raises `BTClibValueError`. `_descriptors` refuses such a descriptor,
+    as `_key` refuses a key that does not decode, so that the public
+    surface raises its own error, not the dependency's, before a reader
+    or a node is asked.
     """
     return any(
         _reach(expression) > _DEPTH_LIMIT for expression in descriptor.key_expressions
@@ -503,8 +503,8 @@ def _source(account: Account, where: str) -> _Source:
     if not account.keys:
         key = _key(account, where)
         # The addresses read are one level below a key of no purpose, and
-        # two below an account's: refused past `_DEPTH_LIMIT`, as
-        # `_too_deep` says.
+        # two below an account's: refused past `_DEPTH_LIMIT`, for the
+        # reason `_too_deep` gives.
         if key.depth + (1 if account.purpose is None else 2) > _DEPTH_LIMIT:
             raise SeedScanValueError(f"bundle: {where}: an xpub too deep to derive")
         return key if account.purpose is None else key.derive(0)
