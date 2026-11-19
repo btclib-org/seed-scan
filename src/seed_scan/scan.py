@@ -410,18 +410,17 @@ def dumps(result: ScanResult) -> str:
     return json.dumps(document, indent=2) + "\n"
 
 
-#: BIP32's last depth: a key's children are past its limit at 256.
+#: BIP32's last depth: a key's depth is one byte.
 _DEPTH_LIMIT = 255
 
 
 def _reach(expression: KeyExpression) -> int:
     """Return the depth the addresses read below a key expression reach.
 
-    BIP32 stops at depth 255. A descriptor spells the branch an address
-    is read at, and its ``*`` stands for the index, so the deepest one is
-    the key's own depth plus the path it derives, the wildcard included;
-    a `musig()` aggregates its participants, and reaches as far as the
-    deepest of them.
+    A descriptor spells the branch an address is read at, and its ``*``
+    stands for the index, so the deepest one is the key's own depth plus
+    the path it derives, the wildcard included; a `musig()` aggregates
+    its participants, and reaches as far as the deepest of them.
     """
     if expression.participants:
         return max(_reach(participant) for participant in expression.participants)
@@ -436,10 +435,11 @@ def _too_deep(descriptor: Descriptor) -> bool:
     """Whether the addresses read below a descriptor's keys are out of reach.
 
     `parse` has checked the keys; what it does not check is that the
-    path below one stays within BIP32's 255 depths, and btclib-wallet
-    raises `BTClibValueError` when asked to derive there. Refused here,
-    as `_key` refuses a key that does not decode, so that the public
-    surface raises its own error before a reader is asked.
+    path below one stays within `_DEPTH_LIMIT`, and btclib-wallet raises
+    `BTClibValueError` when asked to derive past it. `_descriptors`
+    refuses such a descriptor, as `_key` refuses a key that does not
+    decode, so that the public surface raises its own error before a
+    reader is asked.
     """
     return any(
         _reach(expression) > _DEPTH_LIMIT for expression in descriptor.key_expressions
@@ -503,10 +503,9 @@ def _source(account: Account, where: str) -> _Source:
     if not account.keys:
         key = _key(account, where)
         # The addresses read are one level below a key of no purpose, and
-        # two below an account's: BIP32 stops at depth 255. Refuse here,
-        # as `_key` refuses one that does not decode, so that the public
-        # surface raises its own error, not the dependency's.
-        if key.depth + (1 if account.purpose is None else 2) > 255:
+        # two below an account's: refused past `_DEPTH_LIMIT`, as
+        # `_too_deep` says.
+        if key.depth + (1 if account.purpose is None else 2) > _DEPTH_LIMIT:
             raise SeedScanValueError(f"bundle: {where}: an xpub too deep to derive")
         return key if account.purpose is None else key.derive(0)
     addresses: tuple[str, ...] = ()

@@ -41,7 +41,7 @@ from seed_scan.scan import Address
 
 from .identify_test import ABANDON, SEGWIT, STANDARD, legacy_address, no_share
 from .no_secret_test import Secrets, assert_json_secret_free
-from .scan_test import ELSEWHERE, Chain, edited, pay
+from .scan_test import ELSEWHERE, Chain, deepened, edited, pay
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterable, Iterator
@@ -500,6 +500,58 @@ def test_a_chain_s_xpub_off_the_curve_is_refused(abandon: str) -> None:
     assert str(caught.value).endswith(": a descriptor that does not parse")
     assert off_curve not in str(caught.value)
     assert caught.value.__context__ is None
+
+
+@pytest.mark.parametrize(
+    "path, depth, number",
+    [
+        ("m/44h/0h/0h", 255, 0),
+        ("m/44h/0h/0h", 254, 0),
+        ("m/44h/145h/0h", 255, 39),
+        ("m/44h/145h/0h", 254, 39),
+    ],
+)
+def test_an_xpub_too_deep_to_derive_is_refused(
+    abandon: str, path: str, depth: int, number: int
+) -> None:
+    """A key too deep to derive the addresses read below it is refused.
+
+    Bitcoin's account, read with its own descriptors, and the chain's,
+    read with the ones `forks` builds, both have their addresses two
+    levels below the key. `forks` refuses before the reader is asked.
+
+    :param abandon: the bundle.
+    :param path: the account's path.
+    :param depth: the depth its key says it is at.
+    :param number: where the account is in the bundle.
+    """
+    text = deepened(abandon, path, 44, depth)
+    loads(text)
+    with pytest.raises(SeedScanValueError) as caught:
+        forks(text, NEVER, chain="bitcoin-cash", server="h:1")
+    message = f"bundle: reading 0, account {number}: an xpub too deep to derive"
+    assert str(caught.value) == message
+    assert caught.value.__context__ is None
+
+
+@pytest.mark.parametrize("path", ["m/44h/0h/0h", "m/44h/145h/0h"])
+def test_the_deepest_xpub_that_derives_is_read(abandon: str, path: str) -> None:
+    """One level above the refusal: an address at depth 255 is read.
+
+    The key keeps its point and chain code, so its addresses are the ones
+    `legacy_address` derives. `forks` finds one, and `loads` reads the
+    result back.
+
+    :param abandon: the bundle.
+    :param path: the account's path.
+    """
+    text = deepened(abandon, path, 44, 253)
+    chain = Chain(HistoryTx(pay(1, (p2pkh(f"{path}/1/0"), 7_000)), SHARED))
+    result = forks(text, chain, chain="bitcoin-cash", server="h:1")
+    (used,) = result.used
+    assert used.path == path
+    assert [a.address for a in used.addresses] == [legacy_address(f"{path}/1/0")]
+    assert forks_module.loads(forks_module.dumps(result), text) == result
 
 
 @pytest.mark.parametrize(
