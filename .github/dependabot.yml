@@ -8,8 +8,9 @@
 # repo: but local and meta, so a second bot on the same pin would only
 # compete with it. A hook whose repo: is local is one autoupdate does
 # not reach: typos moves by a hand edit of its additional_dependencies,
-# and pyroma by the uv ecosystem below, uv.lock being where its version
-# is pinned.
+# pyroma by the uv ecosystem below, uv.lock being where its version is
+# pinned, and the link hooks' markdown-it-py with the ports of the
+# standard, whose section 4 pins it at its test group's version.
 #
 # .clusterfuzzlite/requirements.txt is a pip manifest the uv-export hook
 # of .pre-commit-config.yaml writes from uv.lock, and that hook fails

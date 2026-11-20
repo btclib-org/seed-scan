@@ -137,6 +137,9 @@ test = [
     "typing-extensions>=4.4",
 ]
 lint = [
+    # what mypy reads .github/scripts/check_link_destinations.py against,
+    # at the version the link hooks of .pre-commit-config.yaml install
+    "markdown-it-py>=4.3.0",
     "mypy>=2.3.1",
     "pre-commit>=4.6.2",
     "ruff>=0.16.9",
@@ -247,7 +250,8 @@ package = ["src/seed_scan"]
 #
 # .clusterfuzzlite/ and fuzz/ join that reasoning: ClusterFuzzLite's
 # configuration and the harnesses it builds, which fuzz.yml reads and
-# nothing installed from the sdist runs
+# nothing installed from the sdist runs. So does changelog/, whose
+# entries a release assembles into the history files the sdist carries
 git-only = [
     ".bestpractices.json",
     ".claude/",
@@ -256,6 +260,7 @@ git-only = [
     ".prettierignore",
     ".vscode/",
     "COPYRIGHT",
+    "changelog/",
     "fuzz/",
 ]
 
@@ -339,10 +344,17 @@ intoto = "intoto"
 asert = "asert"
 
 [tool.typos.type.verbatim]
-# the files that quote a word rather than use it: a changelog entry quotes
-# the misspelling it is about, and .pre-commit-config.yaml the ones the
-# two spell checkers found
-extend-glob = ["CHANGELOG.md", "RELEASE_NOTES.md", ".pre-commit-config.yaml"]
+# the files that quote a word rather than use it: a changelog entry, in
+# the history files or under changelog/next/ as pr<N>.md, quotes the
+# misspelling it is about, and .pre-commit-config.yaml the ones the spell
+# checkers found. typos matches a glob against the file name, so
+# "changelog/next/*.md" would match no entry
+extend-glob = [
+    "CHANGELOG.md",
+    "RELEASE_NOTES.md",
+    "pr[0-9]*.md",
+    ".pre-commit-config.yaml",
+]
 extend-ignore-re = ['`[^`]*`']
 
 [tool.coverage.run]
@@ -350,7 +362,12 @@ extend-ignore-re = ['`[^`]*`']
 # unnamed, `--cov` measures every file the run imports. .github/scripts
 # is not an importable package, and coverage measures it by path
 source = ["seed_scan", "tests", ".github/scripts"]
-omit = ["*/site-packages/*"]
+omit = [
+    "*/site-packages/*",
+    # a copy section 14 of the standard compares, tested where its
+    # canonical copy is (section 8 of the standard)
+    ".github/scripts/check_link_destinations.py",
+]
 # statement coverage alone calls a half-tested `if` fully covered
 branch = true
 
@@ -502,6 +519,10 @@ ignore = [
 # walks `__all__` with getattr and fails on the drift this rule would
 # catch
 "src/seed_scan/__init__.py" = ["F822"]
+# a copy section 14 of the standard keeps byte for byte: what it prints
+# is its report, and its `noqa` is for a rule this tree ignores, which
+# RUF100 would report as unused (btclib-org/.github#2377)
+".github/scripts/check_link_destinations.py" = ["RUF100", "T201"]
 # the D rules are not here: a public test function states what it
 # verifies under the same docstring gate as the library
 "tests/**" = [

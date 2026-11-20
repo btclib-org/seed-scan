@@ -1,11 +1,13 @@
 # Changelog
 
-The release's own pull request writes its section here, from the squash
-subjects since the previous tag; a pull request adds no entry
-(`CONTRIBUTING.md`'s *Pull requests*, section 9 of [the organization
-standard][std]). [RELEASE_NOTES.md](./RELEASE_NOTES.md) has the release
-notes, which say what a user has to act on; this file is the record
-behind them.
+The release's own pull request assembles its section here, and the same
+section in [RELEASE_NOTES.md](./RELEASE_NOTES.md), from the entries under
+`changelog/next/`, which each pull request that changes what a user gets
+adds as a file of its own (`CONTRIBUTING.md`'s *Pull requests*, section 9
+of [the organization standard][std]). The GitHub release shows the
+section of `RELEASE_NOTES.md`. Sections up to v2026.11.17 were written
+for each file apart: there `RELEASE_NOTES.md` says what a user has to
+act on, and this file what changed.
 
 [std]: https://github.com/btclib-org/.github
 

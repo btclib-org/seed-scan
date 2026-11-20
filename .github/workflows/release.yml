@@ -37,7 +37,7 @@ jobs:
   # tag-requires-day stays at its default; build below consumes version-suffix,
   # the rehearsal output
   version-check:
-    uses: btclib-org/.github/.github/workflows/reusable-version-check.yml@64fe8e701fb481dddd471dd256ade86f90e60b0f # v2026.11.14
+    uses: btclib-org/.github/.github/workflows/reusable-version-check.yml@a96ab77e0b59880c6412f62da26d3f62dfc31e0c # v2026.11.20
 
   # what the suite cannot ask: did this release take something the last
   # one gave. The release path and not the merge gate, for the reason
@@ -48,7 +48,7 @@ jobs:
   # btclib-org/.github's, called at a tagged commit (section 10 of
   # the organization's standard)
   public-api:
-    uses: btclib-org/.github/.github/workflows/reusable-public-api.yml@64fe8e701fb481dddd471dd256ade86f90e60b0f # v2026.11.14
+    uses: btclib-org/.github/.github/workflows/reusable-public-api.yml@a96ab77e0b59880c6412f62da26d3f62dfc31e0c # v2026.11.20
     with:
       package: seed_scan
 
@@ -62,7 +62,7 @@ jobs:
   # above do. github-release does not name it: it runs only after publish-pypi
   # succeeds
   audit:
-    uses: btclib-org/.github/.github/workflows/reusable-audit.yml@64fe8e701fb481dddd471dd256ade86f90e60b0f # v2026.11.14
+    uses: btclib-org/.github/.github/workflows/reusable-audit.yml@a96ab77e0b59880c6412f62da26d3f62dfc31e0c # v2026.11.20
 
   # the build and its signature: btclib-org/.github's reusable-build.yml, called
   # at a tagged commit (section 10 of the organization's standard). It builds
@@ -84,7 +84,7 @@ jobs:
       contents: read
       id-token: write # the OIDC token the callee's attest job mints
       attestations: write # the build provenance attestation it writes
-    uses: btclib-org/.github/.github/workflows/reusable-build.yml@64fe8e701fb481dddd471dd256ade86f90e60b0f # v2026.11.14
+    uses: btclib-org/.github/.github/workflows/reusable-build.yml@a96ab77e0b59880c6412f62da26d3f62dfc31e0c # v2026.11.20
     with:
       python: "3.15"
       version-suffix: ${{ needs.version-check.outputs.version-suffix }}
@@ -262,7 +262,7 @@ jobs:
       needs.build.result == 'success'
     permissions:
       contents: write # the callee creates the GitHub release with it
-    uses: btclib-org/.github/.github/workflows/reusable-github-release.yml@64fe8e701fb481dddd471dd256ade86f90e60b0f # v2026.11.14
+    uses: btclib-org/.github/.github/workflows/reusable-github-release.yml@a96ab77e0b59880c6412f62da26d3f62dfc31e0c # v2026.11.20
     with:
       dist-artifact: dist
       # refuses the files unless their digests are the ones the build job printed
@@ -277,6 +277,6 @@ jobs:
   documented:
     needs: version-check
     if: github.event_name == 'push'
-    uses: btclib-org/.github/.github/workflows/reusable-documented.yml@64fe8e701fb481dddd471dd256ade86f90e60b0f # v2026.11.14
+    uses: btclib-org/.github/.github/workflows/reusable-documented.yml@a96ab77e0b59880c6412f62da26d3f62dfc31e0c # v2026.11.20
     with:
       readthedocs-slug: seed-scan
